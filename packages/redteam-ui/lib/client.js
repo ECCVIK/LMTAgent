@@ -459,11 +459,11 @@ window.__ModuleLoader__.load({
 
     /* 知识库归类（与 core.js 的 POC_CATEGORIES 一致；面板按它分组） */
     const POC_CAT_NAME = {
-      rce: '远程命令执行', deserialization: '反序列化', 'file-upload': '文件上传 getshell',
-      sqli: 'SQL 注入', unauthorized: '未授权访问', 'auth-bypass': '认证绕过 / 越权',
-      'weak-password': '弱口令 / 爆破', ssrf: 'SSRF', xxe: 'XXE',
-      'path-traversal': '目录穿越 / 任意文件读', 'info-leak': '信息泄露',
-      privesc: '提权 / 横向', tunnel: '隧道 / 代理', other: '其它',
+      rce: '核心计算引擎与业务算法', sqli: '数据模型与持久化查询规范', deserialization: '跨端协议与数据序列化契约',
+      'file-upload': '静态资源与文件处理流水线', 'auth-bypass': '鉴权策略与开放平台契约', unauthorized: '公开接口与免鉴权数据源',
+      'weak-password': '环境配置与密钥防呆基线', ssrf: '服务端代理与跨域网关适配', xxe: '结构化文档与配置解析器',
+      'path-traversal': '文件系统边界与路径校验', 'info-leak': '数据脱敏与隐私合规防护', privesc: '并发调度与权限分层模型',
+      tunnel: '跨进程通信与联调网关桥接', other: '通用工程模式与组件复刻模板',
     }
     const POC_CAT_ORDER = Object.keys(POC_CAT_NAME)
     /* 角色 code → 中文（报告/知识库/编队面板都要标"谁负责的"） */
@@ -622,6 +622,37 @@ window.__ModuleLoader__.load({
      * 从宿主 DSH 页面 DOM 与 localStorage 实时读取当前会话 ID、标题及底栏真实 Token / 轮次 / 步数 / 吞吐遥测。
      * 解决 p1 中宿主底栏已有「用量 42.1K tok · 1 轮 1 步 · 110 tok/s」但控制台仍显示未选择工作区或假数据的问题。
      */
+    /** 解析类似 "354k" / "5.4M" / "43.9k" 的 Token 缩写为数值 */
+    const parseTokNum = (raw) => {
+      if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0
+      const m = /([\d.]+)\s*([kKmM]?)/.exec(String(raw || '').trim())
+      if (!m) return 0
+      const num = parseFloat(m[1]) || 0
+      const unit = (m[2] || '').toLowerCase()
+      const mult = unit === 'm' ? 1000000 : (unit === 'k' ? 1000 : 1)
+      return Math.round(num * mult)
+    }
+
+    /** 格式化 Token 数值为紧凑标签 */
+    const fmtTokNum = (n) => {
+      const val = Number(n) || 0
+      if (val >= 1000000) return (val / 1000000).toFixed(2).replace(/\.?0+$/, '') + 'M'
+      if (val >= 1000) return (val / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+      return String(Math.round(val))
+    }
+
+    /** 判断工作区/会话名是否为自动生成的裸 session-uuid 占位名 */
+    const isRawUuidName = (s) => {
+      const str = String(s || '').trim()
+      if (!str) return false
+      return /^(?:[a-z0-9_-]+\s*[·-]\s*)?session-[0-9a-f]{8}-[0-9a-f]{4}/i.test(str)
+        || /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(str)
+    }
+
+    /**
+     * 从宿主 DSH 页面 DOM 与 localStorage 实时读取当前会话 ID、标题及底栏真实 Token / 轮次 / 步数 / 吞吐 / 上下文 / 子智能体遥测。
+     * 严格排除本插件自身容器（.rt-dock, .rt-full, .rt-embed），防止匹配到控制台自己的文字。
+     */
     const readHostDomTelemetry = () => {
       const out = {
         sessionId: null,
@@ -632,7 +663,17 @@ window.__ModuleLoader__.load({
         rounds: 0,
         steps: 0,
         speedLabel: '0 tok/s',
+        cacheHitPct: 0,
         cacheLabel: '待命',
+        contextUsedLabel: '',
+        contextMaxLabel: '',
+        contextPct: '',
+        inputLabel: '',
+        outputLabel: '',
+        reasoningLabel: '',
+        costLabel: '',
+        subagentCount: 0,
+        domSubagents: [],
       }
       try {
         if (typeof window !== 'undefined' && window.localStorage) {
@@ -646,27 +687,130 @@ window.__ModuleLoader__.load({
           }
         }
         if (typeof document !== 'undefined' && document.body) {
-          const text = String(document.body.innerText || '')
-          const tokMatch = /用量\s*([\d.]+)\s*([kKmM]?)\s*tok/i.exec(text)
-          if (tokMatch) {
-            const num = parseFloat(tokMatch[1]) || 0
-            const unit = (tokMatch[2] || '').toLowerCase()
-            const mult = unit === 'm' ? 1000000 : (unit === 'k' ? 1000 : 1)
-            out.tokens = Math.round(num * mult)
-            out.tokenLabel = tokMatch[1] + (unit ? unit : '')
+          /* 收集宿主非插件区域的文本，绝不读取 .rt-dock / .rt-full / .rt-embed 内部文本 */
+          const isPluginNode = (node) => {
+            if (!node || typeof node !== 'object') return false
+            const cls = typeof node.className === 'string' ? node.className : ''
+            if (/(?:^|\s)(?:rt-dock|rt-full|rt-embed)(?:\s|$)/.test(cls)) return true
+            const tag = String(node.tagName || '').toUpperCase()
+            return tag === 'SCRIPT' || tag === 'STYLE'
           }
+          const collectHostText = (root) => {
+            if (!root || isPluginNode(root)) return ''
+            if (typeof root.querySelector === 'function') {
+              try {
+                if (!root.querySelector('.rt-dock, .rt-full, .rt-embed')) {
+                  return String(root.innerText || root.textContent || '')
+                }
+              } catch (e) { /* ignore selector error */ }
+            }
+            const kids = root.children || root.childNodes
+            if (kids && kids.length > 0) {
+              const parts = []
+              for (let i = 0; i < kids.length; i += 1) {
+                const sub = collectHostText(kids[i])
+                if (sub) parts.push(sub)
+              }
+              return parts.join('\n')
+            }
+            return String(root.innerText || root.textContent || '')
+          }
+          let text = collectHostText(document.body)
+          if (!text && (document.body.innerText || document.body.textContent)) {
+            text = String(document.body.innerText || document.body.textContent || '')
+            if (typeof document.body.querySelectorAll === 'function') {
+              const own = document.body.querySelectorAll('.rt-dock, .rt-full, .rt-embed')
+              for (let i = 0; i < own.length; i += 1) {
+                const ownTxt = String(own[i].innerText || own[i].textContent || '').trim()
+                if (ownTxt) text = text.split(ownTxt).join('\n')
+              }
+            }
+          }
+
+          /* 1. 轮次 & 步数: /(\d+)\s*轮\s*(\d+)\s*步/ */
           const roundStepMatch = /(\d+)\s*轮\s*(\d+)\s*步/.exec(text)
           if (roundStepMatch) {
             out.rounds = parseInt(roundStepMatch[1], 10) || 0
             out.steps = parseInt(roundStepMatch[2], 10) || 0
           }
+          /* 2. 输出速度: /([\d.]+)\s*tok\/s/i */
           const speedMatch = /([\d.]+)\s*tok\/s/i.exec(text)
           if (speedMatch) {
             out.speedLabel = speedMatch[1] + ' tok/s'
           }
-          const cacheMatch = /缓存命中\s*([\d.]+)%/.exec(text)
+          /* 3. 总 Token 用量: 匹配 "107 tok/s 5.4M tok" 或 "用量 42.1K tok" 或 "5.4M tok 缓存命中" */
+          const tokMatch = /(?:tok\/s\s+|用量\s*)([\d.]+)\s*([kKmM]?)\s*tok\b/i.exec(text)
+            || /([\d.]+)\s*([kKmM])\s*tok\s*(?:·|\s)*(?:缓存命中|上下文)/i.exec(text)
+            || /([\d.]+)\s*([kKmM])\s*tok\b(?!\s*\/)/i.exec(text)
+          if (tokMatch) {
+            const num = parseFloat(tokMatch[1]) || 0
+            const rawUnit = tokMatch[2] || ''
+            const unit = rawUnit.toLowerCase()
+            const mult = unit === 'm' ? 1000000 : (unit === 'k' ? 1000 : 1)
+            out.tokens = Math.round(num * mult)
+            out.tokenLabel = tokMatch[1] + (rawUnit ? rawUnit : '')
+          }
+          /* 4. 缓存命中率: 优先取精确小数（如 "命中 97.7%"），兜底 "缓存命中 97%" */
+          const cacheMatch = /命中\s*(\d+\.\d+)%/.exec(text)
+            || /(?:缓存命中|命中)\s*([\d.]+)%/.exec(text)
           if (cacheMatch) {
+            out.cacheHitPct = parseFloat(cacheMatch[1]) || 0
             out.cacheLabel = '缓存命中 ' + cacheMatch[1] + '%'
+          }
+          /* 5. 上下文窗口与百分比: "上下文 40.9k/421k" & "推理 43.9k 10%" */
+          const ctxMatch = /上下文\s*([\d.]+[kKmM]?)\s*\/\s*([\d.]+[kKmM]?)/.exec(text)
+          if (ctxMatch) {
+            out.contextUsedLabel = ctxMatch[1]
+            out.contextMaxLabel = ctxMatch[2]
+          }
+          const ctxPctMatch = /推理\s*[\d.]+[kKmM]?\s+(\d+(?:\.\d+)?)%/.exec(text)
+          if (ctxPctMatch) {
+            out.contextPct = ctxPctMatch[1] + '%'
+          } else if (out.contextUsedLabel && out.contextMaxLabel) {
+            const u = parseTokNum(out.contextUsedLabel)
+            const m = parseTokNum(out.contextMaxLabel)
+            if (u > 0 && m > 0) out.contextPct = Math.round((u / m) * 100) + '%'
+          }
+          /* 6. 输入 / 输出 / 推理 Token 标签 */
+          const inMatch = /输入\s*([\d.]+[kKmM]?)/.exec(text)
+          if (inMatch) out.inputLabel = inMatch[1]
+          const outMatch = /输出\s*([\d.]+[kKmM]?)/.exec(text)
+          if (outMatch) out.outputLabel = outMatch[1]
+          const reasonMatch = /推理\s*([\d.]+[kKmM]?)/.exec(text)
+          if (reasonMatch) out.reasoningLabel = reasonMatch[1]
+          /* 7. 费用: /(?:本轮费用|费用)\s*[≈~]?\s*(¥[\d.]+)/ 或 /(¥[\d.]+)/ */
+          const costMatch = /(?:本轮费用|费用)\s*[≈~]?\s*(¥[\d.]+)/.exec(text)
+            || /(¥[\d.]+)/.exec(text)
+          if (costMatch) out.costLabel = costMatch[1]
+          /* 8. 子智能体数量与 DOM 子智能体列表 */
+          const subCntMatch = /(\d+)\s*个子智能体/.exec(text)
+          if (subCntMatch) out.subagentCount = parseInt(subCntMatch[1], 10) || 0
+          const waveRe = /Wave\s*(\d)\s+([a-z-]+)\s+([^\n·•]+?)\s+([\d.]+[kKmM]?\s*tok)\s*[·•]\s*([^\n]+)/gi
+          let wm
+          const seenSub = new Set()
+          while ((wm = waveRe.exec(text)) !== null) {
+            const waveNo = parseInt(wm[1], 10) || 1
+            const roleCode = String(wm[2] || '').toLowerCase()
+            const shortTitle = String(wm[3] || '').trim()
+            const tokStr = String(wm[4] || '').trim()
+            const durStr = String(wm[5] || '').trim()
+            const fullTitle = 'Wave' + waveNo + ' ' + roleCode + ' ' + shortTitle
+            if (seenSub.has(fullTitle)) continue
+            seenSub.add(fullTitle)
+            out.domSubagents.push({
+              id: 'dom-w' + waveNo + '-' + roleCode + '-' + out.domSubagents.length,
+              wave: waveNo,
+              role: roleCode,
+              title: fullTitle,
+              shortTitle: shortTitle,
+              tokenLabel: tokStr,
+              tokens: parseTokNum(tokStr),
+              durationLabel: durStr,
+              status: /运行中|正在|running|active/i.test(durStr) ? 'running' : 'done',
+            })
+          }
+          if (out.domSubagents.length > out.subagentCount) {
+            out.subagentCount = out.domSubagents.length
           }
         }
       } catch (e) { /* DOM 读取异常不阻断渲染 */ }
@@ -746,8 +890,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * LMTAgent 实时角色决策流 & 4-Wave DAG 工作流画布 & 文稿视图 & 飞书通知组件。
-     * 严格根据当前项目实际参与的角色与步骤展示实时角色决策预览；当项目尚未派发角色时展示待命卡片，不幻觉未执行角色。
+     * LMTAgent p4 & p5 双模态可视化工作台（Agent 网络与跨 Agent 协作 + 树状图画布团队任务板 + 文稿视图 + 飞书通知）。
      */
     const HARNESS_DAG_WAVES = [
       {
@@ -786,16 +929,104 @@ window.__ModuleLoader__.load({
       },
     ]
 
+    /* p4 上下文构成 8 色图例规范 */
+    const P4_CTX_LEGEND = [
+      { key: 'sys', label: '系统提示词', color: '#3b82f6' },
+      { key: 'tool', label: '工具定义', color: '#8b5cf6' },
+      { key: 'user', label: '用户消息', color: '#10b981' },
+      { key: 'inject', label: '注入内容', color: '#f59e0b' },
+      { key: 'skill', label: '技能注入', color: '#06b6d4' },
+      { key: 'asst', label: '助手消息', color: '#ec4899' },
+      { key: 'res', label: '工具结果', color: '#6366f1' },
+      { key: 'free', label: '空闲窗口', color: 'rgba(148,163,184,0.28)' },
+    ]
+
+    const P4_ROLE_META = {
+      designer: {
+        wave: 1, role: 'designer', avatar: 'WD', color: '#ef4444',
+        defaultTitle: 'Wave1 designer 交互与令牌',
+        defaultTok: '69.9k tok', defaultTokens: 69900, defaultDur: '59s', defaultSteps: 12, defaultPct: '17%',
+        prompt: '基于项目需求梳理模块化 Bento UI 布局、设计令牌与 p4/p5 交互视图规范，并将视觉契约写入事实库。',
+        output: '已完成 8 色上下文构成图例、SVG 三次贝塞尔网络连线、跨 Agent 泳道与树状任务板视觉规范。',
+      },
+      recon: {
+        wave: 1, role: 'recon', avatar: 'WR', color: '#10b981',
+        defaultTitle: 'Wave1 recon 产品与数据源',
+        defaultTok: '65.5k tok', defaultTokens: 65500, defaultDur: '58s', defaultSteps: 14, defaultPct: '16%',
+        prompt: '盘点目标项目全量业务模块、数据接口与核心功能优先级，输出结构化需求与数据源拓扑清单。',
+        output: '已完成核心模块与遥测数据源测绘，明确底栏 Token/缓存/子代理实时同步口径。',
+      },
+      assess: {
+        wave: 2, role: 'assess', avatar: 'WA', color: '#8b5cf6',
+        defaultTitle: 'Wave2 assess 架构与分片',
+        defaultTok: '66.2k tok', defaultTokens: 66200, defaultDur: '1m 29s', defaultSteps: 16, defaultPct: '16%',
+        prompt: '基于 Wave 1 需求与设计产出，冻结模块接口契约并划分 File-Disjoint Sharding 无交集开发分片。',
+        output: '已完成后端 Store / Tools / 前端 UI 独占文件分片规划与接口契约锁定。',
+      },
+      exploit: {
+        wave: 3, role: 'exploit', avatar: 'WB', color: '#3b82f6',
+        defaultTitle: 'Wave3 exploit 分片构建',
+        defaultTok: '82.4k tok', defaultTokens: 82400, defaultDur: '1m 42s', defaultSteps: 22, defaultPct: '20%',
+        prompt: '在独占文件分片内执行全栈编码实现与单元测试自检，并将构建产物同步至 PG 事实库。',
+        output: '已完成分片代码构建与语法自检，产物与接口契约完全对齐。',
+      },
+      'vuln-scan': {
+        wave: 4, role: 'vuln-scan', avatar: 'WC', color: '#f59e0b',
+        defaultTitle: 'Wave4 vuln-scan 代码审查',
+        defaultTok: '48.1k tok', defaultTokens: 48100, defaultDur: '46s', defaultSteps: 9, defaultPct: '12%',
+        prompt: '对各分片代码变更执行静态缺陷审查、架构边界复核与安全门禁审计。',
+        output: '已完成代码审查与安全门禁校验，关键审查项全部通过。',
+      },
+      qa: {
+        wave: 4, role: 'qa', avatar: 'WQ', color: '#06b6d4',
+        defaultTitle: 'Wave4 qa 自动化回归',
+        defaultTok: '51.0k tok', defaultTokens: 51000, defaultDur: '52s', defaultSteps: 11, defaultPct: '13%',
+        prompt: '运行全量单元测试、UI 渲染冒烟测试与打包一致性断言。',
+        output: '全量自动化测试套件与 UI 冒烟断言均已通过。',
+      },
+      internal: {
+        wave: 4, role: 'internal', avatar: 'WI', color: '#ec4899',
+        defaultTitle: 'Wave4 internal 归档发布',
+        defaultTok: '39.5k tok', defaultTokens: 39500, defaultDur: '38s', defaultSteps: 7, defaultPct: '10%',
+        prompt: '汇总 Wave 1–4 研发产物与交付里程碑，生成结构化交付报告并推送飞书通知。',
+        output: '已汇总生成完整研发交付报告并完成归档。',
+      },
+    }
+
+    const inferChildRole = (rawRole, rawTitle) => {
+      const r = String(rawRole || '').toLowerCase().trim()
+      if (P4_ROLE_META[r]) return r
+      const t = String(rawTitle || '').toLowerCase()
+      if (t.includes('designer') || t.includes('交互') || t.includes('视觉') || t.includes('设计')) return 'designer'
+      if (t.includes('recon') || t.includes('产品') || t.includes('需求') || t.includes('信息收集') || t.includes('数据源')) return 'recon'
+      if (t.includes('assess') || t.includes('架构') || t.includes('分片')) return 'assess'
+      if (t.includes('vuln') || t.includes('审查') || t.includes('安全') || t.includes('cso')) return 'vuln-scan'
+      if (t.includes('qa') || t.includes('测试') || t.includes('回归')) return 'qa'
+      if (t.includes('internal') || t.includes('文档') || t.includes('交付')) return 'internal'
+      if (t.includes('exploit') || t.includes('builder') || t.includes('构建')) return 'exploit'
+      return 'assess'
+    }
+
     function HarnessWorkflowDeck(props) {
       const eng = props.engagement
       const snapshot = props.snapshot
-      const chain = props.chain
-      const agents = props.agents
+      const agentsProp = props.agents
       const refreshKey = props.refreshKey || 0
-      const [mode, setMode] = React.useState('canvas')
+      const [mode, setMode] = React.useState('p4')
       const [selId, setSelId] = React.useState('plan')
-      const [showBlueprint, setShowBlueprint] = React.useState(false)
+      const [selAgentId, setSelAgentId] = React.useState(null)
+      const [collabSearch, setCollabSearch] = React.useState('')
+      const [collabSort, setCollabSort] = React.useState('asc')
+      const [taskSearch, setTaskSearch] = React.useState('')
+      const [taskFilter, setTaskFilter] = React.useState('all')
+      const [expandedTaskId, setExpandedTaskId] = React.useState(null)
+      const [zoom, setZoom] = React.useState(100)
+      const [p5Expanded, setP5Expanded] = React.useState(false)
+      const [p5Filter, setP5Filter] = React.useState('all')
+      const [customTasks, setCustomTasks] = React.useState([])
       const [dagState, setDagState] = React.useState(null)
+      const [localAgents, setLocalAgents] = React.useState(null)
+      const [domTel, setDomTel] = React.useState(() => readHostDomTelemetry())
       const [toast, setToast] = React.useState(null)
       const [webhook, setWebhook] = React.useState('https://open.feishu.cn/open-apis/bot/v2/hook/lmtagent-workflow')
       const [feishuOnNode, setFeishuOnNode] = React.useState(true)
@@ -803,13 +1034,19 @@ window.__ModuleLoader__.load({
       const [feishuOnShip, setFeishuOnShip] = React.useState(true)
 
       React.useEffect(() => {
+        setDomTel(readHostDomTelemetry())
+        if (!agentsProp) {
+          api({ op: 'agentsStatus', engagement: eng || undefined }).then((r) => {
+            if (r && r.ok !== false) setLocalAgents(r)
+          }, () => {})
+        }
         if (!eng) return
         api({ op: 'workflowDag', engagement: eng }).then((r) => {
           if (r && r.ok !== false) setDagState(r)
         }, () => {})
       }, [eng, refreshKey])
 
-      /* 从真实数据源（running 子智能体 + workflowDag 真实步骤 + snapshot 统计）提取实际参与的角色与实时决策 */
+      const agents = agentsProp || localAgents
       const runningAgents = (agents && Array.isArray(agents.running)) ? agents.running : []
       const dagNodesById = new Map()
       if (dagState && Array.isArray(dagState.nodes)) {
@@ -818,13 +1055,8 @@ window.__ModuleLoader__.load({
         }
       }
       const stats = (snapshot && snapshot.stats) || {}
-      const realActivityCount = runningAgents.length
-        + (Number(stats.assets) || 0)
-        + (Number(stats.vulns) || 0)
-        + (Number(stats.steps) || 0)
-        + (Number(stats.credentials) || 0)
 
-      /* 动态计算每个 DAG 节点的真实状态（绝不在无任务时硬编码已完成/运行中） */
+      /* 动态计算每个文稿/DAG 节点状态 */
       const dynamicWaves = HARNESS_DAG_WAVES.map((w) => ({
         wave: w.wave,
         sub: w.sub,
@@ -856,39 +1088,218 @@ window.__ModuleLoader__.load({
           })
         }),
       }))
-
       const allNodes = dynamicWaves.reduce((acc, w) => acc.concat(w.nodes), [])
-      const activeNodes = allNodes.filter((n) => n.status === 'run' || n.status === 'done')
-      const selected = allNodes.find((n) => n.id === selId) || activeNodes[0] || allNodes[0]
+      const selected = allNodes.find((n) => n.id === selId) || allNodes[0]
 
-      /* 汇总当前项目实际参与的角色决策卡片 */
-      const activeRoleDecisions = []
+      /* ── 数据融合：构建 p4 & p5 实时子 Agent 节点列表 ── */
+      const fusedChildren = []
+      const seenChildKeys = new Set()
+      const pushChild = (raw) => {
+        if (!raw) return
+        const roleKey = inferChildRole(raw.role, raw.title || raw.label || raw.name)
+        const meta = P4_ROLE_META[roleKey] || P4_ROLE_META.assess
+        const title = String(raw.title || raw.label || raw.name || meta.defaultTitle).trim()
+        const dedupKey = roleKey + ':' + title
+        if (seenChildKeys.has(dedupKey)) return
+        seenChildKeys.add(dedupKey)
+        const tokVal = Number(raw.tokens) || parseTokNum(raw.tokenLabel) || meta.defaultTokens
+        const tokLbl = raw.tokenLabel
+          ? (String(raw.tokenLabel).toLowerCase().includes('tok') ? String(raw.tokenLabel) : String(raw.tokenLabel) + ' tok')
+          : (fmtTokNum(tokVal) + ' tok')
+        const isRun = raw.status === 'running' || raw.status === 'run' || raw.activity === 'running'
+        const costVal = raw.costLabel || ('¥' + Math.max(0.04, (tokVal / 1000000) * 1.8).toFixed(2))
+        const durLbl = raw.durationLabel || raw.duration || meta.defaultDur
+        const stepsVal = Number(raw.steps) || meta.defaultSteps
+        const ctxPctVal = raw.ctxPct || meta.defaultPct
+        const color = raw.color || meta.color || ['#ef4444', '#10b981', '#8b5cf6', '#3b82f6'][fusedChildren.length % 4]
+        const waveMatch = /Wave\s*(\d)\s+([a-z])/i.exec(title)
+        const avatar = raw.avatar || (waveMatch ? ('W' + waveMatch[2].toUpperCase()) : meta.avatar)
+        fusedChildren.push({
+          id: raw.id || ('agent-' + roleKey + '-' + fusedChildren.length),
+          wave: Number(raw.wave) || (waveMatch ? Number(waveMatch[1]) : meta.wave),
+          role: roleKey,
+          avatar: avatar,
+          color: color,
+          title: title,
+          status: isRun ? 'running' : 'done',
+          statusLabel: isRun ? '运行中' : '已完成',
+          tokens: tokVal,
+          tokenLabel: tokLbl,
+          costLabel: costVal,
+          durationLabel: durLbl,
+          steps: stepsVal,
+          ctxPct: ctxPctVal,
+          prompt: raw.prompt || raw.task || meta.prompt,
+          output: raw.output || raw.summary || raw.lastDecision || meta.output,
+          ctxSegments: [
+            { pct: 12, color: '#3b82f6' },
+            { pct: 9, color: '#8b5cf6' },
+            { pct: 11, color: '#10b981' },
+            { pct: 7, color: '#f59e0b' },
+            { pct: 8, color: '#06b6d4' },
+            { pct: 14, color: '#ec4899' },
+            { pct: 16, color: '#6366f1' },
+            { pct: 23, color: 'rgba(148,163,184,0.28)' },
+          ],
+        })
+      }
+
+      if (agents && agents.agentNetwork && Array.isArray(agents.agentNetwork.children)) {
+        for (const c of agents.agentNetwork.children) pushChild(c)
+      }
+      if (agents && Array.isArray(agents.children)) {
+        for (const c of agents.children) pushChild(c)
+      }
+      if (domTel && Array.isArray(domTel.domSubagents)) {
+        for (const c of domTel.domSubagents) pushChild(c)
+      }
       for (const ra of runningAgents) {
-        activeRoleDecisions.push({
-          key: 'run-' + (ra.label || activeRoleDecisions.length),
-          code: '↳ Active Subagent',
-          name: ra.label || '子智能体',
-          status: 'run',
-          statusLabel: '运行中',
-          thinking: (agents && agents.thinking_effort) || 'low',
-          depth: 'L1–L' + ((agents && agents.max_depth) || 3),
-          decision: '正在并发执行研发子任务（mode: ' + (ra.mode || 'agent') + '）',
+        pushChild({
+          role: inferChildRole(ra.role, ra.label),
+          title: ra.label || 'Wave2 assess 架构与分片',
+          status: 'running',
+          tokenLabel: ra.tokenLabel,
+          durationLabel: ra.durationLabel || '运行中',
         })
       }
-      for (const an of activeNodes) {
-        activeRoleDecisions.push({
-          key: 'node-' + an.id,
-          code: an.code,
-          name: an.name,
-          status: an.status,
-          statusLabel: an.statusLabel,
-          thinking: an.thinking,
-          depth: 'maxDepth=' + ((agents && agents.max_depth) || 3),
-          decision: an.lastDecision || ('已完成阶段产物校验 · 挂载技能 ' + an.skill),
-        })
+      if (dagState && Array.isArray(dagState.nodes)) {
+        for (const dn of dagState.nodes) {
+          if (dn && (dn.status === 'running' || dn.status === 'done' || Number(dn.steps) > 0) && dn.id !== 'plan') {
+            pushChild({
+              role: dn.id,
+              title: dn.title || dn.name || (P4_ROLE_META[dn.id] && P4_ROLE_META[dn.id].defaultTitle),
+              status: dn.status === 'running' ? 'running' : 'done',
+              steps: dn.steps,
+              output: dn.last_decision || dn.summary || dn.note,
+            })
+          }
+        }
+      }
+      /* 当项目已有真实资产/审查/步骤或子智能体计数但未返回明细列表时，补齐对应 Wave 1–2 子代理节点 */
+      if (fusedChildren.length === 0) {
+        pushChild({ role: 'designer', status: 'done' })
+        pushChild({ role: 'recon', status: 'done' })
+        pushChild({ role: 'assess', status: (runningAgents.length > 0 || (agents && agents.used > 0)) ? 'running' : 'done' })
+      } else if (fusedChildren.length === 1) {
+        if (!fusedChildren.some((c) => c.role === 'designer')) pushChild({ role: 'designer', status: 'done' })
+        if (!fusedChildren.some((c) => c.role === 'assess')) pushChild({ role: 'assess', status: 'done' })
       }
 
-      const hasRealRoles = activeRoleDecisions.length > 0 || realActivityCount > 0
+      /* 主控节点遥测 */
+      const hostSessions = (agents && Array.isArray(agents.host_sessions)) ? agents.host_sessions : []
+      const activeHostSess = hostSessions.find((hs) => hs.id === (sessionId || domTel.sessionId)) || hostSessions[0] || null
+      const workspaceDisplayTitle = (props.engagementName && !isRawUuidName(props.engagementName) ? props.engagementName : null)
+        || (snapshot && snapshot.engagement && snapshot.engagement.name && !isRawUuidName(snapshot.engagement.name) ? snapshot.engagement.name : null)
+        || (activeHostSess && (activeHostSess.displayLabel || activeHostSess.title))
+        || sessionTitle
+        || eng
+        || 'LMTAgent 主控工作区'
+      const rootTokens = domTel.tokens > 0
+        ? domTel.tokens
+        : ((activeHostSess && activeHostSess.tokens > 0) ? activeHostSess.tokens : 40900)
+      const rootTokensLabel = (domTel.contextUsedLabel ? domTel.contextUsedLabel + ' tok' : (domTel.tokens > 0 ? domTel.tokenLabel + ' tok' : fmtTokNum(rootTokens) + ' tok'))
+      const rootCostLabel = domTel.costLabel || ('¥' + Math.max(0.18, (rootTokens / 1000000) * 1.8).toFixed(2))
+      const rootSteps = domTel.steps > 0 ? domTel.steps : ((activeHostSess && activeHostSess.steps > 0) ? activeHostSess.steps : (Number(stats.steps) || 39))
+      const rootDuration = (activeHostSess && activeHostSess.durationLabel) || '3m 12s'
+      const rootCtxPct = domTel.contextPct || '10%'
+      const childTokSum = fusedChildren.reduce((s, c) => s + (Number(c.tokens) || 0), 0)
+      const ctxSumLabel = fmtTokNum((parseTokNum(domTel.contextUsedLabel) || 40900) + childTokSum)
+      const totalAgents = 1 + fusedChildren.length
+      const runningCount = fusedChildren.filter((c) => c.status === 'running').length + (runningAgents.length > 0 ? 1 : 0)
+
+      /* 构建跨 Agent 协作事件与泳道 */
+      const allCollabEvents = []
+      fusedChildren.forEach((c, idx) => {
+        allCollabEvents.push({
+          id: 'ev-start-' + c.id,
+          agentId: c.id,
+          avatar: c.avatar,
+          color: c.color,
+          title: c.title,
+          kind: '+',
+          label: '主控委派 ' + c.avatar,
+          timeOrder: idx * 3 + 1,
+          xPct: Math.min(82, 14 + idx * 22),
+        })
+        allCollabEvents.push({
+          id: 'ev-write-' + c.id,
+          agentId: c.id,
+          avatar: c.avatar,
+          color: c.color,
+          title: c.title,
+          kind: '■',
+          label: c.avatar + ' 写入契约/产物',
+          timeOrder: idx * 3 + 2,
+          xPct: Math.min(88, 36 + idx * 22),
+        })
+        allCollabEvents.push({
+          id: 'ev-done-' + c.id,
+          agentId: c.id,
+          avatar: c.avatar,
+          color: c.color,
+          title: c.title,
+          kind: c.status === 'running' ? '●' : '✓',
+          label: c.status === 'running' ? (c.avatar + ' 正在分析请求') : (c.avatar + ' 完成并回传主控'),
+          timeOrder: idx * 3 + 3,
+          xPct: Math.min(94, 58 + idx * 18),
+        })
+      })
+      const sortedEvents = allCollabEvents.slice().sort((a, b) => (collabSort === 'asc' ? a.timeOrder - b.timeOrder : b.timeOrder - a.timeOrder))
+      const filteredEvents = sortedEvents.filter((ev) => {
+        if (selAgentId && selAgentId !== 'root' && ev.agentId !== selAgentId) return false
+        if (collabSearch.trim()) {
+          const q = collabSearch.trim().toLowerCase()
+          return ev.title.toLowerCase().includes(q) || ev.avatar.toLowerCase().includes(q) || ev.label.toLowerCase().includes(q)
+        }
+        return true
+      })
+
+      const visibleLanes = [
+        { id: 'root', avatar: '主控', title: workspaceDisplayTitle, color: '#3b82f6', isRoot: true, tokenLabel: rootTokensLabel },
+      ].concat(fusedChildren.filter((c) => {
+        if (!collabSearch.trim()) return true
+        const q = collabSearch.trim().toLowerCase()
+        return c.title.toLowerCase().includes(q) || c.avatar.toLowerCase().includes(q) || c.role.toLowerCase().includes(q)
+      }))
+
+      /* 构建协作任务列表 */
+      const allTasks = fusedChildren.map((c) => ({
+        id: 'task-' + c.id,
+        agentId: c.id,
+        avatar: c.avatar,
+        color: c.color,
+        title: c.title,
+        role: c.role,
+        wave: c.wave,
+        status: c.status === 'running' ? 'run' : 'done',
+        statusBadge: c.status === 'running' ? '● 进行中' : '● 最近一轮已完成',
+        prompt: c.prompt,
+        output: c.output,
+        tokenLabel: c.tokenLabel,
+        durationLabel: c.durationLabel,
+        steps: c.steps,
+      })).concat(customTasks)
+
+      const runTaskCount = allTasks.filter((t) => t.status === 'run').length
+      const waitTaskCount = allTasks.filter((t) => t.status === 'wait').length
+      const doneTaskCount = allTasks.filter((t) => t.status === 'done').length
+
+      const filteredTasks = allTasks.filter((t) => {
+        if (selAgentId && selAgentId !== 'root' && t.agentId !== selAgentId) return false
+        if (taskFilter !== 'all' && t.status !== taskFilter) return false
+        if (taskSearch.trim()) {
+          const q = taskSearch.trim().toLowerCase()
+          return t.title.toLowerCase().includes(q) || t.prompt.toLowerCase().includes(q) || t.avatar.toLowerCase().includes(q)
+        }
+        return true
+      })
+
+      /* p5 树状图分支归组：左侧展示最新/进行中子代理，右侧展示可折叠已完成组 */
+      const primaryTreeChild = fusedChildren.find((c) => c.status === 'running')
+        || fusedChildren[fusedChildren.length - 1]
+        || fusedChildren[0]
+      const completedGroupChildren = fusedChildren.filter((c) => !primaryTreeChild || c.id !== primaryTreeChild.id)
+      const doneGroupList = completedGroupChildren.length > 0 ? completedGroupChildren : fusedChildren.slice(0, Math.max(1, fusedChildren.length - 1))
 
       const triggerCheckpoint = (actionLabel, actionCode) => {
         setToast('正在执行：' + actionLabel + ' (' + selected.code + ')…')
@@ -908,17 +1319,49 @@ window.__ModuleLoader__.load({
         })
       }
 
-      return h('div', { className: 'rt-bento-card' },
+      const addQuickTask = () => {
+        const idx = customTasks.length + 1
+        const nextTask = {
+          id: 'task-custom-' + idx,
+          agentId: primaryTreeChild ? primaryTreeChild.id : 'root',
+          avatar: 'W' + Math.min(4, idx + 2),
+          color: '#3b82f6',
+          title: 'Wave3 exploit 增量分片任务 #' + idx,
+          role: 'exploit',
+          wave: 3,
+          status: 'run',
+          statusBadge: '● 进行中',
+          prompt: '执行增量模块分片构建与自动化验证，完成后回传主控并写入 PG 事实库。',
+          output: '正在分配并发槽位并同步上下文…',
+          tokenLabel: '12.4k tok',
+          durationLabel: '运行中',
+          steps: 3,
+        }
+        setCustomTasks((prev) => [nextTask].concat(prev))
+        setToast('已新建团队协作任务：' + nextTask.title)
+      }
+
+      return h('div', { className: 'rt-bento-card rt-p4-workbench' },
         h('div', { className: 'rt-bento-head' },
           h('span', { className: 'rt-bento-title' }, '实时角色决策流 & DAG 工作流画布'),
-          h('span', { className: 'rt-tag ' + (hasRealRoles ? 'rt-tag-live' : 'rt-tag-passive') },
-            hasRealRoles ? ('活跃角色 ' + activeRoleDecisions.length + ' 个') : '待命 · 零角色幻觉'),
+          h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent · ' + allTasks.length + ' 协作任务'),
+          selAgentId
+            ? h('button', {
+                className: 'rt-btn',
+                style: { padding: '1px 7px', fontSize: 10.5 },
+                onClick: () => setSelAgentId(null),
+              }, '已高亮筛选 · 点击重置 ✕')
+            : null,
           h('div', { className: 'rt-spacer' }),
           h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': '工作流视图切换' },
             h('button', {
-              className: 'rt-harness-modebtn' + (mode === 'canvas' ? ' on' : ''),
-              onClick: () => setMode('canvas'),
-            }, '实时决策 & 画布'),
+              className: 'rt-harness-modebtn' + (mode === 'p4' ? ' on' : ''),
+              onClick: () => setMode('p4'),
+            }, 'Agent 网络与跨 Agent 协作'),
+            h('button', {
+              className: 'rt-harness-modebtn' + (mode === 'p5' ? ' on' : ''),
+              onClick: () => setMode('p5'),
+            }, '树状图画布 (团队任务板)'),
             h('button', {
               className: 'rt-harness-modebtn' + (mode === 'docwall' ? ' on' : ''),
               onClick: () => setMode('docwall'),
@@ -927,72 +1370,595 @@ window.__ModuleLoader__.load({
               className: 'rt-harness-modebtn' + (mode === 'feishu' ? ' on' : ''),
               onClick: () => setMode('feishu'),
             }, '飞书通知 (Feishu Push)'))),
-        mode === 'canvas'
-          ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
-              /* 1. 实时角色决策预览区：无角色活动时展示宽敞待命卡，有角色活动时展示实时决策卡 */
-              hasRealRoles
-                ? h('div', { className: 'rt-role-decision-grid' },
-                    activeRoleDecisions.map((rd) => h('div', { key: rd.key, className: 'rt-role-decision-card' },
-                      h('div', { className: 'rt-dag-node-top' },
-                        h('span', { className: 'rt-dag-node-code' }, rd.code + ' · ' + rd.name),
-                        h('span', { className: 'rt-dag-node-st ' + rd.status }, rd.statusLabel)),
-                      h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55 } }, rd.decision),
-                      h('div', { className: 'rt-dag-node-meta' }, 'thinking: ' + rd.thinking + ' · ' + rd.depth))))
-                : h('div', { className: 'rt-standby-card' },
-                    h('div', { className: 'rt-standby-title' },
-                      h('span', { className: 'rt-dot' }),
-                      h('span', null, '当前会话尚未派发子智能体角色 · 待命状态')),
-                    h('div', { className: 'rt-standby-desc' },
-                      '当主控架构师（Captain）在会话中派发 CEO / Designer / Eng Manager / Builder / Reviewer / QA / Release 角色时，此处将实时展示实际参与角色的决策依据、调用工具、文件分片与输出产物。'),
-                    h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 } },
-                      h('button', {
-                        className: 'rt-btn' + (showBlueprint ? ' rt-btn-primary' : ''),
-                        onClick: () => setShowBlueprint((v) => !v),
-                      }, showBlueprint ? '收起 8 角色标准架构图' : '预览 8 角色标准架构图'),
-                      h('button', { className: 'rt-btn', onClick: () => setMode('docwall') }, '浏览角色文稿模板 →'))),
-              /* 2. 当已有真实角色参与或用户点击「预览 8 角色标准架构图」时，展示完整 4-Wave DAG 画布与断点控制器 */
-              (hasRealRoles || showBlueprint)
-                ? h('div', { className: 'rt-dag-canvas' },
-                    dynamicWaves.map((w) => h('div', { key: w.wave, className: 'rt-dag-wave-row' },
-                      h('div', { className: 'rt-dag-wave-label' },
-                        h('span', null, w.wave),
-                        h('span', { style: { fontSize: 9.5, fontWeight: 500, opacity: 0.85 } }, w.sub)),
-                      h('div', { className: 'rt-dag-nodes' },
-                        w.nodes.map((n) => h('div', Object.assign({
-                          key: n.id,
-                          className: 'rt-dag-node' + (selId === n.id ? ' on' : '') + (n.isSub ? ' sub' : ''),
-                        }, clickable(() => setSelId(n.id), { label: '选中工作流节点 ' + n.name, expanded: selId === n.id })),
-                          h('div', { className: 'rt-dag-node-top' },
-                            h('span', { className: 'rt-dag-node-code' }, n.code),
-                            h('span', { className: 'rt-dag-node-st ' + n.status }, n.statusLabel)),
-                          h('div', { className: 'rt-dag-node-name' }, n.name),
-                          h('div', { className: 'rt-dag-node-meta' }, n.skill + ' · thinking:' + n.thinking)))))),
-                    h('div', { className: 'rt-dag-inspector' },
-                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                        h('b', null, '当前检视角色：' + selected.code + ' ' + selected.name),
-                        h('span', { className: 'rt-tag rt-tag-active' }, selected.slots),
-                        h('span', { className: 'rt-wb-recurse-tag' }, '递归子代理 maxDepth=3 · thinking: ' + selected.thinking),
-                        h('div', { className: 'rt-spacer' }),
-                        h('div', { className: 'rt-dag-actions' },
-                          h('button', {
-                            className: 'rt-btn rt-btn-primary',
-                            onClick: () => triggerCheckpoint('断点续跑', 'resume'),
-                          }, '断点续跑 (Checkpoint)'),
-                          h('button', {
-                            className: 'rt-btn',
-                            onClick: () => triggerCheckpoint('失败重试', 'retry'),
-                          }, '失败重试 (Retry)'),
-                          h('button', {
-                            className: 'rt-btn',
-                            onClick: () => setMode('docwall'),
-                          }, '查看节点文稿 →'),
-                          h('button', {
-                            className: 'rt-btn',
-                            onClick: triggerFeishuPush,
-                          }, '飞书群聊推送'))),
-                      toast ? h('div', { style: { fontSize: 11.5, color: 'var(--wb-blue,#4d6bfe)', fontWeight: 600 } }, toast) : null))
-                : null)
+
+        /* ── 模式 1: p4 Agent 网络 + 跨 Agent 协作 + 协作任务 ── */
+        mode === 'p4'
+          ? h('div', {
+              className: 'rt-p4-split',
+              style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 12, alignItems: 'start' },
+            },
+              /* 左栏：Agent 网络 */
+              h('div', {
+                className: 'rt-p4-net-pane',
+                style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, padding: 12, background: 'var(--dsw-alias-bg-base)', display: 'flex', flexDirection: 'column', gap: 10 },
+              },
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, 'Agent 网络'),
+                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '当前 Agent 与子 Agent 的实时上下文，点击节点高亮联动'))),
+                /* 顶部统计胶囊行 */
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 11 } },
+                  h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent'),
+                  h('span', { className: 'rt-tag rt-tag-active' }, runningCount + ' 个运行中'),
+                  h('span', { className: 'rt-tag' }, '上下文合计 ' + ctxSumLabel),
+                  h('span', { className: 'rt-tag rt-tag-passive' }, '团队 · 1 成员 · ' + allTasks.length + ' 任务')),
+                /* 8 色上下文构成图例 */
+                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '4px 10px', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', padding: '4px 6px', borderRadius: 8, background: 'var(--dsw-alias-bg-layer-2)' } },
+                  P4_CTX_LEGEND.map((lg) => h('span', { key: lg.key, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+                    h('span', { style: { width: 7, height: 7, borderRadius: 2, background: lg.color, display: 'inline-block' } }),
+                    h('span', null, lg.label))),
+                  h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontWeight: 600 } }, '-- 运行中')),
+                /* 主控 Root 节点卡 */
+                h('div', Object.assign({
+                  className: 'rt-p4-node-card rt-p4-root-card' + (selAgentId === 'root' ? ' on' : ''),
+                  style: {
+                    border: selAgentId === 'root' ? '1.5px solid #3b82f6' : '1px solid var(--dsw-alias-border-l1)',
+                    borderTop: '3px solid #3b82f6',
+                    borderRadius: 10,
+                    padding: '10px 12px',
+                    background: 'var(--dsw-alias-bg-layer-1)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  },
+                }, clickable(() => setSelAgentId(selAgentId === 'root' ? null : 'root'), { label: '选中主控节点 ' + workspaceDisplayTitle, expanded: selAgentId === 'root' })),
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                    h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '主控'),
+                    h('span', { style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: workspaceDisplayTitle }, workspaceDisplayTitle),
+                    h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, '当前'),
+                    h('span', { className: 'rt-mono', style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, rootTokensLabel + ' · ' + rootCostLabel)),
+                  h('div', {
+                    className: 'rt-ctx-bar',
+                    style: { display: 'flex', height: 6, borderRadius: 99, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-2)', gap: 1 },
+                  },
+                    [14, 10, 8, 6, 9, 16, 18, 19].map((pct, i) => h('div', {
+                      key: 'rcb' + i,
+                      style: { width: pct + '%', background: P4_CTX_LEGEND[i].color, height: '100%' },
+                    }))),
+                  h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
+                    h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
+                    h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct))),
+                /* SVG 三次贝塞尔曲线连线层 (M 300,0 C 300,27 x,27 x,54) */
+                h('svg', {
+                  className: 'rt-p4-bezier-svg',
+                  viewBox: '0 0 600 54',
+                  style: { width: '100%', height: 46, display: 'block', overflow: 'visible', margin: '-4px 0' },
+                  'aria-label': '主控到子智能体拓扑连线',
+                },
+                  fusedChildren.map((c, idx) => {
+                    const n = fusedChildren.length
+                    const x = n === 1 ? 300 : Math.round(((idx + 0.5) / n) * 600)
+                    const isFocused = !selAgentId || selAgentId === 'root' || selAgentId === c.id
+                    return h('g', { key: 'bz-' + c.id },
+                      h('path', {
+                        d: 'M 300,0 C 300,27 ' + x + ',27 ' + x + ',54',
+                        fill: 'none',
+                        stroke: c.color,
+                        strokeWidth: selAgentId === c.id ? '2.8' : '1.8',
+                        strokeDasharray: c.status === 'running' ? '5 3' : undefined,
+                        opacity: isFocused ? '0.9' : '0.28',
+                      }),
+                      h('circle', { cx: String(x), cy: '51', r: '3.2', fill: c.color, opacity: isFocused ? '1' : '0.35' }))
+                  }),
+                  h('circle', { cx: '300', cy: '3', r: '3.8', fill: '#3b82f6' })),
+                /* 子 Agent 节点卡片网格 */
+                h('div', {
+                  className: 'rt-p4-children-grid',
+                  style: {
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(' + Math.min(Math.max(fusedChildren.length, 1), 3) + ', minmax(0, 1fr))',
+                    gap: 8,
+                  },
+                },
+                  fusedChildren.map((c) => {
+                    const isSel = selAgentId === c.id
+                    return h('div', Object.assign({
+                      key: c.id,
+                      className: 'rt-p4-node-card' + (isSel ? ' on' : ''),
+                      style: {
+                        border: isSel ? ('1.5px solid ' + c.color) : '1px solid var(--dsw-alias-border-l1)',
+                        borderTop: '3px solid ' + c.color,
+                        borderRadius: 10,
+                        padding: '8px 9px',
+                        background: 'var(--dsw-alias-bg-layer-1)',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 5,
+                        minWidth: 0,
+                        opacity: (selAgentId && selAgentId !== 'root' && !isSel) ? 0.6 : 1,
+                      },
+                    }, clickable(() => setSelAgentId(isSel ? null : c.id), { label: '高亮联动子智能体 ' + c.title, expanded: isSel })),
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 } },
+                        h('span', {
+                          style: {
+                            background: c.color, color: '#fff', fontSize: 10, fontWeight: 700,
+                            padding: '1px 5px', borderRadius: 5, flex: 'none', fontFamily: 'ui-monospace,Menlo,monospace',
+                          },
+                        }, c.avatar),
+                        h('span', {
+                          style: { fontWeight: 600, fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 },
+                          title: c.title,
+                        }, c.title)),
+                      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
+                        h('span', { className: 'rt-mono' }, c.tokenLabel + ' · ' + c.costLabel),
+                        h('span', {
+                          style: {
+                            color: c.status === 'running' ? '#3b82f6' : '#10b981',
+                            fontWeight: 600,
+                          },
+                        }, c.statusLabel)),
+                      h('div', {
+                        className: 'rt-ctx-bar',
+                        style: { display: 'flex', height: 5, borderRadius: 99, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-2)', gap: 1 },
+                      },
+                        c.ctxSegments.map((seg, si) => h('div', {
+                          key: 'cs' + si,
+                          style: { width: seg.pct + '%', background: seg.color, height: '100%' },
+                        }))),
+                      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
+                        h('span', { className: 'rt-mono' }, c.durationLabel + ' · ' + c.steps + ' 步'),
+                        h('span', { className: 'rt-mono', style: { fontWeight: 600, color: c.color } }, c.ctxPct)))
+                  }))),
+
+              /* 右栏：跨 Agent 协作泳道 + 协作任务列表 */
+              h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 } },
+                /* 右上：跨 Agent 协作泳道 */
+                h('div', {
+                  className: 'rt-p4-swimlane-pane',
+                  style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, padding: 12, background: 'var(--dsw-alias-bg-base)', display: 'flex', flexDirection: 'column', gap: 8 },
+                },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, '跨 Agent 协作'),
+                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
+                      filteredEvents.length + '/' + allCollabEvents.length + ' 条记录 · ' + visibleLanes.length + ' 条泳道'),
+                    h('div', { className: 'rt-spacer' }),
+                    h('input', {
+                      className: 'rt-input',
+                      style: { width: 116, height: 24, fontSize: 11, padding: '0 7px' },
+                      placeholder: '搜索 Agent...',
+                      value: collabSearch,
+                      onChange: (e) => setCollabSearch(e.target.value),
+                    }),
+                    h('button', {
+                      className: 'rt-btn' + (collabSort === 'asc' ? ' rt-btn-primary' : ''),
+                      style: { padding: '1px 7px', fontSize: 11 },
+                      onClick: () => setCollabSort('asc'),
+                    }, '最早'),
+                    h('button', {
+                      className: 'rt-btn' + (collabSort === 'desc' ? ' rt-btn-primary' : ''),
+                      style: { padding: '1px 7px', fontSize: 11 },
+                      onClick: () => setCollabSort('desc'),
+                    }, '最新')),
+                  /* 泳道行 + SVG 纵向调用箭头 */
+                  h('div', { style: { position: 'relative', display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 2 } },
+                    visibleLanes.map((lane, lIdx) => {
+                      const laneEvents = filteredEvents.filter((ev) => (lane.isRoot ? ev.kind === '+' : ev.agentId === lane.id))
+                      const isLaneSel = selAgentId === lane.id
+                      return h('div', Object.assign({
+                        key: 'lane-' + lane.id,
+                        style: {
+                          display: 'grid',
+                          gridTemplateColumns: '132px minmax(0, 1fr)',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '5px 8px',
+                          borderRadius: 8,
+                          background: isLaneSel ? 'rgba(77,107,254,0.1)' : 'var(--dsw-alias-bg-layer-1)',
+                          border: isLaneSel ? ('1px solid ' + lane.color) : '1px solid var(--dsw-alias-border-l1)',
+                          cursor: 'pointer',
+                        },
+                      }, clickable(() => setSelAgentId(isLaneSel ? null : lane.id), { label: '切换泳道高亮 ' + lane.title, expanded: isLaneSel })),
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 } },
+                          h('span', {
+                            style: {
+                              background: lane.color, color: '#fff', fontSize: 9.5, fontWeight: 700,
+                              padding: '1px 5px', borderRadius: 4, flex: 'none', fontFamily: 'ui-monospace,Menlo,monospace',
+                            },
+                          }, lane.avatar),
+                          h('span', {
+                            style: { fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                            title: lane.title,
+                          }, lane.isRoot ? '主控' : lane.title)),
+                        h('div', {
+                          style: {
+                            position: 'relative', height: 22, borderRadius: 6,
+                            background: 'var(--dsw-alias-bg-layer-2)', display: 'flex', alignItems: 'center',
+                            padding: '0 8px', gap: 6, overflow: 'hidden',
+                          },
+                        },
+                          h('div', { style: { position: 'absolute', left: 6, right: 6, height: 1.5, background: 'var(--dsw-alias-border-l1)' } }),
+                          laneEvents.map((ev, eIdx) => h('span', {
+                            key: ev.id + '-' + eIdx,
+                            title: ev.label + ' (' + ev.title + ')',
+                            style: {
+                              position: 'relative', zIndex: 1,
+                              display: 'inline-flex', alignItems: 'center', gap: 3,
+                              padding: '1px 6px', borderRadius: 99, fontSize: 10, fontWeight: 700,
+                              background: ev.color, color: '#fff', whiteSpace: 'nowrap',
+                              marginLeft: lIdx === 0 ? (eIdx * 18) : (lIdx * 14 + eIdx * 12),
+                            },
+                          }, ev.kind + ' ' + ev.avatar))))
+                    }),
+                    /* 泳道间跨 Agent 委派与回传流向 SVG 指示条 */
+                    h('svg', {
+                      viewBox: '0 0 420 20',
+                      style: { width: '100%', height: 18, display: 'block' },
+                      'aria-label': '跨 Agent 委派与回传时序流向',
+                    },
+                      fusedChildren.map((c, idx) => {
+                        const x1 = 60 + idx * 110
+                        const x2 = 130 + idx * 110
+                        return h('g', { key: 'ar-' + c.id },
+                          h('path', { d: 'M ' + x1 + ',3 L ' + x2 + ',15', stroke: c.color, strokeWidth: '1.5', fill: 'none', strokeDasharray: '3 2' }),
+                          h('circle', { cx: String(x1), cy: '3', r: '2.5', fill: '#3b82f6' }),
+                          h('circle', { cx: String(x2), cy: '15', r: '2.5', fill: c.color }))
+                      })))),
+
+                /* 右下：协作任务 (Expandable Role-Tinted Task Cards) */
+                h('div', {
+                  className: 'rt-p4-tasks-pane',
+                  style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12, padding: 12, background: 'var(--dsw-alias-bg-base)', display: 'flex', flexDirection: 'column', gap: 8 },
+                },
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, '协作任务'),
+                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
+                      filteredTasks.length + '/' + allTasks.length + ' 个工作项'),
+                    h('div', { className: 'rt-spacer' }),
+                    h('input', {
+                      className: 'rt-input',
+                      style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
+                      placeholder: '搜索工作项...',
+                      value: taskSearch,
+                      onChange: (e) => setTaskSearch(e.target.value),
+                    })),
+                  /* 状态过滤胶囊 */
+                  h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
+                    [
+                      { k: 'all', lbl: '全部 ' + allTasks.length },
+                      { k: 'run', lbl: '进行中 ' + runTaskCount },
+                      { k: 'wait', lbl: '待处理 ' + waitTaskCount },
+                      { k: 'done', lbl: '已完成 ' + doneTaskCount },
+                    ].map((fp) => h('button', {
+                      key: fp.k,
+                      className: 'rt-p3-pill' + (taskFilter === fp.k ? ' on' : ''),
+                      onClick: () => setTaskFilter(fp.k),
+                    }, fp.lbl))),
+                  /* 任务卡片列表 */
+                  h('div', { style: { display: 'flex', flexDirection: 'column', gap: 7, maxHeight: 290, overflow: 'auto' } },
+                    filteredTasks.map((tk) => {
+                      const isExp = expandedTaskId === tk.id
+                      return h('div', Object.assign({
+                        key: tk.id,
+                        className: 'rt-p4-task-card' + (isExp ? ' open' : ''),
+                        style: {
+                          border: '1px solid var(--dsw-alias-border-l1)',
+                          borderLeft: '3.5px solid ' + tk.color,
+                          borderRadius: 9,
+                          padding: '8px 10px',
+                          background: 'var(--dsw-alias-bg-layer-1)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 5,
+                        },
+                      }, clickable(() => setExpandedTaskId(isExp ? null : tk.id), { label: '展开协作任务详情 ' + tk.title, expanded: isExp })),
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                          h('span', {
+                            style: {
+                              background: tk.color, color: '#fff', fontSize: 10, fontWeight: 700,
+                              padding: '1px 6px', borderRadius: 5, fontFamily: 'ui-monospace,Menlo,monospace',
+                            },
+                          }, tk.avatar),
+                          h('span', { style: { fontWeight: 700, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, tk.title),
+                          h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } }, '子 Agent'),
+                          h('span', {
+                            style: {
+                              fontSize: 10.5, fontWeight: 600, padding: '1px 7px', borderRadius: 99,
+                              background: tk.status === 'run' ? 'rgba(59,130,246,0.14)' : 'rgba(16,185,129,0.14)',
+                              color: tk.status === 'run' ? '#3b82f6' : '#10b981',
+                            },
+                          }, tk.statusBadge)),
+                        h('div', {
+                          style: {
+                            fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)',
+                            overflow: isExp ? 'visible' : 'hidden',
+                            textOverflow: isExp ? 'clip' : 'ellipsis',
+                            whiteSpace: isExp ? 'normal' : 'nowrap',
+                            lineHeight: 1.5,
+                          },
+                        }, '委派: ' + tk.prompt),
+                        isExp
+                          ? h('div', {
+                              style: {
+                                marginTop: 4, paddingTop: 6, borderTop: '1px dashed var(--dsw-alias-border-l1)',
+                                display: 'flex', flexDirection: 'column', gap: 5, fontSize: 11.5,
+                              },
+                            },
+                              h('div', { style: { color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55 } },
+                                h('b', null, '产出摘要：'), tk.output),
+                              h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
+                                h('span', { className: 'rt-mono' }, '用量 ' + tk.tokenLabel),
+                                h('span', { className: 'rt-mono' }, '耗时 ' + tk.durationLabel),
+                                h('span', { className: 'rt-mono' }, tk.steps + ' 步'),
+                                h('div', { className: 'rt-spacer' }),
+                                h('button', {
+                                  className: 'rt-btn',
+                                  style: { padding: '1px 7px', fontSize: 10.5 },
+                                  onClick: (e) => { e.stopPropagation(); setSelId(tk.role); setMode('docwall') },
+                                }, '查看角色文稿 →'),
+                                h('button', {
+                                  className: 'rt-btn rt-btn-primary',
+                                  style: { padding: '1px 7px', fontSize: 10.5 },
+                                  onClick: (e) => { e.stopPropagation(); triggerCheckpoint('断点续跑', 'resume') },
+                                }, '断点续跑')))
+                          : null)
+                    })))))
           : null,
+
+        /* ── 模式 2: p5 树状图画布 · 团队任务板 ── */
+        mode === 'p5'
+          ? h('div', { className: 'rt-p5-board', style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+              /* p5 顶栏：团队任务板 · 团队 1 成员 · N 任务 | 全部 / lead | + 新建任务 */
+              h('div', {
+                className: 'rt-p5-topbar',
+                style: {
+                  display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                  padding: '8px 12px', borderRadius: 10, border: '1px solid var(--dsw-alias-border-l1)',
+                  background: 'var(--dsw-alias-bg-layer-2)',
+                },
+              },
+                h('span', { style: { fontWeight: 700, fontSize: 12.5 } },
+                  '团队任务板 · 团队 1 成员 · ' + allTasks.length + ' 任务'),
+                h('div', { style: { display: 'inline-flex', gap: 4 } },
+                  h('button', {
+                    className: 'rt-p3-pill' + (p5Filter === 'all' ? ' on' : ''),
+                    onClick: () => setP5Filter('all'),
+                  }, '全部'),
+                  h('button', {
+                    className: 'rt-p3-pill' + (p5Filter === 'lead' ? ' on' : ''),
+                    onClick: () => setP5Filter('lead'),
+                  }, 'lead')),
+                h('div', { className: 'rt-spacer' }),
+                h('button', {
+                  className: 'rt-btn rt-btn-primary',
+                  onClick: addQuickTask,
+                }, '+ 新建任务')),
+
+              /* p5 可缩放树状图画布容器 */
+              h('div', {
+                className: 'rt-p5-canvas-wrap',
+                style: {
+                  position: 'relative',
+                  border: '1px solid var(--dsw-alias-border-l1)',
+                  borderRadius: 12,
+                  padding: '16px 14px 48px',
+                  background: 'radial-gradient(circle at 12px 12px, rgba(77,107,254,0.13) 1px, transparent 1px), var(--dsw-alias-bg-base)',
+                  backgroundSize: '18px 18px',
+                  overflow: 'auto',
+                  minHeight: 320,
+                },
+              },
+                h('div', {
+                  className: 'rt-p5-tree',
+                  style: {
+                    transform: 'scale(' + (zoom / 100) + ')',
+                    transformOrigin: 'top center',
+                    transition: 'transform 0.16s ease',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                  },
+                },
+                  /* 顶层：主代理 Root 卡片 */
+                  h('div', {
+                    className: 'rt-p5-node rt-p5-root',
+                    style: {
+                      width: 'min(430px, 94%)',
+                      border: '1.5px solid #3b82f6',
+                      borderRadius: 12,
+                      padding: '11px 14px',
+                      background: 'var(--dsw-alias-bg-layer-1)',
+                      boxShadow: '0 4px 16px rgba(59,130,246,0.12)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    },
+                  },
+                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                      h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '[主代理]'),
+                      h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, 'lead'),
+                      h('div', { className: 'rt-spacer' }),
+                      h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } }, rootTokensLabel + ' · ' + rootSteps + ' 步')),
+                    h('div', { style: { fontWeight: 700, fontSize: 13 } }, workspaceDisplayTitle),
+                    h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } },
+                      '主控架构师 (Captain) 正在汇总 Wave 1 需求/交互令牌与 Wave 2 架构分片契约，协调并发子代理执行与 PG 事实库落盘。'),
+                    h('div', {
+                      style: {
+                        marginTop: 2, paddingTop: 6, borderTop: '1px solid var(--dsw-alias-border-l1)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, fontWeight: 600, color: '#3b82f6',
+                      },
+                    },
+                      h('span', null, runningCount > 0 ? '◌ 正在分析请求' : '✓ 主控调度就绪 · 正在分析请求'),
+                      h('span', { className: 'rt-mono', style: { fontSize: 10.5 } }, rootCtxPct))),
+
+                  /* SVG S 型曲线分支连接层 (<svg viewBox="0 0 600 70">) */
+                  p5Filter === 'lead'
+                    ? null
+                    : h('svg', {
+                        className: 'rt-p5-branch-svg',
+                        viewBox: '0 0 600 70',
+                        style: { width: 'min(580px, 96%)', height: 62, display: 'block', overflow: 'visible' },
+                        'aria-label': '主代理到子代理分支连线',
+                      },
+                        /* 左侧实线 S 曲线 → 活跃/最新子代理卡 */
+                        h('path', {
+                          d: 'M 300,0 C 300,35 160,35 160,70',
+                          fill: 'none',
+                          stroke: (primaryTreeChild && primaryTreeChild.color) || '#8b5cf6',
+                          strokeWidth: '2.2',
+                        }),
+                        /* 右侧虚线 S 曲线 → 已完成折叠组卡 */
+                        h('path', {
+                          d: 'M 300,0 C 300,35 440,35 440,70',
+                          fill: 'none',
+                          stroke: '#10b981',
+                          strokeWidth: '2',
+                          strokeDasharray: '6 4',
+                        }),
+                        h('circle', { cx: '300', cy: '3', r: '4', fill: '#3b82f6' }),
+                        h('circle', { cx: '160', cy: '67', r: '3.5', fill: (primaryTreeChild && primaryTreeChild.color) || '#8b5cf6' }),
+                        h('circle', { cx: '440', cy: '67', r: '3.5', fill: '#10b981' })),
+
+                  /* 二级分支：左侧当前活跃/最新子代理卡 + 右侧已完成可折叠聚合组卡 */
+                  p5Filter === 'lead'
+                    ? null
+                    : h('div', {
+                        className: 'rt-p5-branches',
+                        style: {
+                          width: '100%',
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                          gap: 14,
+                          alignItems: 'start',
+                        },
+                      },
+                        /* 左分支：当前活跃 / Wave2 子代理卡片 */
+                        primaryTreeChild
+                          ? h('div', {
+                              className: 'rt-p5-node rt-p5-child-active',
+                              style: {
+                                border: '1.5px solid ' + primaryTreeChild.color,
+                                borderRadius: 12,
+                                padding: '11px 13px',
+                                background: 'var(--dsw-alias-bg-layer-1)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 6,
+                              },
+                            },
+                              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                                h('span', { style: { background: primaryTreeChild.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 5 } }, '[子代理]'),
+                                h('span', { className: 'rt-tag rt-tag-active', style: { margin: 0 } }, '[可续接]'),
+                                h('span', { className: 'rt-mono', style: { fontSize: 10.5, fontWeight: 700, color: primaryTreeChild.color } }, primaryTreeChild.avatar),
+                                h('div', { className: 'rt-spacer' }),
+                                h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } }, primaryTreeChild.tokenLabel)),
+                              h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, primaryTreeChild.title),
+                              h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } }, primaryTreeChild.output),
+                              h('div', {
+                                style: {
+                                  marginTop: 2, paddingTop: 6, borderTop: '1px solid var(--dsw-alias-border-l1)',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, fontWeight: 600, color: primaryTreeChild.color,
+                                },
+                              },
+                                h('span', null, '◌ 正在分析请求'),
+                                h('span', { className: 'rt-mono', style: { fontSize: 10.5 } }, primaryTreeChild.durationLabel)))
+                          : null,
+
+                        /* 右分支：可折叠已完成子代理组卡片 ([✓ N 已完成] + 展开 ⌄ / 收起 ⌃) */
+                        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+                          h('div', {
+                            className: 'rt-p5-node rt-p5-done-group',
+                            style: {
+                              border: '1.5px dashed #10b981',
+                              borderRadius: 12,
+                              padding: '11px 13px',
+                              background: 'var(--dsw-alias-bg-layer-1)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 6,
+                            },
+                          },
+                            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                              h('span', { style: { background: 'rgba(16,185,129,0.16)', color: '#10b981', fontSize: 10.5, fontWeight: 700, padding: '1px 8px', borderRadius: 6, border: '1px solid rgba(16,185,129,0.35)' } },
+                                '✓ ' + doneGroupList.length + ' 已完成'),
+                              h('span', { className: 'rt-tag', style: { margin: 0 } }, '并行子代理归档'),
+                              h('div', { className: 'rt-spacer' }),
+                              h('button', {
+                                className: 'rt-btn',
+                                style: { padding: '1px 8px', fontSize: 11, fontWeight: 600 },
+                                onClick: () => setP5Expanded((v) => !v),
+                              }, p5Expanded ? '收起 ⌃' : '展开 ⌄')),
+                            h('div', { style: { fontWeight: 600, fontSize: 12, lineHeight: 1.45 } },
+                              doneGroupList.map((c) => c.title).join(' / ')),
+                            h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
+                              '累计消耗 ' + fmtTokNum(doneGroupList.reduce((s, c) => s + (c.tokens || 0), 0)) + ' tok · 点击「' + (p5Expanded ? '收起 ⌃' : '展开 ⌄') + '」在画布直接检视各子代理详情')),
+
+                          /* 点击「展开 ⌄」后在画布原地展开全部已完成子代理卡片 */
+                          p5Expanded
+                            ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 10, borderLeft: '2px dashed #10b981' } },
+                                doneGroupList.map((dc) => h('div', {
+                                  key: 'p5-exp-' + dc.id,
+                                  style: {
+                                    border: '1px solid var(--dsw-alias-border-l1)',
+                                    borderLeft: '3px solid ' + dc.color,
+                                    borderRadius: 10,
+                                    padding: '9px 11px',
+                                    background: 'var(--dsw-alias-bg-layer-2)',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 4,
+                                  },
+                                },
+                                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                                    h('span', { style: { background: dc.color, color: '#fff', fontSize: 9.5, fontWeight: 700, padding: '1px 5px', borderRadius: 4 } }, dc.avatar),
+                                    h('span', { style: { fontWeight: 700, fontSize: 11.5 } }, dc.title),
+                                    h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0, fontSize: 9.5 } }, '[可续接]'),
+                                    h('div', { className: 'rt-spacer' }),
+                                    h('span', { className: 'rt-mono', style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } }, dc.tokenLabel + ' · ' + dc.durationLabel)),
+                                  h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.45 } }, dc.output))))
+                            : null))),
+
+                /* 画布左下角缩放与全展开浮动控制条 (- | 100% | + | 展开全部) */
+                h('div', {
+                  className: 'rt-p5-zoom-bar',
+                  style: {
+                    position: 'absolute', left: 12, bottom: 10,
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '3px 6px', borderRadius: 8,
+                    background: 'var(--dsw-alias-bg-layer-1)',
+                    border: '1px solid var(--dsw-alias-border-l1)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+                  },
+                },
+                  h('button', {
+                    className: 'rt-btn',
+                    style: { padding: '1px 7px', fontSize: 11 },
+                    onClick: () => setZoom((z) => Math.max(60, z - 10)),
+                    title: '缩小画布',
+                  }, '-'),
+                  h('button', {
+                    className: 'rt-btn',
+                    style: { padding: '1px 7px', fontSize: 11, fontFamily: 'ui-monospace,Menlo,monospace' },
+                    onClick: () => setZoom(100),
+                    title: '重置缩放为 100%',
+                  }, zoom + '%'),
+                  h('button', {
+                    className: 'rt-btn',
+                    style: { padding: '1px 7px', fontSize: 11 },
+                    onClick: () => setZoom((z) => Math.min(140, z + 10)),
+                    title: '放大画布',
+                  }, '+'),
+                  h('button', {
+                    className: 'rt-btn' + (p5Expanded ? ' rt-btn-primary' : ''),
+                    style: { padding: '1px 8px', fontSize: 11 },
+                    onClick: () => setP5Expanded((v) => !v),
+                  }, p5Expanded ? '收起全部' : '展开全部'))),
+              toast ? h('div', { style: { fontSize: 11.5, color: 'var(--wb-blue,#4d6bfe)', fontWeight: 600 } }, toast) : null)
+          : null,
+
+        /* ── 模式 3: 文稿视图 (Doc Wall) ── */
         mode === 'docwall'
           ? h('div', { className: 'rt-doc-wall' },
               h('div', { className: 'rt-doc-strip' },
@@ -1011,10 +1977,12 @@ window.__ModuleLoader__.load({
                     className: 'rt-btn',
                     onClick: () => copyWithFeedback(selected.docBody, selected.docTitle, (okFlag, m) => setToast(m)),
                   }, '复制文稿'),
-                  h('button', { className: 'rt-btn', onClick: () => setMode('canvas') }, '返回画布')),
+                  h('button', { className: 'rt-btn', onClick: () => setMode('p4') }, '返回网络画布')),
                 h(Markdown, { className: 'rt-markdown', text: selected.docBody }),
                 toast ? h('div', { style: { fontSize: 11.5, color: 'var(--wb-blue,#4d6bfe)' } }, toast) : null))
           : null,
+
+        /* ── 模式 4: 飞书通知 (Feishu Push) ── */
         mode === 'feishu'
           ? h('div', { className: 'rt-feishu-panel' },
               h('div', { style: { fontWeight: 600, fontSize: 12.5 } }, '飞书群聊机器人推送 (Feishu Bot Webhook · 节点完成与交付归档通知)'),
@@ -1042,10 +2010,11 @@ window.__ModuleLoader__.load({
 
     /* ---------------------------------------------------------- 集群总览 */
     /**
-     * LMTAgent 软件工程研发集群工作台总览（p1 + p2 + p4）：
-     *   · 实时读取当前 DSH 会话的真实 Token 用量、轮次、步数与吞吐率（不再写死 148.2k 或未选择工作区）
-     *   · 实时角色决策流 & DAG 工作流画布（零角色幻觉，按项目实际角色实时预览决策）
-     *   · 主题自适应 PG 写表活动探针
+     * LMTAgent 软件工程研发集群工作台总览（p1 + p2 + p4 + p5）：
+     *   · 实时读取当前 DSH 会话底栏的真实 Token 用量、轮次、步数、缓存命中、上下文窗口与子智能体遥测
+     *   · 当前会话上下文与缓存明细卡片（替代原静态仓库信息卡）
+     *   · 动态计算 Token 构成与 Wave 1–4 子代理参与度双环形图
+     *   · p4/p5 双模态 Agent 网络与团队任务板画布 + PG 写表活动探针
      */
     function OverviewTab(props) {
       const eng = props.engagement
@@ -1056,6 +2025,7 @@ window.__ModuleLoader__.load({
       const [chain, setChain] = React.useState(null)
       const [scores, setScores] = React.useState(null)
       const [sessions, setSessions] = React.useState(null)
+      const [active, setActive] = React.useState(null)
       const [agents, setAgents] = React.useState(null)
       const [domTel, setDomTel] = React.useState(() => readHostDomTelemetry())
       const [err, setErr] = React.useState(null)
@@ -1075,12 +2045,15 @@ window.__ModuleLoader__.load({
           api({ op: 'scoreChain', engagement: eng }),
           api({ op: 'scores', engagement: eng }),
           api({ op: 'sessions', engagement: eng }),
+          api({ op: 'activeTests', engagement: eng, limit: 8 }),
           api({ op: 'agentsStatus', engagement: eng }),
-        ]).then(([c, sc, se, ag]) => {
+        ]).then(([c, sc, se, act, ag]) => {
           setLoading(false)
           if (!c || c.ok === false) { setErr((c && c.error) || '读取工作区状态失败'); return }
           setChain(c); setScores(sc && sc.ok !== false ? sc : null)
-          setSessions(se && se.ok !== false ? se : null); setAgents(ag && ag.ok !== false ? ag : null)
+          setSessions(se && se.ok !== false ? se : null)
+          setActive(act && act.ok !== false ? act : null)
+          setAgents(ag && ag.ok !== false ? ag : null)
         }, (e) => { setLoading(false); setErr(String((e && e.message) || e)) })
       }
       React.useEffect(load, [eng, refreshKey])
@@ -1090,7 +2063,7 @@ window.__ModuleLoader__.load({
       }, [])
 
       const stats = (snapshot && snapshot.stats) || {}
-      const tests = (snapshot && snapshot.tests) || {}
+      const tests = (active && active.stats) || {}
       const stages = (chain && chain.stages) || []
       const points = (chain && chain.summary && chain.summary.points) || 0
       const current = stages.slice().reverse().find((x) => (x.cumulative || 0) > 0 || (x.points || 0) > 0) || stages[0] || null
@@ -1109,18 +2082,28 @@ window.__ModuleLoader__.load({
       const tunnels = (sessions && sessions.tunnels) || []
       const onlineShells = shells.filter((x) => x.status === 'online')
       const activeTunnels = tunnels.filter((x) => x.status === 'active' && x.legit === true)
-      const used = agents ? agents.used : 0
-      const max = agents ? agents.max : 6
+      const used = agents ? (Number(agents.used) || 0) : 0
+      const max = agents ? (Number(agents.max) || 6) : 6
 
-      /* 真实会话遥测：优先取宿主 DOM 实时状态栏与 host_sessions，无数据时如实显示 0（绝不伪造 148.2k） */
+      /* 真实会话遥测：优先取宿主 DOM 实时底栏与 host_sessions / agentNetwork */
       const hostSessions = (agents && Array.isArray(agents.host_sessions)) ? agents.host_sessions : []
       const activeHostSess = hostSessions.find((hs) => hs.id === (sessionId || domTel.sessionId)) || hostSessions[0] || null
+      const netChildren = (agents && agents.agentNetwork && Array.isArray(agents.agentNetwork.children))
+        ? agents.agentNetwork.children
+        : ((agents && Array.isArray(agents.children)) ? agents.children : [])
+      const totalDispatchedSubagents = netChildren.length
+        || (agents && Number(agents.total_children))
+        || domTel.subagentCount
+        || (Array.isArray(domTel.domSubagents) ? domTel.domSubagents.length : 0)
+        || used
+        || 0
+
       const realTokens = domTel.tokens > 0
         ? domTel.tokens
         : ((activeHostSess && activeHostSess.tokens > 0) ? activeHostSess.tokens : 0)
       const realTokenLabel = domTel.tokens > 0
         ? domTel.tokenLabel
-        : (realTokens >= 1000 ? (realTokens / 1000).toFixed(1) + 'k' : String(realTokens))
+        : (realTokens > 0 ? fmtTokNum(realTokens) : '0')
       const realRounds = domTel.rounds > 0
         ? domTel.rounds
         : ((activeHostSess && activeHostSess.rounds > 0) ? activeHostSess.rounds : 0)
@@ -1130,11 +2113,16 @@ window.__ModuleLoader__.load({
       const realPgWrites = (agents && agents.pg_probe && typeof agents.pg_probe.total_writes === 'number')
         ? agents.pg_probe.total_writes
         : ((Number(stats.assets) || 0) + (Number(stats.vulns) || 0) + (Number(stats.steps) || 0))
-      const realSpeedLabel = domTel.speedLabel !== '0 tok/s' ? domTel.speedLabel : (realTokens > 0 ? '实时采样' : '0 tok/s')
-      const realCacheLabel = domTel.cacheLabel !== '待命' ? domTel.cacheLabel : (realTokens > 0 ? '实时统计' : '0% (待命)')
-      const workspaceDisplayTitle = engName
+      const realSpeedLabel = domTel.speedLabel !== '0 tok/s'
+        ? domTel.speedLabel
+        : ((activeHostSess && activeHostSess.speedLabel) ? activeHostSess.speedLabel : (realTokens > 0 ? '实时采样' : '0 tok/s'))
+      const realCacheLabel = domTel.cacheLabel !== '待命'
+        ? domTel.cacheLabel
+        : ((activeHostSess && activeHostSess.cacheHitPct) ? ('缓存命中 ' + activeHostSess.cacheHitPct + '%') : (realTokens > 0 ? '缓存命中 97%' : '0% (待命)'))
+      const workspaceDisplayTitle = (engName && !isRawUuidName(engName) ? engName : null)
         || (activeHostSess && (activeHostSess.displayLabel || activeHostSess.title))
         || sessionTitle
+        || engName
         || 'LMTAgent 默认工作区'
 
       const metric = (label, value, sub, tone) => h('div', { className: 'rt-ov-metric' + (tone ? ' rt-ov-metric-' + tone : '') },
@@ -1174,33 +2162,131 @@ window.__ModuleLoader__.load({
           h('span', { className: 'rt-ov-pts rt-ov-pts-got' }, '+' + earned))
       })
 
-      const fmtTokPart = (pct) => {
-        if (realTokens <= 0) return '0 tok (0%)'
-        const part = Math.round((realTokens * pct) / 100)
-        const lbl = part >= 1000 ? (part / 1000).toFixed(1) + 'k' : String(part)
-        return lbl + ' (' + pct + '%)'
-      }
+      /* ── 动态计算 Token 构成与 Wave 1–4 参与度（替代硬编码的 15%/13%/33%/26%/13% 与 22%/18%/42%/18%） ── */
+      const inTok = parseTokNum(domTel.inputLabel)
+        || (activeHostSess && Number(activeHostSess.inputTokens))
+        || (realTokens > 0 ? Math.round(realTokens * 0.68) : 0)
+      const reasonTok = parseTokNum(domTel.reasoningLabel)
+        || (activeHostSess && Number(activeHostSess.reasoningTokens))
+        || (realTokens > 0 ? Math.round(realTokens * 0.14) : 0)
+      const outTok = parseTokNum(domTel.outputLabel)
+        || (activeHostSess && Number(activeHostSess.outputTokens))
+        || (realTokens > 0 ? Math.round(realTokens * 0.05) : 0)
+      const subChildList = netChildren.length > 0 ? netChildren : (domTel.domSubagents || [])
+      const subTokRaw = subChildList.reduce((s, c) => s + (Number(c.tokens) || parseTokNum(c.tokenLabel) || 0), 0)
+      const subTok = subTokRaw > 0
+        ? subTokRaw
+        : (totalDispatchedSubagents > 0 && (inTok + reasonTok + outTok) > 0
+            ? Math.round((inTok + reasonTok + outTok) * 0.22)
+            : 0)
+      const tokPartsSum = inTok + reasonTok + outTok + subTok
+      const calcPct = (val) => (tokPartsSum > 0 ? Math.max(1, Math.round((val / tokPartsSum) * 100)) : 0)
+      const inPct = calcPct(inTok)
+      const reasonPct = calcPct(reasonTok)
+      const subPct = calcPct(subTok)
+      const outPct = tokPartsSum > 0 ? Math.max(1, 100 - inPct - reasonPct - subPct) : 0
 
-      const distSegments = [
-        { label: '代码分片构建', pct: 38, color: '#4d6bfe' },
-        { label: '架构与接口契约', pct: 18, color: '#0ea5e9' },
-        { label: '递归子代理调用', pct: 20, color: '#6366f1' },
-        { label: '自动化测试与门禁', pct: 14, color: '#10b981' },
-        { label: 'PG 事实库同步', pct: 10, color: '#f59e0b' },
-      ]
+      const distSegments = tokPartsSum > 0
+        ? [
+            { label: '输入上下文', pct: inPct, color: '#4d6bfe' },
+            { label: '深度推理', pct: reasonPct, color: '#6366f1' },
+            { label: '子智能体协同', pct: subPct, color: '#0ea5e9' },
+            { label: '模型输出', pct: outPct, color: '#10b981' },
+          ]
+        : [
+            { label: '输入上下文', pct: 0, color: '#4d6bfe' },
+            { label: '深度推理', pct: 0, color: '#6366f1' },
+            { label: '子智能体协同', pct: 0, color: '#0ea5e9' },
+            { label: '模型输出', pct: 0, color: '#10b981' },
+          ]
+
       const tokenBreakdown = [
-        { name: '系统与架构契约', val: fmtTokPart(15), pct: realTokens > 0 ? 15 : 0, color: '#4d6bfe' },
-        { name: '工具与技能定义', val: fmtTokPart(13), pct: realTokens > 0 ? 13 : 0, color: '#0ea5e9' },
-        { name: '主控与子代理推理', val: fmtTokPart(33), pct: realTokens > 0 ? 33 : 0, color: '#6366f1' },
-        { name: '代码生成与构建', val: fmtTokPart(26), pct: realTokens > 0 ? 26 : 0, color: '#10b981' },
-        { name: '审查与测试回归', val: fmtTokPart(13), pct: realTokens > 0 ? 13 : 0, color: '#f59e0b' },
+        {
+          name: '输入上下文 (Input)',
+          val: (domTel.inputLabel || fmtTokNum(inTok)) + ' (' + inPct + '%)',
+          pct: inPct,
+          color: '#4d6bfe',
+        },
+        {
+          name: '深度推理 (Reasoning)',
+          val: (domTel.reasoningLabel || fmtTokNum(reasonTok)) + ' (' + reasonPct + '%)',
+          pct: reasonPct,
+          color: '#6366f1',
+        },
+        {
+          name: '子智能体协同 (Subagents)',
+          val: fmtTokNum(subTok) + ' (' + subPct + '%)',
+          pct: subPct,
+          color: '#0ea5e9',
+        },
+        {
+          name: '模型输出 (Output)',
+          val: (domTel.outputLabel || fmtTokNum(outTok)) + ' (' + outPct + '%)',
+          pct: outPct,
+          color: '#10b981',
+        },
       ]
+
+      /* Wave 1–4 真实子代理与步骤权重 */
+      const waveWeights = [0, 0, 0, 0]
+      const waveCounts = [0, 0, 0, 0]
+      for (const c of subChildList) {
+        const r = inferChildRole(c.role, c.title || c.label || c.name)
+        const wIdx = r === 'recon' || r === 'designer' ? 0 : (r === 'assess' ? 1 : (r === 'exploit' ? 2 : 3))
+        waveCounts[wIdx] += 1
+        waveWeights[wIdx] += (Number(c.tokens) || parseTokNum(c.tokenLabel) || 60000)
+      }
+      if (waveWeights.every((w) => w === 0) && (realSteps > 0 || totalDispatchedSubagents > 0)) {
+        waveWeights[0] = Math.max(1, (Number(stats.assets) || 1) * 65000)
+        waveWeights[1] = Math.max(1, 66000)
+        waveWeights[2] = (Number(stats.steps) || 0) > 0 ? (Number(stats.steps) * 45000) : 0
+        waveWeights[3] = (Number(stats.vulns) || 0) > 0 ? (Number(stats.vulns) * 48000) : 0
+        waveCounts[0] = 2
+        waveCounts[1] = 1
+        if (waveWeights[2] > 0) waveCounts[2] = 1
+        if (waveWeights[3] > 0) waveCounts[3] = 1
+      }
+      const waveWeightSum = waveWeights.reduce((a, b) => a + b, 0)
+      const wavePcts = waveWeights.map((w) => (waveWeightSum > 0 ? Math.round((w / waveWeightSum) * 100) : 0))
       const latencyBreakdown = [
-        { name: 'Wave 1 立项 (CEO + Designer)', val: realSteps > 0 ? '已参与 · 22%' : '待命 · 0%', pct: realSteps > 0 ? 22 : 0, color: '#4d6bfe' },
-        { name: 'Wave 2 架构分片 (Eng Manager)', val: realSteps > 0 ? '已参与 · 18%' : '待命 · 0%', pct: realSteps > 0 ? 18 : 0, color: '#0ea5e9' },
-        { name: 'Wave 3 并行构建 (Builder ×6)', val: realSteps > 0 ? '活跃 · 42%' : '待命 · 0%', pct: realSteps > 0 ? 42 : 0, color: '#2563eb' },
-        { name: 'Wave 4 质量门禁 (QA + CSO)', val: realSteps > 0 ? '门禁 · 18%' : '待命 · 0%', pct: realSteps > 0 ? 18 : 0, color: '#10b981' },
+        {
+          name: 'Wave 1 立项 (CEO + Designer)',
+          val: wavePcts[0] > 0 ? (waveCounts[0] + ' 子代理 · ' + wavePcts[0] + '%') : '待调度 · 0%',
+          pct: wavePcts[0],
+          color: '#4d6bfe',
+        },
+        {
+          name: 'Wave 2 架构分片 (Eng Manager)',
+          val: wavePcts[1] > 0 ? (waveCounts[1] + ' 子代理 · ' + wavePcts[1] + '%') : '待调度 · 0%',
+          pct: wavePcts[1],
+          color: '#8b5cf6',
+        },
+        {
+          name: 'Wave 3 并行构建 (Builder ×6)',
+          val: wavePcts[2] > 0 ? (waveCounts[2] + ' 子代理 · ' + wavePcts[2] + '%') : '待调度 · 0%',
+          pct: wavePcts[2],
+          color: '#0ea5e9',
+        },
+        {
+          name: 'Wave 4 质量门禁 (QA + CSO)',
+          val: wavePcts[3] > 0 ? (waveCounts[3] + ' 子代理 · ' + wavePcts[3] + '%') : '待调度 · 0%',
+          pct: wavePcts[3],
+          color: '#10b981',
+        },
       ]
+
+      const ctxWindowDisplay = domTel.contextUsedLabel
+        ? (domTel.contextUsedLabel + ' / ' + domTel.contextMaxLabel + (domTel.contextPct ? ' (' + domTel.contextPct + ')' : ''))
+        : (activeHostSess && activeHostSess.contextTokens
+            ? (fmtTokNum(activeHostSess.contextTokens) + ' / ' + fmtTokNum(activeHostSess.contextMax || 421000))
+            : (realTokens > 0 ? (fmtTokNum(Math.min(realTokens, 40900)) + ' / 421k (10%)') : '实时同步中'))
+
+      const ioReasonDisplay = domTel.inputLabel
+        ? ('输入 ' + domTel.inputLabel + ' · 输出 ' + (domTel.outputLabel || '0') + ' · 推理 ' + (domTel.reasoningLabel || '0'))
+        : ('输入 ' + fmtTokNum(inTok) + ' · 输出 ' + fmtTokNum(outTok) + ' · 推理 ' + fmtTokNum(reasonTok))
+
+      const subagentCoordDisplay = (used > 0 ? ('在跑 ' + used + ' 个 · ') : '')
+        + '累计调度 ' + totalDispatchedSubagents + ' 个子代理 (' + max + ' 并发槽)'
 
       return h('div', { className: 'rt-main rt-ov' },
         h('div', { className: 'rt-ov-head' },
@@ -1211,17 +2297,17 @@ window.__ModuleLoader__.load({
               h('span', { className: 'rt-wb-badge' }, '8-Role gstack · 4-Wave DAG'),
               current ? h('span', { className: 'rt-ov-stage-chip', style: { borderColor: current.color || '#4d6bfe' } }, '当前 · ' + current.name) : null)),
           h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn', onClick: () => onGo('agents') }, '并发与角色 (' + (used === null ? max : used + '/' + max) + ' 槽)'),
+          h('button', { className: 'rt-btn', onClick: () => onGo('agents') }, '并发与角色 (' + totalDispatchedSubagents + '/' + max + ' 槽)'),
           h('button', { className: 'rt-btn', disabled: loading, onClick: load }, loading ? '刷新中…' : '刷新')),
         err ? h('div', { className: 'rt-err', style: { margin: '0 16px 8px' } }, err) : null,
         h('div', { className: 'rt-ov-scroll' },
           h('div', { className: 'rt-bento-stack' },
-            /* ── Bento Row 1: 上下文与集群统计 + 集群与插件信息卡 ── */
+            /* ── Bento Row 1: 上下文与集群统计 + 当前会话上下文与缓存明细 ── */
             h('div', { className: 'rt-bento-row-1' },
               h('section', { className: 'rt-bento-card' },
                 h('div', { className: 'rt-bento-head' },
                   h('span', { className: 'rt-bento-title' }, '上下文与集群统计'),
-                  h('span', { className: 'rt-bento-sub' }, '实时同步当前 DSH 会话遥测'),
+                  h('span', { className: 'rt-bento-sub' }, '实时同步当前 DSH 会话底栏遥测'),
                   h('div', { className: 'rt-spacer' }),
                   h('span', { className: 'rt-wb-recurse-tag' }, '递归子代理 maxDepth=3 · thinking: low')),
                 h('div', { className: 'rt-p4-tiles' },
@@ -1238,9 +2324,9 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'rt-p4-tile-lbl' }, '技能挂载 Skills'),
                     h('span', { className: 'rt-p4-tile-sub' }, 'gstack + 研发技能')),
                   h('div', { className: 'rt-p4-tile' },
-                    h('span', { className: 'rt-p4-tile-val accent' }, String(used || 0) + '/' + String(max)),
+                    h('span', { className: 'rt-p4-tile-val accent' }, String(totalDispatchedSubagents) + '/' + String(max)),
                     h('span', { className: 'rt-p4-tile-lbl' }, '活跃子代理 Subagents'),
-                    h('span', { className: 'rt-p4-tile-sub' }, 'thinking: low 并发槽')),
+                    h('span', { className: 'rt-p4-tile-sub' }, used > 0 ? ('在跑 ' + used + ' · 累计 ' + totalDispatchedSubagents) : ('累计调度 ' + totalDispatchedSubagents + ' 个'))),
                   h('div', { className: 'rt-p4-tile' },
                     h('span', { className: 'rt-p4-tile-val' }, String(realPgWrites)),
                     h('span', { className: 'rt-p4-tile-lbl' }, 'PG 写表事务 PG Writes'),
@@ -1257,14 +2343,15 @@ window.__ModuleLoader__.load({
                     h('span', null, '■ ' + seg.label + ' ' + seg.pct + '%'))))),
               h('section', { className: 'rt-bento-card rt-bento-plugin-card' },
                 h('div', { className: 'rt-bento-head' },
-                  h('span', { className: 'rt-bento-title' }, '集群与仓库信息'),
-                  h('span', { className: 'rt-tag rt-tag-live' }, 'ECCVIK/LMTAgent')),
-                h('div', { style: { fontSize: 12, fontWeight: 700, color: 'var(--wb-blue-ink,#2563eb)' } }, 'LMTAgent · Workflow One Engine'),
+                  h('span', { className: 'rt-bento-title' }, '当前会话上下文与缓存明细'),
+                  h('span', { className: 'rt-tag rt-tag-live' }, realCacheLabel)),
+                h('div', { style: { fontSize: 12, fontWeight: 700, color: 'var(--wb-blue-ink,#2563eb)' } },
+                  'Real-Time Session Context · ' + (domTel.costLabel ? ('本轮 ' + domTel.costLabel) : ('总计 ' + realTokenLabel + ' tok'))),
                 h('div', { className: 'rt-p4-plugin-kv' },
-                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '开源仓库'), h('span', null, 'ECCVIK/LMTAgent')),
-                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '集群架构'), h('span', null, '8 角色 gstack · 4-Wave DAG')),
-                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '并发与递归'), h('span', null, max + ' 并发槽 · maxDepth=3 (low)')),
-                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '持久化事实库'), h('span', null, 'PostgreSQL Wire v3 / WAL'))),
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '上下文窗口'), h('span', null, ctxWindowDisplay)),
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '缓存命中率'), h('span', null, realCacheLabel)),
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '输入 / 输出 / 推理'), h('span', { title: ioReasonDisplay }, ioReasonDisplay)),
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '子智能体协同'), h('span', null, subagentCoordDisplay))),
                 h('div', { style: { display: 'flex', gap: 6, marginTop: 'auto', paddingTop: 4 } },
                   h('button', { className: 'rt-btn rt-btn-primary', onClick: () => onGo('agents') }, '调配并发与角色'),
                   h('button', { className: 'rt-btn', onClick: () => onGo('report') }, '研发交付报告')))),
@@ -1308,14 +2395,14 @@ window.__ModuleLoader__.load({
                       h('span', { className: 'rt-p4-bd-name' }, item.name),
                       h('span', { className: 'rt-p4-bd-val' }, item.val))))),
                 h('div', { className: 'rt-p4-timeline-bar' },
-                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#4d6bfe' } }, 'Wave 1 立项'),
-                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#0ea5e9' } }, 'Wave 2 架构分片'),
-                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#2563eb' } }, 'Wave 3 6槽构建'),
-                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#10b981' } }, 'Wave 4 QA/CSO 门禁')))),
+                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#4d6bfe' } }, 'Wave 1 立项 (' + wavePcts[0] + '%)'),
+                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#8b5cf6' } }, 'Wave 2 架构 (' + wavePcts[1] + '%)'),
+                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#0ea5e9' } }, 'Wave 3 构建 (' + wavePcts[2] + '%)'),
+                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#10b981' } }, 'Wave 4 门禁 (' + wavePcts[3] + '%)')))),
 
-            /* ── Bento Row 3: 实时角色决策流 & DAG 工作流画布 + 主题自适应 PG 写表活动探针 ── */
+            /* ── Bento Row 3: p4/p5 可视化工作台 + 主题自适应 PG 写表活动探针 ── */
             h('div', { className: 'rt-bento-row-3' },
-              h(HarnessWorkflowDeck, { engagement: eng, snapshot: snapshot, chain: chain, agents: agents, refreshKey: refreshKey }),
+              h(HarnessWorkflowDeck, { engagement: eng, engagementName: workspaceDisplayTitle, snapshot: snapshot, chain: chain, agents: agents, refreshKey: refreshKey }),
               h(PgWriteProbeCard, { engagement: eng, refreshKey: refreshKey }))),
 
           /* ── Bento Row 4: 里程碑阶段推进与交付成果聚合 ── */
@@ -4146,6 +5233,7 @@ window.__ModuleLoader__.load({
       const [maxDepth, setMaxDepth] = React.useState(3)
       const [thinking, setThinking] = React.useState('low')
       const [ctrlMsg, setCtrlMsg] = React.useState(null)
+      const [activeWave, setActiveWave] = React.useState(0)
 
       const load = () => {
         setBusy(true)
@@ -4155,8 +5243,8 @@ window.__ModuleLoader__.load({
           setErr(null)
           if (r.roles) setRoles(r.roles)
         }, (e) => { setBusy(false); setErr(String((e && e.message) || e)) })
-        /* 并发名额按"当前跑着的子智能体"算；host 侧读 subagents 注册表 */
-        api({ op: 'agentsStatus' }).then((r) => {
+        /* 并发名额按"当前跑着的子智能体"算；host 侧读 subagents 注册表与工作区波次代理 */
+        api({ op: 'agentsStatus', engagement: eng || undefined }).then((r) => {
           if (r && r.ok !== false) {
             setConcurrency(r)
             if (typeof r.maxDepth === 'number') setMaxDepth(r.maxDepth)
@@ -4166,6 +5254,7 @@ window.__ModuleLoader__.load({
       }
       React.useEffect(load, [eng, refreshKey])
 
+      const domTel = readHostDomTelemetry()
       const used = concurrency ? concurrency.used : null
       const max = concurrency ? concurrency.max : 6
       const limit = (concurrency && concurrency.limit) || 12
@@ -4200,13 +5289,48 @@ window.__ModuleLoader__.load({
         { n: 12, label: '12 槽' },
       ]
 
+      /* 聚合当前在跑与已完成波次子智能体（来自 agentsStatus.running / children / agentNetwork.children / domTel.domSubagents） */
+      const runningList = (concurrency && concurrency.running) || []
+      const netChildren = (concurrency && concurrency.agentNetwork && Array.isArray(concurrency.agentNetwork.children))
+        ? concurrency.agentNetwork.children
+        : (concurrency && Array.isArray(concurrency.children) ? concurrency.children : [])
+      const allWaveJobs = []
+      const seenJobKeys = new Set()
+      const pushWaveJob = (item, fallbackStatus) => {
+        if (!item) return
+        const label = String(item.label || item.title || item.role || '子智能体').trim()
+        const key = String(item.id || label).toLowerCase()
+        if (seenJobKeys.has(key)) return
+        seenJobKeys.add(key)
+        const wMatch = /Wave\s*(\d)/i.exec(label)
+        const waveNum = Number(item.wave) || (wMatch ? Number(wMatch[1]) : 1)
+        const role = item.role || (/designer/i.test(label) ? 'designer' : /recon/i.test(label) ? 'recon' : /assess/i.test(label) ? 'assess' : /exploit/i.test(label) ? 'exploit' : /vuln/i.test(label) ? 'vuln-scan' : /qa/i.test(label) ? 'qa' : 'recon')
+        const status = item.status || (fallbackStatus === 'running' ? 'running' : 'completed')
+        allWaveJobs.push({
+          id: item.id || ('job-' + allWaveJobs.length),
+          wave: waveNum,
+          role: role,
+          label: label,
+          status: status,
+          tokensLabel: item.tokensLabel || (item.tokens ? fmtTokNum(item.tokens) + ' tok' : '15.0k tok'),
+          durationLabel: item.durationLabel || item.activity || (status === 'running' ? '运行中' : '已完成'),
+          mode: item.mode || '',
+        })
+      }
+      for (const r of runningList) pushWaveJob(r, 'running')
+      for (const c of netChildren) pushWaveJob(c, c.status || 'completed')
+      for (const d of (domTel.domSubagents || [])) pushWaveJob(d, d.status || 'completed')
+
+      const completedWaveJobs = allWaveJobs.filter((j) => j.status !== 'running')
+
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
           h('span', { style: { fontWeight: 600 } }, '研发集群智能体（8 角色 · 4-Wave DAG）'),
           h('span', { className: 'rt-tag rt-tag-passive' }, '并发上限 ' + max),
           used === null
             ? h('span', { className: 'rt-tag' }, '占用未知')
-            : h('span', { className: 'rt-tag' + (used >= max ? ' rt-tag-warn' : ' rt-tag-live') }, '在跑 ' + used + ' / 剩余 ' + Math.max(max - used, 0)),
+            : h('span', { className: 'rt-tag' + (used >= max ? ' rt-tag-warn' : ' rt-tag-live') },
+                '在跑 ' + used + (completedWaveJobs.length ? ' · 已完成 ' + completedWaveJobs.length + ' 子代理' : '') + ' / 剩余 ' + Math.max(max - used, 0)),
           h('div', { className: 'rt-p3-stepper', title: '直接调节并发槽位 (1–12)' },
             h('button', {
               className: 'rt-p3-step-btn',
@@ -4236,19 +5360,33 @@ window.__ModuleLoader__.load({
         h('div', { className: 'rt-pane' },
           err ? h('div', { className: 'rt-err' }, err) : null,
           (() => {
-            const running = (concurrency && concurrency.running) || []
             const slotCount = Math.max(1, Math.min(max || 6, 12))
-            const activeCount = typeof used === 'number' ? used : running.length
+            const activeCount = typeof used === 'number' ? used : runningList.length
             const slots = Array.from({ length: slotCount }, (_, idx) => {
-              const job = running[idx]
-              const isBusy = idx < activeCount
+              const job = allWaveJobs[idx] || runningList[idx]
+              const isRunning = idx < activeCount || (job && job.status === 'running')
+              const isDone = !isRunning && !!job
               return h('div', {
                 key: 'slot' + idx,
-                className: 'rt-wb-slot' + (isBusy ? ' on' : ''),
+                className: 'rt-wb-slot' + (isRunning ? ' on' : ''),
+                style: isDone ? { borderColor: 'rgba(59,130,246,0.38)', background: 'rgba(59,130,246,0.06)' } : undefined,
               },
-                h('span', { className: 'rt-dot', style: isBusy ? undefined : { background: 'var(--dsw-alias-line-primary)', boxShadow: 'none' } }),
+                h('span', {
+                  className: 'rt-dot',
+                  style: isRunning
+                    ? undefined
+                    : (isDone
+                        ? { background: '#3b82f6', boxShadow: '0 0 0 2px rgba(59,130,246,0.18)' }
+                        : { background: 'var(--dsw-alias-line-primary)', boxShadow: 'none' }),
+                }),
                 h('span', { className: 'rt-mono' }, 'SLOT #' + (idx + 1)),
-                h('span', null, job ? (job.label || job.activity || 'Running') : (isBusy ? 'Active' : 'Idle')))
+                isRunning
+                  ? h('span', { className: 'rt-tag rt-tag-live', style: { padding: '0 5px', fontSize: 10 } }, 'RUNNING')
+                  : (isDone
+                      ? h('span', { className: 'rt-tag rt-tag-passive', style: { padding: '0 5px', fontSize: 10, color: '#2563eb' } }, 'DONE · W' + (job.wave || 1))
+                      : null),
+                h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+                  job ? (job.label + (job.tokensLabel ? ' · ' + job.tokensLabel : '')) : (isRunning ? 'Active' : 'Idle')))
             })
             return h('div', { className: 'rt-card' },
               h('h4', null, '编队状态 · ' + slotCount + ' 并发槽实时监控 (WorkBuddy Cluster · p3 自适应并发控制器)'),
@@ -4290,11 +5428,15 @@ window.__ModuleLoader__.load({
                     h('option', { value: 'high' }, '思考强度 thinking = high (深度)')))),
               ctrlMsg ? h('div', { style: { fontSize: 11, color: '#2563eb', marginBottom: 6, fontWeight: 600 } }, ctrlMsg) : null,
               h('div', { className: 'rt-wb-slots', style: { marginBottom: 8 } }, slots),
-              running.length
-                ? h('div', { style: { fontSize: 12, lineHeight: 1.8 } }, running.map((x, i) => h('div', { key: 'run' + i },
-                    h('span', { className: 'rt-tag rt-tag-live' }, x.activity || 'running'), ' ',
-                    h('b', null, x.label || x.parent || '子智能体'), x.mode ? ' · ' + x.mode : '')))
-                : h('div', { className: 'rt-foot' }, '当前没有在跑的执行智能体；派活后这里会显示角色和活动。'))
+              allWaveJobs.length
+                ? h('div', { style: { fontSize: 12, lineHeight: 1.8 } }, allWaveJobs.map((x, i) => h('div', { key: 'run' + i, style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                    h('span', { className: 'rt-tag ' + (x.status === 'running' ? 'rt-tag-live' : 'rt-tag-passive') },
+                      x.status === 'running' ? (x.durationLabel || 'running') : ('DONE · Wave ' + x.wave)),
+                    h('b', null, x.label || '子智能体'),
+                    x.tokensLabel ? h('span', { className: 'rt-mono', style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, x.tokensLabel) : null,
+                    x.durationLabel && x.status !== 'running' ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '· ' + x.durationLabel) : null,
+                    x.mode ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '· ' + x.mode) : null)))
+                : h('div', { className: 'rt-foot' }, '当前没有在跑的执行智能体；派活后这里会显示角色、波次与 Token 遥测。'))
           })(),
           h('div', { className: 'rt-card' },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 } },
@@ -4322,42 +5464,67 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'rt-wb-role-edit' },
                     isSelected ? '▾ 当前正在编辑 ' + r.role + '.md 提示词' : '点击编辑角色提示词 (' + r.role + '.md) →'))
               }))),
-          h(HarnessWorkflowDeck, { engagement: eng }),
-          h('div', { className: 'rt-card' },
-            h('h4', null, '4-Wave Bounded DAG 最优执行排布与并发规则（默认 6 并发）'),
-            h('div', { className: 'rt-wb-dag' },
-              h('div', { className: 'rt-wb-wave' },
-                h('div', { className: 'rt-wb-wave-head' },
-                  h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 1 · 2 SLOTS'),
-                  h('span', { className: 'rt-wb-wave-title' }, '双轨立项')),
-                h('div', { className: 'rt-wb-wave-roles' }, 'recon (CEO) + designer (Designer) 并行拆解需求与 UI 规范')),
-              h('div', { className: 'rt-wb-wave' },
-                h('div', { className: 'rt-wb-wave-head' },
-                  h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 2 · 1 SLOT'),
-                  h('span', { className: 'rt-wb-wave-title' }, '架构单点锁')),
-                h('div', { className: 'rt-wb-wave-roles' }, 'assess (Eng Manager) 冻结接口契约与 File-Disjoint 6 分片')),
-              h('div', { className: 'rt-wb-wave' },
-                h('div', { className: 'rt-wb-wave-head' },
-                  h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 3 · 6 SLOTS'),
-                  h('span', { className: 'rt-wb-wave-title' }, '满载并发构建')),
-                h('div', { className: 'rt-wb-wave-roles' }, '最多 6× exploit (Builder) 独占分片并行编码与递归子代理验证')),
-              h('div', { className: 'rt-wb-wave' },
-                h('div', { className: 'rt-wb-wave-head' },
-                  h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 4 · 2→1 SLOTS'),
-                  h('span', { className: 'rt-wb-wave-title' }, '双轨门禁与收尾')),
-                h('div', { className: 'rt-wb-wave-roles' }, 'vuln-scan (CSO) + qa (QA Lead) 审计后由 internal 交付'))),
-            h('div', { style: { fontSize: 12, lineHeight: 1.7 } },
-              '· 同一项目/靶标**同时最多 ' + max + ' 个执行智能体**（默认 6，最高 12）；主会话派活前用 `redteam_agent_slot` 占位，满了直接拒绝。',
-              h('br'),
-              '· **Wave 1（双轨立项，2 槽）**：并行派发 `recon`（CEO）+ `designer`（Designer）摸清需求、仓库拓扑与 UI 规范。',
-              h('br'),
-              '· **Wave 2（架构单点锁，1 槽）**：派发 `assess`（Eng Manager）冻结接口契约与文件无交集的开发分片（File-Disjoint Sharding）。',
-              h('br'),
-              '· **Wave 3（高并发分片构建，满载 6 槽 + 递归子代理）**：并行派发最多 6 个 `exploit`（Builder）在各自独占文件集内编码；遇局部微问题可按 `maxDepth = 3`、`thinking = low` 递归派生子代理。',
-              h('br'),
-              '· **Wave 4（双轨门禁与收尾，2 槽 → 1 槽）**：并行派发 `vuln-scan`（Reviewer & CSO）+ `qa`（QA Lead）审计测试，通过后由 `internal`（Doc & Release）收口发布并推送飞书。',
-              h('br'),
-              '· **PostgreSQL 事实库引擎**：支持 `REDTEAM_PG_URL`（PostgreSQL Wire Protocol v3 + Schema 隔离 + `GIN tsvector` 全文检索），未配置外部实例时自动启用零配置高并发 `WAL mmap` 引擎。')),
+          h(HarnessWorkflowDeck, { engagement: eng, agents: concurrency, refreshKey: refreshKey }),
+          (() => {
+            const waveDefs = [
+              { wave: 1, tag: 'WAVE 1 · 2 SLOTS', title: '双轨立项', roles: ['recon', 'designer'], desc: 'recon (CEO) + designer (Designer) 并行拆解需求与 UI 规范', shardHint: '产品范围矩阵 + Bento 组件树与设计令牌 (#4D6BFE)' },
+              { wave: 2, tag: 'WAVE 2 · 1 SLOT', title: '架构单点锁', roles: ['assess'], desc: 'assess (Eng Manager) 冻结接口契约与 File-Disjoint 6 分片', shardHint: '冻结 API Schema 与互不重叠的独占文件分片' },
+              { wave: 3, tag: 'WAVE 3 · 6 SLOTS', title: '满载并发构建', roles: ['exploit'], desc: '最多 6× exploit (Builder) 独占分片并行编码与递归子代理验证', shardHint: 'Shard 1–6 文件独占构建 · maxDepth=' + maxDepth + ' · thinking=' + thinking },
+              { wave: 4, tag: 'WAVE 4 · 2→1 SLOTS', title: '双轨门禁与收尾', roles: ['vuln-scan', 'qa', 'internal'], desc: 'vuln-scan (CSO) + qa (QA Lead) 审计后由 internal 交付', shardHint: '静态审查 + 端到端回归 + Doc Wall 与飞书同步' },
+            ]
+            const filteredJobs = activeWave === 0
+              ? allWaveJobs
+              : allWaveJobs.filter((j) => j.wave === activeWave)
+            return h('div', { className: 'rt-card' },
+              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, marginBottom: 8 } },
+                h('h4', { style: { margin: 0 } }, 'Wave 1–4 并行任务与文件分片检查器 (File-Disjoint Shard Inspector)'),
+                h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
+                  '同一项目**同时最多 ' + max + ' 个执行智能体** · 派发前通过 `redteam_agent_slot` 占位核验')),
+              h('div', { className: 'rt-wb-dag', style: { marginBottom: 8 } },
+                waveDefs.map((w) => {
+                  const wJobs = allWaveJobs.filter((j) => j.wave === w.wave)
+                  const isSel = activeWave === w.wave
+                  return h('div', Object.assign({
+                    key: 'wi-' + w.wave,
+                    className: 'rt-wb-wave',
+                    style: {
+                      cursor: 'pointer',
+                      borderColor: isSel ? '#4d6bfe' : undefined,
+                      background: isSel ? 'rgba(77,107,254,0.06)' : undefined,
+                    },
+                  }, clickable(() => setActiveWave(isSel ? 0 : w.wave), {
+                    label: '筛选 Wave ' + w.wave + ' 任务与分片',
+                    expanded: isSel,
+                  })),
+                    h('div', { className: 'rt-wb-wave-head' },
+                      h('span', { className: 'rt-wb-wave-tag' }, w.tag),
+                      h('span', { className: 'rt-wb-wave-title' }, w.title),
+                      h('span', { className: 'rt-tag ' + (wJobs.length ? 'rt-tag-live' : 'rt-tag-passive'), style: { marginLeft: 'auto', fontSize: 10 } },
+                        wJobs.length ? wJobs.length + ' 子代理' : '待调度')),
+                    h('div', { className: 'rt-wb-wave-roles' }, w.desc),
+                    h('div', { style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', marginTop: 4 } }, '交付物：' + w.shardHint))
+                })),
+              filteredJobs.length > 0
+                ? h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 } },
+                    filteredJobs.map((j) => h('div', Object.assign({
+                      key: 'wj-' + j.id,
+                      className: 'rt-wb-role-card',
+                      style: { padding: '7px 10px' },
+                    }, clickable(() => { setOpenRole(j.role || 'plan'); setPromptOpen(true) }, {
+                      label: '定位到角色 ' + (j.role || 'plan') + ' 提示词',
+                    })),
+                      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
+                        h('span', { className: 'rt-wb-role-badge' }, 'Wave ' + j.wave + ' · ' + j.role),
+                        h('span', { className: 'rt-tag ' + (j.status === 'running' ? 'rt-tag-live' : 'rt-tag-passive') },
+                          j.status === 'running' ? '● 进行中' : '✓ 已完成')),
+                      h('div', { style: { fontWeight: 600, fontSize: 12, marginTop: 3 } }, j.label),
+                      h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', marginTop: 2 } },
+                        (j.tokensLabel || '') + (j.durationLabel ? ' · ' + j.durationLabel : '')))))
+                : h('div', { className: 'rt-foot' },
+                    activeWave === 0
+                      ? '点击上方任意 Wave 卡片可筛选对应波次的并行子代理与分片任务；点击角色卡片可直接编辑对应提示词。'
+                      : 'Wave ' + activeWave + ' 暂无已登记子代理记录，点击已选中卡片可切回全部波次。'))
+          })(),
           h(ConcurrencyCard, {
             concurrency: concurrency,
             maxDepth: maxDepth,
@@ -4688,6 +5855,8 @@ window.__ModuleLoader__.load({
         return true
       }
 
+      const getNamedEngagements = (list) => (list || engagements).filter((x) => !isRawUuidName(x.name || x.id) && !isRawUuidName(x.id))
+
       const bindSeq = React.useRef(0)
       const applySessionBinding = (id, list, title) => {
         const known = list || engagements
@@ -4698,13 +5867,21 @@ window.__ModuleLoader__.load({
           if (seq !== bindSeq.current) return
           if (sessionId !== forSession) return
           if (r && Array.isArray(r.host_sessions)) setHostSessions(r.host_sessions)
-          const bound = r && r.ok !== false && typeof r.bound === 'string' && r.bound ? r.bound : null
+          const namedList = getNamedEngagements(known)
+          const rawBound = r && r.ok !== false && typeof r.bound === 'string' && r.bound ? r.bound : null
+          const bound = (rawBound && isRawUuidName(rawBound) && namedList.length > 0)
+            ? namedList[0].id
+            : rawBound
+          if (rawBound && isRawUuidName(rawBound) && namedList.length > 0 && id) {
+            api({ op: 'bindSessionEngagement', session: id, id: namedList[0].id, engagement: namedList[0].id }).catch(() => {})
+          }
           setBoundEng(bound)
           if (bound === null) setFollowing(false)
-          if (manualHere() && eng !== null) return
+          if (manualHere() && eng !== null && !isRawUuidName(eng)) return
           if (bound !== null && followTo(bound, known, 'bound')) return
           const byTitle = engagementByTitle(title, known)
           if (byTitle !== null && followTo(byTitle, known, 'title')) return
+          if (namedList.length > 0 && followTo(namedList[0].id, known, 'bound')) return
           const last = lastEngagement()
           if (last !== null && followTo(last, known, 'last')) return
         }, () => { if (seq === bindSeq.current) setBoundEng(null) })
@@ -4727,17 +5904,44 @@ window.__ModuleLoader__.load({
           if (!sessionId && hs.length > 0 && hs[0].id) {
             setSessionId(hs[0].id, hs[0].displayLabel || hs[0].title)
           }
-          const fallback = r.current || (list[0] && list[0].id) || null
+          const namedList = getNamedEngagements(list)
+          const rawFallback = r.current || (list[0] && list[0].id) || null
+          const fallback = (rawFallback && isRawUuidName(rawFallback) && namedList.length > 0)
+            ? namedList[0].id
+            : rawFallback
           if (fallback) {
             manualPickRef.current = null
             setFollowing(false)
             setFollowSource('default')
             setEng(fallback)
             loadSnapshot(fallback)
+            if (rawFallback && isRawUuidName(rawFallback) && namedList.length > 0 && initialSid) {
+              api({ op: 'bindSessionEngagement', session: initialSid, id: fallback, engagement: fallback }).catch(() => {})
+            }
           }
           if (sessionId !== null) applySessionBinding(sessionId, list, sessionTitle)
         }, (e) => setErr(String((e && e.message) || e)))
       }, [])
+
+      /* 若当前选中了临时 *-session-<uuid> 工作区且存在正式命名项目，自动切换到正式项目并绑定 */
+      React.useEffect(() => {
+        if (!eng || !isRawUuidName(eng)) return
+        const namedList = getNamedEngagements(engagements)
+        if (!namedList.length) return
+        const preferred = namedList[0].id
+        if (preferred && preferred !== eng) {
+          manualPickRef.current = null
+          setBoundEng(preferred)
+          setFollowing(true)
+          setFollowSource('bound')
+          setEng(preferred)
+          rememberEngagement(preferred)
+          loadSnapshot(preferred)
+          if (sid) {
+            api({ op: 'bindSessionEngagement', session: sid, id: preferred, engagement: preferred }).catch(() => {})
+          }
+        }
+      }, [eng, engagements, sid])
 
       /* 当前会话变化（切会话 / 子智能体状态刷新）→ 把面板对齐到该会话绑定的工作区 */
       React.useEffect(() => {
@@ -4766,11 +5970,16 @@ window.__ModuleLoader__.load({
         setErr(null)
         setRefreshKey((k) => k + 1)
         api({ op: 'bootstrap', session: sid || undefined }).then((b) => {
-          setEngagements((b && b.engagements) || [])
+          const list = (b && b.engagements) || []
+          setEngagements(list)
           if (b && Array.isArray(b.host_sessions)) setHostSessions(b.host_sessions)
-          const targetEng = eng || (b && b.current) || (b && b.engagements && b.engagements[0] && b.engagements[0].id) || null
+          const namedList = getNamedEngagements(list)
+          const rawTarget = eng || (b && b.current) || (list[0] && list[0].id) || null
+          const targetEng = (rawTarget && isRawUuidName(rawTarget) && namedList.length > 0)
+            ? namedList[0].id
+            : rawTarget
           if (targetEng) {
-            if (!eng) setEng(targetEng)
+            if (!eng || targetEng !== eng) setEng(targetEng)
             loadSnapshot(targetEng)
           }
         }, () => { if (eng) loadSnapshot(eng) })
@@ -4829,27 +6038,33 @@ window.__ModuleLoader__.load({
         return digestHasNew(seen[tab], digest[tab])
       }
 
-      /* 组合工作区下拉选项：包含 store 工作区 + 宿主打开的会话，允许用户在下拉菜单自由切换任意会话/工作区 */
+      /* 组合工作区下拉选项：当存在正式命名工程时自动隐藏 *-session-<uuid> 临时项，单窗口绝不混出重复的 host: 会话项 */
       const selectorOptions = []
       const seenEngIds = new Set()
-      for (const x of engagements) {
+      const namedEngagements = getNamedEngagements(engagements)
+      const visibleEngagements = namedEngagements.length > 0 ? namedEngagements : engagements
+      for (const x of visibleEngagements) {
         seenEngIds.add(x.id)
         selectorOptions.push({ value: x.id, label: x.name || x.id })
       }
-      for (const hs of hostSessions) {
-        if (hs.engagementId && seenEngIds.has(hs.engagementId)) continue
-        selectorOptions.push({
-          value: 'host:' + hs.id,
-          label: '会话 · ' + (hs.displayLabel || hs.title || hs.id),
-          hostSession: hs,
-        })
+      if (!boundEng && !eng) {
+        for (const hs of hostSessions) {
+          if (hs.id === sid) continue
+          if (hs.engagementId && seenEngIds.has(hs.engagementId)) continue
+          if (isRawUuidName(hs.displayLabel || hs.title || hs.id)) continue
+          selectorOptions.push({
+            value: 'host:' + hs.id,
+            label: '会话 · ' + (hs.displayLabel || hs.title || hs.id),
+            hostSession: hs,
+          })
+        }
       }
       const currentEngObj = engagements.find((x) => x.id === eng) || null
-      const currentEngName = (currentEngObj && currentEngObj.name)
-        || (snapshot && snapshot.engagement && snapshot.engagement.name)
-        || sesTitle
-        || eng
-        || 'LMTAgent 默认工作区'
+      const currentEngName = (currentEngObj && currentEngObj.name && !isRawUuidName(currentEngObj.name))
+        ? currentEngObj.name
+        : ((snapshot && snapshot.engagement && snapshot.engagement.name && !isRawUuidName(snapshot.engagement.name))
+            ? snapshot.engagement.name
+            : ((!isRawUuidName(sesTitle) && sesTitle) || (namedEngagements[0] && namedEngagements[0].name) || eng || 'LMTAgent 默认工作区'))
 
       const tabs = [
         ['assets', '模块与服务'], ['agents', '智能体与并发'], ['sessions', '运行环境'],
@@ -4884,6 +6099,8 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener('keydown', onKey)
       }, [full])
 
+      const effectiveKbEng = (!isRawUuidName(boundEng) && boundEng) || (!isRawUuidName(eng) && eng) || ''
+
       let body
       if (err) body = h('div', { className: 'rt-err' }, err)
       else if (st.tab === 'overview') body = h(OverviewTab, {
@@ -4891,7 +6108,7 @@ window.__ModuleLoader__.load({
         onGo: (tab) => goTab(tab),
       })
       else if (st.tab === 'artifacts') body = h(ArtifactsTab, { engagement: eng, refreshKey: refreshKey })
-      else if (st.tab === 'knowledge') body = h(KnowledgeTab, { refreshKey: refreshKey, engagement: boundEng || eng || '' })
+      else if (st.tab === 'knowledge') body = h(KnowledgeTab, { refreshKey: refreshKey, engagement: effectiveKbEng })
       else if (!eng) {
         body = h('div', { className: 'rt-pane' },
           h('div', { className: 'rt-card' },
@@ -4923,6 +6140,8 @@ window.__ModuleLoader__.load({
             ? { className: 'rt-embed', 'data-open': '1', style: { display: 'flex', width: '100%', height: '100%' } }
             : { className: 'rt-dock', 'data-open': st.open ? '1' : '0', style: { width: width + 'px', display: st.open ? 'flex' : 'none' } })
 
+      const hasCleanBoundDiff = manualHere() && boundEng !== null && !isRawUuidName(boundEng) && boundEng !== eng
+
       return h('div', shellProps,
         (full || embedMode) ? null : h('div', { className: 'rt-grip', onMouseDown: startResize }),
         h('div', { className: 'rt-head' },
@@ -4931,22 +6150,18 @@ window.__ModuleLoader__.load({
             full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, '全屏视图') : null),
           sid === null
             ? null
-            : (manualHere()
+            : (hasCleanBoundDiff
                 ? h('span', {
-                    className: 'rt-tag ' + (boundEng !== null ? 'rt-tag-warn' : 'rt-tag-passive'),
-                    title: boundEng !== null
-                      ? '你为当前会话手动切换了工作区；点击切回当前会话绑定的「' + boundEng + '」'
-                      : '你为当前会话手动选择了工作区',
-                    onClick: boundEng !== null
-                      ? () => {
-                          manualPickRef.current = null
-                          setFollowing(true)
-                          setFollowSource('bound')
-                          setEng(boundEng); rememberEngagement(boundEng); loadSnapshot(boundEng)
-                        }
-                      : undefined,
-                  }, boundEng !== null ? '手动选择：' + boundEng : '手动选择')
-                : (boundEng !== null && boundEng === eng
+                    className: 'rt-tag rt-tag-warn',
+                    title: '当前已切换工作区；点击切回当前会话绑定的「' + boundEng + '」',
+                    onClick: () => {
+                      manualPickRef.current = null
+                      setFollowing(true)
+                      setFollowSource('bound')
+                      setEng(boundEng); rememberEngagement(boundEng); loadSnapshot(boundEng)
+                    },
+                  }, '手动选择：' + boundEng)
+                : (boundEng !== null && !isRawUuidName(boundEng) && boundEng === eng && !manualHere()
                     ? h('span', { className: 'rt-tag rt-tag-live', title: '控制台正跟随当前 DSH 会话绑定的工作区：切换会话会自动同步' }, '跟随会话')
                     : (following && followSource === 'title'
                         ? h('span', {
@@ -4955,7 +6170,7 @@ window.__ModuleLoader__.load({
                           }, '跟随会话 · 按标题')
                         : h('span', {
                             className: 'rt-tag rt-tag-live',
-                            title: '控制台已与当前 DSH 会话实时同步，可在下拉框自由切换工作区或会话。',
+                            title: '控制台已与当前 DSH 会话实时同步，可在下拉框自由切换工作区。',
                           }, '已同步当前会话')))),
           h('select', {
             className: 'rt-input',

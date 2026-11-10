@@ -464,20 +464,20 @@ CREATE INDEX IF NOT EXISTS ix_poc_kind ON poc(kind, verified);
  * 面板按它分组，用户才能"一类一类看"而不是几百条平铺。
  */
 const POC_CATEGORIES = [
-  { code: 'rce', name: '远程命令执行', hint: '框架/中间件/组件 RCE、表达式注入、模板注入' },
-  { code: 'deserialization', name: '反序列化', hint: 'Java/PHP/.NET 反序列化链、fastjson/jackson 等' },
-  { code: 'file-upload', name: '文件上传 getshell', hint: '上传绕过、解析漏洞、二次渲染、竞争' },
-  { code: 'sqli', name: 'SQL 注入', hint: '注入点验证、拖库、写文件、提权' },
-  { code: 'unauthorized', name: '未授权访问', hint: '未鉴权接口/服务（Redis、Docker、Actuator、Swagger 调用）' },
-  { code: 'auth-bypass', name: '认证绕过 / 越权', hint: '登录绕过、JWT 缺陷、越权读写、逻辑缺陷' },
-  { code: 'weak-password', name: '弱口令 / 口令爆破', hint: '管理端弱口令、数据库弱口令、默认口令' },
-  { code: 'ssrf', name: 'SSRF', hint: '服务端请求伪造、云元数据、内网探测跳板' },
-  { code: 'xxe', name: 'XXE', hint: 'XML 外部实体读取与 SSRF' },
-  { code: 'path-traversal', name: '目录穿越 / 任意文件读取', hint: '路径穿越、任意文件读、源码/配置读取' },
-  { code: 'info-leak', name: '信息泄露', hint: '配置/凭据/源码/备份泄露（能升级为得分的那些）' },
-  { code: 'privesc', name: '提权 / 横向', hint: '本地提权、凭据复用、Pass-the-Hash、横向工具' },
-  { code: 'tunnel', name: '隧道 / 代理', hint: 'suo5、frp、chisel、Neo-ReGeorg、内网代理' },
-  { code: 'other', name: '其它', hint: '不属于上面任何一类（写清用途）' },
+  { code: 'rce', name: '核心计算引擎与业务算法', hint: '算法、计算引擎、公式、状态机、编译器、执行引擎' },
+  { code: 'deserialization', name: '跨端协议与数据序列化契约', hint: '序列化、JSON Schema、DTO、协议转换、类型契约' },
+  { code: 'file-upload', name: '静态资源与文件处理流水线', hint: '静态资源、图标、CDN、上传、分包、缓存' },
+  { code: 'sqli', name: '数据模型与持久化查询规范', hint: '数据库、SQL、Schema、索引、查询契约、PG' },
+  { code: 'unauthorized', name: '公开接口与免鉴权数据源', hint: '免认证、公开接口、免鉴权、开放数据源、TapTap、公共 API' },
+  { code: 'auth-bypass', name: '鉴权策略与开放平台契约', hint: '鉴权、OAuth、JWT、Token、登录态、开放平台、会话契约' },
+  { code: 'weak-password', name: '环境配置与密钥防呆基线', hint: '环境变量、配置基线、密钥管理、限流' },
+  { code: 'ssrf', name: '服务端代理与跨域网关适配', hint: '代理、跨域、CORS、网关、多源路由、适配器' },
+  { code: 'xxe', name: '结构化文档与配置解析器', hint: '解析器、AST、YAML、XML、Markdown' },
+  { code: 'path-traversal', name: '文件系统边界与路径校验', hint: '路径校验、沙箱、文件分片、目录规范' },
+  { code: 'info-leak', name: '数据脱敏与隐私合规防护', hint: '脱敏、隐私、日志规范、边界防呆' },
+  { code: 'privesc', name: '并发调度与权限分层模型', hint: '并发槽、RBAC、权限模型、递归调度' },
+  { code: 'tunnel', name: '跨进程通信与联调网关桥接', hint: 'IPC、WebSocket、联调桥接、RPC' },
+  { code: 'other', name: '通用工程模式与组件复刻模板', hint: '通用工程模式、脚手架与组件复刻模板（写清用途）' },
 ]
 export { POC_CATEGORIES }
 
@@ -490,25 +490,25 @@ export function pocCategoryName(code) {
 /**
  * 老条目的归类推测（迁移时给 category 为空的条目打标）。
  * 依据是 code/title/component 里的关键词 —— 命中就归那一类，都不中才落 `other`。
- * 顺序即优先级：越具体的越靠前（例如"任意文件上传"要压过泛化的"上传"）。
+ * 顺序即优先级：越具体的越靠前（例如"免鉴权"要压过泛化的"鉴权"，"JSON Schema"要压过"Schema"）。
  * 新写入的条目由 `redteam_poc_add` 的 `category` 参数决定，不走这里。
  */
 export function guessPocCategory(text) {
   const t = String(text || '').toLowerCase()
-  const has = (...words) => words.some((w) => t.includes(w))
-  if (has('反序列化', 'deserial', 'shiro', 'fastjson', 'weblogic', 'log4j', 'jackson')) return 'deserialization'
-  if (has('文件上传', 'file-upload', 'fileupload', 'upload', 'getshell', 'webshell', '写马')) return 'file-upload'
-  if (has('sql 注入', 'sqli', 'sql注入', '注入拖库', 'union select')) return 'sqli'
-  if (has('弱口令', '爆破', 'brute', '默认口令', '默认凭据', 'hydra')) return 'weak-password'
-  if (has('隧道', 'socks', 'suo5', 'frp', 'chisel', 'regeorg', '代理')) return 'tunnel'
-  if (has('未授权', 'unauth', '免认证', '免鉴权', '未鉴权', '无鉴权')) return 'unauthorized'
-  if (has('越权', '认证绕过', '鉴权绕过', 'jwt', '逻辑漏洞', '验证码绕过', 'auth-bypass')) return 'auth-bypass'
-  if (has('rce', '命令执行', '代码执行', '表达式注入', '模板注入', 'ssti', '命令注入', '远程执行')) return 'rce'
-  if (has('ssrf', '服务端请求伪造')) return 'ssrf'
-  if (has('xxe', '外部实体')) return 'xxe'
-  if (has('任意文件读', '文件读取', '目录穿越', '路径穿越', 'path traversal', 'lfi', '任意文件下载')) return 'path-traversal'
-  if (has('提权', '横向', 'pass-the-hash', 'mimikatz', 'impacket', '凭据复用')) return 'privesc'
-  if (has('信息泄露', '配置泄露', '敏感信息', '源码泄露', '泄露', 'leak')) return 'info-leak'
+  const has = (...words) => words.some((w) => t.includes(String(w).toLowerCase()))
+  if (has('序列化', 'JSON Schema', 'DTO', '协议转换', '类型契约', 'deserialization', 'deserial', 'fastjson', 'jackson')) return 'deserialization'
+  if (has('静态资源', '图标', 'CDN', '上传', '分包', '缓存', 'file-upload', 'fileupload', 'upload')) return 'file-upload'
+  if (has('数据库', 'SQL', 'Schema', '索引', '查询契约', 'PG', 'sqli', 'postgresql', 'pglite')) return 'sqli'
+  if (has('环境变量', '配置基线', '密钥管理', '限流', 'weak-password')) return 'weak-password'
+  if (has('IPC', 'WebSocket', '联调桥接', 'RPC', 'tunnel')) return 'tunnel'
+  if (has('免认证', '公开接口', '免鉴权', '开放数据源', 'TapTap', '公共 API', 'unauthorized', '未授权', 'unauth', '未鉴权', '无鉴权')) return 'unauthorized'
+  if (has('鉴权', 'OAuth', 'JWT', 'Token', '登录态', '开放平台', '会话契约', 'auth-bypass', 'auth')) return 'auth-bypass'
+  if (has('算法', '计算引擎', '公式', '状态机', '编译器', '执行引擎', 'rce')) return 'rce'
+  if (has('代理', '跨域', 'CORS', '网关', '多源路由', '适配器', 'ssrf')) return 'ssrf'
+  if (has('解析器', 'AST', 'YAML', 'XML', 'Markdown', 'xxe')) return 'xxe'
+  if (has('路径校验', '沙箱', '文件分片', '目录规范', 'path-traversal', 'path traversal')) return 'path-traversal'
+  if (has('并发槽', 'RBAC', '权限模型', '递归调度', 'privesc')) return 'privesc'
+  if (has('脱敏', '隐私', '日志规范', '边界防呆', 'info-leak', 'leak')) return 'info-leak'
   return 'other'
 }
 
