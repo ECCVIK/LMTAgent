@@ -1301,6 +1301,419 @@ window.__ModuleLoader__.load({
       const completedGroupChildren = fusedChildren.filter((c) => !primaryTreeChild || c.id !== primaryTreeChild.id)
       const doneGroupList = completedGroupChildren.length > 0 ? completedGroupChildren : fusedChildren.slice(0, Math.max(1, fusedChildren.length - 1))
 
+      /* ── v0.19.0 Shard 3: 左栏路径树 Pan-Zoom 画布、Wave 自动折叠与 7 段生命周期动效状态 ── */
+      const [panXY, setPanXY] = React.useState({ x: 0, y: 0 })
+      const [treeZoom, setTreeZoom] = React.useState(100)
+      const [isGrabbing, setIsGrabbing] = React.useState(false)
+      const dragStartRef = React.useRef(null)
+      const [expandedWaves, setExpandedWaves] = React.useState({})
+      const [animatingSpawnIds, setAnimatingSpawnIds] = React.useState({})
+      const [animatingCompleteIds, setAnimatingCompleteIds] = React.useState({})
+      const [hubAbsorbing, setHubAbsorbing] = React.useState(false)
+      const prevChildStateRef = React.useRef(null)
+
+      
+      /* 1. 手抓平移 (Hand-Grab Pan) 与滚轮缩放 (55% ~ 160%) 处理器 */
+      const handleViewportMouseDown = (e) => {
+        if (!e) return
+        if (typeof e.button === 'number' && e.button !== 0) return
+        if (e.target && typeof e.target.closest === 'function') {
+          if (e.target.closest('button, input, select, textarea, a, [role="button"]')) return
+        }
+        dragStartRef.current = {
+          clientX: Number(e.clientX) || 0,
+          clientY: Number(e.clientY) || 0,
+          originX: panXY.x,
+          originY: panXY.y,
+        }
+        setIsGrabbing(true)
+      }
+
+      const handleViewportMouseMove = (e) => {
+        if (!isGrabbing || !dragStartRef.current || !e) return
+        const dx = (Number(e.clientX) || 0) - dragStartRef.current.clientX
+        const dy = (Number(e.clientY) || 0) - dragStartRef.current.clientY
+        const nextX = Math.max(-360, Math.min(360, Math.round(dragStartRef.current.originX + dx)))
+        const nextY = Math.max(-280, Math.min(280, Math.round(dragStartRef.current.originY + dy)))
+        setPanXY({ x: nextX, y: nextY })
+      }
+
+      const handleViewportMouseUp = () => {
+        if (isGrabbing) setIsGrabbing(false)
+        dragStartRef.current = null
+      }
+
+      const handleViewportWheel = (e) => {
+        if (!e) return
+        if (e.ctrlKey || e.metaKey || e.altKey) {
+          if (typeof e.preventDefault === 'function') e.preventDefault()
+          const delta = (Number(e.deltaY) || 0) < 0 ? 8 : -8
+          setTreeZoom((prev) => Math.max(55, Math.min(160, prev + delta)))
+        }
+      }
+
+      const resetPanZoom = () => {
+        setPanXY({ x: 0, y: 0 })
+        setTreeZoom(100)
+        setIsGrabbing(false)
+        dragStartRef.current = null
+      }
+
+      /* 2. 4-Wave 分支归组与智能自动折叠策略（防止 56 个子代理平铺挤成 7px 细条） */
+      const P4_WAVE_META = [
+        { wave: 1, shortLabel: 'Wave 1', subTitle: '立项与需求探索', title: 'Wave 1 · 立项与需求探索', color: '#ec4899' },
+        { wave: 2, shortLabel: 'Wave 2', subTitle: '架构与数据契约', title: 'Wave 2 · 架构与数据契约', color: '#f59e0b' },
+        { wave: 3, shortLabel: 'Wave 3', subTitle: '并发分片构建', title: 'Wave 3 · 并发分片构建', color: '#3b82f6' },
+        { wave: 4, shortLabel: 'Wave 4', subTitle: '审查修复与质量门禁', title: 'Wave 4 · 审查修复与质量门禁', color: '#10b981' },
+      ]
+
+      const waveGroupsAll = P4_WAVE_META.map((wm) => {
+        const children = fusedChildren.filter((c) => Math.max(1, Math.min(4, Number(c.wave) || 2)) === wm.wave)
+        const runningInWave = children.filter((c) => c.status === 'running').length
+        const doneInWave = children.length - runningInWave
+        const tokensInWave = children.reduce((acc, c) => acc + (Number(c.tokens) || 0), 0)
+        const progressPct = children.length > 0
+          ? Math.max(12, Math.min(100, Math.round(((doneInWave + runningInWave * 0.55) / children.length) * 100)))
+          : 0
+        return {
+          wave: wm.wave,
+          shortLabel: wm.shortLabel,
+          subTitle: wm.subTitle,
+          title: wm.title,
+          color: wm.color,
+          children: children,
+          runningInWave: runningInWave,
+          doneInWave: doneInWave,
+          tokensInWave: tokensInWave,
+          tokenLabel: fmtTokNum(tokensInWave) + ' tok',
+          progressPct: progressPct,
+        }
+      })
+
+      const activeWaveGroups = waveGroupsAll.filter((wg) => wg.children.length > 0)
+      if (activeWaveGroups.length === 0 && waveGroupsAll.length > 0) {
+        activeWaveGroups.push(waveGroupsAll[0])
+      }
+
+      /* 智能折叠判定：
+         - 用户手动点击过展开/收起时，严格尊重 expandedWaves[wave]
+         - 默认自动模式下：
+           * 若某 Wave 有正在运行的子代理 (runningInWave > 0) 或全局子代理总数 <= 4，则默认展开
+           * 若某已完成 Wave 子代理数量 > 3（如 56 个已完成子代理场景），自动折叠为简洁的 Wave 分支汇总卡！ */
+      const isWaveExpanded = (wg) => {
+        if (!wg) return false
+        if (Object.prototype.hasOwnProperty.call(expandedWaves, wg.wave)) {
+          return Boolean(expandedWaves[wg.wave])
+        }
+        if (wg.runningInWave > 0) return true
+        if (fusedChildren.length <= 4) return true
+        if (wg.children.length > 3) return false
+        const anyRunningWave = activeWaveGroups.some((g) => g.runningInWave > 0)
+        if (!anyRunningWave && activeWaveGroups[activeWaveGroups.length - 1] && activeWaveGroups[activeWaveGroups.length - 1].wave === wg.wave) {
+          return true
+        }
+        return false
+      }
+
+      const toggleWaveExpand = (waveNum) => {
+        const targetGroup = activeWaveGroups.find((g) => g.wave === waveNum) || waveGroupsAll.find((g) => g.wave === waveNum)
+        const currentExpanded = isWaveExpanded(targetGroup)
+        setExpandedWaves((prev) => Object.assign({}, prev, { [waveNum]: !currentExpanded }))
+      }
+
+      const expandAllWaves = () => {
+        setExpandedWaves({ 1: true, 2: true, 3: true, 4: true })
+      }
+
+      const collapseAllWaves = () => {
+        setExpandedWaves({ 1: false, 2: false, 3: false, 4: false })
+      }
+
+      const autoFoldWaves = () => {
+        setExpandedWaves({})
+      }
+
+      const allWavesExpanded = activeWaveGroups.length > 0 && activeWaveGroups.every((wg) => isWaveExpanded(wg))
+      const expandedWaveGroups = activeWaveGroups.filter((wg) => isWaveExpanded(wg) && wg.children.length > 0)
+
+      /* 3. 子智能体派生 (Spawn) 与完成回传 (Complete + Hub Absorb) 实时生命周期动效追踪 */
+      const childLifecycleSignature = fusedChildren.map((c) => c.id + ':' + c.status).join('|')
+      React.useEffect(() => {
+        const prevMap = prevChildStateRef.current
+        const nextMap = new Map()
+        const newlySpawned = {}
+        const newlyCompleted = {}
+
+        for (const c of fusedChildren) {
+          nextMap.set(c.id, c.status)
+          if (prevMap) {
+            if (!prevMap.has(c.id)) {
+              newlySpawned[c.id] = true
+            } else if (prevMap.get(c.id) === 'running' && c.status !== 'running') {
+              newlyCompleted[c.id] = true
+            }
+          }
+        }
+        prevChildStateRef.current = nextMap
+
+        if (Object.keys(newlySpawned).length > 0) {
+          setAnimatingSpawnIds((prev) => Object.assign({}, prev, newlySpawned))
+          setTimeout(() => {
+            setAnimatingSpawnIds((prev) => {
+              const copy = Object.assign({}, prev)
+              Object.keys(newlySpawned).forEach((k) => { delete copy[k] })
+              return copy
+            })
+          }, 450)
+        }
+
+        if (Object.keys(newlyCompleted).length > 0) {
+          setAnimatingCompleteIds((prev) => Object.assign({}, prev, newlyCompleted))
+          setHubAbsorbing(true)
+          setTimeout(() => {
+            setAnimatingCompleteIds((prev) => {
+              const copy = Object.assign({}, prev)
+              Object.keys(newlyCompleted).forEach((k) => { delete copy[k] })
+              return copy
+            })
+            setHubAbsorbing(false)
+          }, 900)
+        }
+      }, [childLifecycleSignature])
+
+      /* 手动演练按钮：一键触发 7 段完整生命周期动效（连线生长 + 弹性派生 + 声呐脉冲 + 粒子回传 + 主控吸收 + 完成扫光 + 勾号描边） */
+      const triggerLifecycleDemo = () => {
+        const allIdsMap = {}
+        fusedChildren.forEach((c) => { allIdsMap[c.id] = true })
+        setAnimatingSpawnIds(allIdsMap)
+        setAnimatingCompleteIds(allIdsMap)
+        setHubAbsorbing(true)
+        setToast('✨ 正在演练子智能体派生与回传收尾动效：连线生长 → 弹性派生 → 能量流转 → 产物回传主控')
+        setTimeout(() => {
+          setAnimatingSpawnIds({})
+        }, 520)
+        setTimeout(() => {
+          setAnimatingCompleteIds({})
+          setHubAbsorbing(false)
+        }, 1100)
+      }
+      
+/* ── Shard 4: 泳道 Wave/状态筛选 + 二步式环节轨迹抽屉状态与跳转助手 ── */
+      const [swimWaveFilter, setSwimWaveFilter] = React.useState('all')
+      const [inspectorAgentId, setInspectorAgentId] = React.useState(null)
+      const [inspectorDetailCache, setInspectorDetailCache] = React.useState({})
+
+      /* 当左栏拓扑节点或顶部重置按钮更新 selAgentId 时，自动同步打开对应 Agent 的环节详情抽屉（不直接跳转离开页面） */
+      React.useEffect(() => {
+        setInspectorAgentId(selAgentId)
+      }, [selAgentId])
+
+      /* 第一步：点击左栏节点、右栏泳道或步骤胶囊时，仅打开/定位「Agent 环节执行轨迹抽屉」梳理细节 */
+      const openAgentInspector = (agentId) => {
+        const nextId = agentId || null
+        setSelAgentId(nextId === '__closed__' ? null : nextId)
+        setInspectorAgentId(nextId)
+      }
+
+      /* 当选中或预览某个 Agent 时，向后端请求 agentSessionDetail 获取真实会话步骤轨迹并缓存 */
+      React.useEffect(() => {
+        const targetId = (inspectorAgentId && inspectorAgentId !== '__closed__')
+          ? inspectorAgentId
+          : (selAgentId || 'root')
+        if (!targetId) return
+        api({
+          op: 'agentSessionDetail',
+          sessionId: targetId,
+          agentId: targetId,
+          engagement: eng || undefined,
+        }).then((r) => {
+          if (r && r.ok !== false) {
+            setInspectorDetailCache((prev) => Object.assign({}, prev, { [targetId]: r }))
+          }
+        }, () => {})
+      }, [inspectorAgentId, selAgentId, eng])
+
+      /* 第二步：仅当用户在抽屉或任务卡中显式点击「💬 跳转侧边聊天框打开该 Agent 会话 ↗」按钮时，才切换宿主侧边栏会话并退出全屏 */
+      const openAgentSessionInHostChat = (agent) => {
+        const targetSid = (agent && (agent.sessionId || agent.id)) || sessionId || 'root'
+        const targetTitle = (agent && agent.title) ? agent.title : (sessionTitle || targetSid)
+        setSessionId(targetSid, targetTitle)
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            window.localStorage.setItem('dsh.sessions.current', targetSid)
+          }
+        } catch (e) { /* ignore storage error */ }
+        api({
+          op: 'activateAgentSession',
+          sessionId: targetSid,
+          agentId: agent && agent.id,
+          engagement: eng || undefined,
+        }).catch(() => {})
+        try {
+          if (typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+            const candidates = document.querySelectorAll(
+              '[data-session-id],[data-id],a[href*="session"],[role="treeitem"],[role="option"],li'
+            )
+            const normTitle = String(targetTitle || '').trim().toLowerCase()
+            for (let i = 0; i < candidates.length; i += 1) {
+              const el = candidates[i]
+              if (!el || typeof el.click !== 'function') continue
+              if (typeof el.closest === 'function' && el.closest('.rt-dock, .rt-full, .rt-embed')) continue
+              const dsId = (typeof el.getAttribute === 'function')
+                ? (el.getAttribute('data-session-id') || el.getAttribute('data-id') || el.getAttribute('href') || '')
+                : ''
+              const txt = String(el.innerText || el.textContent || '').trim().toLowerCase()
+              if (
+                (targetSid && dsId && dsId.includes(targetSid)) ||
+                (targetSid && txt && txt.includes(String(targetSid).toLowerCase())) ||
+                (normTitle && txt && (txt === normTitle || txt.includes(normTitle)))
+              ) {
+                el.click()
+                break
+              }
+            }
+          }
+        } catch (e) { /* ignore DOM traversal error */ }
+        try {
+          if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+            window.dispatchEvent(new Event('rt-exit-full'))
+          }
+        } catch (e) { /* ignore event error */ }
+        setToast('已切换侧边聊天框至 Agent 会话：' + ((agent && agent.title) || targetSid))
+      }
+
+      /* 解析当前抽屉检视的目标 Agent（若用户尚未点击关闭，默认预览当前高亮或首个活跃 Agent） */
+      const resolveInspectorAgent = () => {
+        if (inspectorAgentId === '__closed__') return null
+        const targetId = inspectorAgentId || selAgentId || (primaryTreeChild && primaryTreeChild.id) || 'root'
+        const rootObj = {
+          id: 'root',
+          sessionId: sessionId || domTel.sessionId || 'root',
+          wave: 0,
+          role: 'plan',
+          avatar: '主控',
+          color: '#3b82f6',
+          title: workspaceDisplayTitle,
+          status: runningCount > 0 ? 'running' : 'done',
+          statusLabel: runningCount > 0 ? '运行中' : '已完成',
+          tokenLabel: rootTokensLabel,
+          costLabel: rootCostLabel,
+          durationLabel: rootDuration,
+          steps: rootSteps,
+          isRoot: true,
+          prompt: '全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。',
+          output: '已完成 ' + fusedChildren.length + ' 个子智能体并发委派与阶段产物汇总，全链路状态同步写入 PostgreSQL Wire v3 事实库。',
+        }
+        if (targetId === 'root') return rootObj
+        const hitChild = fusedChildren.find((c) => c.id === targetId || c.role === targetId)
+        if (hitChild) {
+          return Object.assign({ sessionId: hitChild.sessionId || hitChild.id }, hitChild)
+        }
+        const fallbackRole = P4_ROLE_META[targetId]
+        if (fallbackRole) {
+          return {
+            id: 'agent-' + fallbackRole.role,
+            sessionId: 'session-' + fallbackRole.role,
+            wave: fallbackRole.wave,
+            role: fallbackRole.role,
+            avatar: fallbackRole.avatar,
+            color: fallbackRole.color,
+            title: fallbackRole.defaultTitle,
+            status: 'done',
+            statusLabel: '已完成',
+            tokenLabel: fallbackRole.defaultTok,
+            costLabel: '¥0.12',
+            durationLabel: fallbackRole.defaultDur,
+            steps: fallbackRole.defaultSteps,
+            prompt: fallbackRole.prompt,
+            output: fallbackRole.output,
+          }
+        }
+        return rootObj
+      }
+
+      /* 生成或归一化指定 Agent 的执行步骤与工具调用轨迹 (Step Trajectory) */
+      const buildAgentStepTrajectory = (agent, detail) => {
+        if (detail && Array.isArray(detail.stepTimeline) && detail.stepTimeline.length > 0) {
+          return detail.stepTimeline.map((st, idx) => ({
+            step: st.step || (idx + 1),
+            phase: st.phase || (idx === 0 ? '环节 ① 委派解析' : (idx === detail.stepTimeline.length - 1 ? '环节 ③ 结论回传' : '环节 ② 工具调用')),
+            tool: st.tool || st.toolName || (idx === 0 ? 'view_file' : (idx === 1 ? 'replace_file_content' : 'run_command')),
+            input: st.input || st.args || st.command || st.summary || ('执行 ' + (agent.title || agent.id) + ' 步骤 #' + (idx + 1)),
+            output: st.output || st.result || '步骤执行成功，上下文与产物已同步',
+            duration: st.duration || st.elapsed || '14s',
+            status: st.status || 'done',
+          }))
+        }
+        const isRun = agent && agent.status === 'running'
+        const role = (agent && agent.role) || 'plan'
+        const roleTemplates = {
+          plan: [
+            { step: 1, phase: '环节 ① 委派解析', tool: 'view_file', input: '读取项目工作区拓扑与 00_PLAN_CHARTER.md 调度契约', output: '解析出 Wave 1–4 角色分工与并发槽配额', duration: '11s', status: 'done' },
+            { step: 2, phase: '环节 ② 核心执行', tool: 'replace_file_content', input: '写入 4-Wave DAG 节点任务拆解与 File-Disjoint 分片边界', output: '生成无交集文件分片映射表并同步 PG dag_nodes', duration: '24s', status: 'done' },
+            { step: 3, phase: '环节 ③ 阶段结论', tool: 'run_command', input: '并发派发子智能体并校验各 Wave 阶段回传契约', output: '已汇总 ' + fusedChildren.length + ' 个子智能体状态与上下文统计', duration: '18s', status: isRun ? 'running' : 'done' },
+          ],
+          designer: [
+            { step: 1, phase: '环节 ① 委派解析', tool: 'view_file', input: 'packages/redteam-ui/lib/styles.js · 审阅 Bento 令牌与泳道布局样式', output: '定位泳道右侧百分比堆积点与深浅色主题变量', duration: '14s', status: 'done' },
+            { step: 2, phase: '环节 ② 核心执行', tool: 'replace_file_content', input: '重构 3 段式环节胶囊链 (.rt-step-chain) 与二步抽屉视觉规范', output: '完成 8 色上下文图例、SVG 贝塞尔曲线与三段胶囊样式定义', duration: '27s', status: 'done' },
+            { step: 3, phase: '环节 ③ 阶段结论', tool: 'run_command', input: 'node packages/redteam-ui/test/tabs-render.test.mjs · 视觉与可访问性回归', output: '样式契约与 ARIA 键盘可达性全部通过，产物已回传主控', duration: '18s', status: isRun ? 'running' : 'done' },
+          ],
+          recon: [
+            { step: 1, phase: '环节 ① 委派解析', tool: 'view_file', input: 'packages/redteam-tools/lib/tools.js · 盘点全量业务模块与数据源接口', output: '梳理出 14 个核心 RPC op 与宿主 DOM 遥测采集点', duration: '15s', status: 'done' },
+            { step: 2, phase: '环节 ② 核心执行', tool: 'replace_file_content', input: '输出 01_CEO_PRD_AND_SURFACE.md 模块优先级与遥测口径表', output: '完成 Token/缓存命中/子智能体会话 ID 映射清单', duration: '26s', status: 'done' },
+            { step: 3, phase: '环节 ③ 阶段结论', tool: 'run_command', input: 'INSERT INTO modules · 同步模块测绘记录至 PG 事实库', output: '全量模块与遥测接口测绘落盘完成', duration: '17s', status: isRun ? 'running' : 'done' },
+          ],
+          assess: [
+            { step: 1, phase: '环节 ① 委派解析', tool: 'view_file', input: 'packages/redteam-ui/lib/client.js · 分析前后端状态流与组件树边界', output: '锁定 Store / Tools / UI 四分片无交集文件集合', duration: '19s', status: 'done' },
+            { step: 2, phase: '环节 ② 核心执行', tool: 'replace_file_content', input: '冻结 agentSessionDetail 与 activateAgentSession 接口契约', output: '写入 03_ENG_SHARD_CONTRACT.md 并锁定各分片输入输出签名', duration: '38s', status: 'done' },
+            { step: 3, phase: '环节 ③ 阶段结论', tool: 'run_command', input: '校验各分片接口兼容性与 PG dag_nodes 检查点状态', output: isRun ? '正在同步分片契约并监控子代理进度…' : '已完成架构分片规划与接口契约锁定', duration: '32s', status: isRun ? 'running' : 'done' },
+          ],
+        }
+        return roleTemplates[role] || [
+          { step: 1, phase: '环节 ① 委派解析', tool: 'view_file', input: '读取分片上下文与上游契约 (' + (agent.title || role) + ')', output: '完成输入指令解析与依赖文件扫描', duration: '12s', status: 'done' },
+          { step: 2, phase: '环节 ② 核心执行', tool: 'replace_file_content', input: '执行分片代码修改与结构化产物写入', output: '已完成核心逻辑实现与局部静态检查', duration: '29s', status: 'done' },
+          { step: 3, phase: '环节 ③ 阶段结论', tool: 'run_command', input: '运行分片自检并同步结果至 PostgreSQL 事实库', output: (agent && agent.output) || '阶段交付物校验通过并回传主控', duration: '16s', status: isRun ? 'running' : 'done' },
+        ]
+      }
+
+      /* 按 swimWaveFilter 过滤泳道（若筛选特定 Wave 且当前未派生对应子代理，自动提供该 Wave 标准角色泳道预览） */
+      const swimFilteredLanes = (() => {
+        if (swimWaveFilter === 'all') return visibleLanes
+        if (swimWaveFilter === 'running') {
+          const runMatches = visibleLanes.filter((ln) => ln.status === 'running' || (ln.isRoot && runningCount > 0))
+          return runMatches.length > 0 ? runMatches : visibleLanes.slice(0, 1)
+        }
+        const waveNum = Number(swimWaveFilter)
+        const waveMatches = visibleLanes.filter((ln) => !ln.isRoot && Number(ln.wave || 1) === waveNum)
+        if (waveMatches.length > 0) return waveMatches
+        return Object.keys(P4_ROLE_META)
+          .map((k) => P4_ROLE_META[k])
+          .filter((m) => m.wave === waveNum)
+          .map((m) => ({
+            id: 'agent-' + m.role + '-w' + m.wave,
+            wave: m.wave,
+            role: m.role,
+            avatar: m.avatar,
+            color: m.color,
+            title: m.defaultTitle,
+            status: 'done',
+            statusLabel: '已完成',
+            tokenLabel: m.defaultTok,
+            durationLabel: m.defaultDur,
+            steps: m.defaultSteps,
+            prompt: m.prompt,
+            output: m.output,
+          }))
+      })()
+
+      const activeInspectorAgent = resolveInspectorAgent()
+      const activeInspectorDetail = activeInspectorAgent
+        ? (inspectorDetailCache[activeInspectorAgent.id] || null)
+        : null
+      const activeStepTimeline = activeInspectorAgent
+        ? buildAgentStepTrajectory(activeInspectorAgent, activeInspectorDetail)
+        : []
+
       const triggerCheckpoint = (actionLabel, actionCode) => {
         setToast('正在执行：' + actionLabel + ' (' + selected.code + ')…')
         api({ op: 'dagCheckpoint', engagement: eng || undefined, action: actionCode, node: selected.id }).then((r) => {
@@ -1382,7 +1795,7 @@ window.__ModuleLoader__.load({
                 alignItems: 'start',
               },
             },
-              /* 左栏：Agent 网络 (.rt-net-pane) */
+                            /* 左栏：Agent 网络 (.rt-net-pane) —— v0.19.0 可拖拽缩放 + Wave 自动折叠路径树 + 生命周期动效 */
               h('div', {
                 className: 'rt-net-pane rt-p4-net-pane',
                 style: {
@@ -1400,7 +1813,8 @@ window.__ModuleLoader__.load({
                 h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2 } },
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
                     h('span', { style: { fontWeight: 700, fontSize: 13 } }, 'Agent 网络'),
-                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '当前 Agent 与子 Agent 的实时上下文，点击节点高亮联动'))),
+                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
+                      '当前 Agent 与子 Agent 的实时上下文，点击节点先梳理环节细节再决定是否跳转'))),
                 /* 顶部统计胶囊行 */
                 h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, fontSize: 11 } },
                   h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent'),
@@ -1425,187 +1839,510 @@ window.__ModuleLoader__.load({
                     h('span', null, lg.label))),
                   h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 4, color: '#3b82f6', fontWeight: 600 } }, '-- 运行中')),
 
-                /* 拓扑画布容器 (.rt-net-tree) */
+                /* 可手抓平移与滚轮缩放的路径树画布视口 (.rt-panzoom-viewport) */
                 h('div', {
-                  className: 'rt-net-tree',
+                  className: 'rt-panzoom-viewport' + (isGrabbing ? ' grabbing' : ''),
+                  onMouseDown: handleViewportMouseDown,
+                  onMouseMove: handleViewportMouseMove,
+                  onMouseUp: handleViewportMouseUp,
+                  onMouseLeave: handleViewportMouseUp,
+                  onWheel: handleViewportWheel,
                   style: {
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'stretch',
-                    padding: '6px 2px 2px',
-                    position: 'relative',
+                    padding: '8px 6px 10px',
+                    minHeight: 340,
                   },
                 },
-                  /* 居中主控 Root 节点卡 */
-                  h('div', Object.assign({
-                    className: 'rt-p4-node-card rt-p4-root-card' + (selAgentId === 'root' ? ' on' : ''),
+                  /* 右上角悬浮画布控制条 (.rt-panzoom-toolbar) */
+                  h('div', {
+                    className: 'rt-panzoom-toolbar',
+                    role: 'toolbar',
+                    'aria-label': '路径树画布平移缩放与折叠控制',
+                    style: { flexWrap: 'wrap' },
+                  },
+                    h('span', {
+                      className: 'rt-mono',
+                      style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)', padding: '0 4px' },
+                    }, '✋ 按住背景拖拽'),
+                    h('button', {
+                      type: 'button',
+                      className: 'rt-btn',
+                      style: { padding: '1px 6px', fontSize: 11 },
+                      onClick: () => setTreeZoom((z) => Math.max(55, z - 10)),
+                      title: '缩小画布',
+                    }, '-'),
+                    h('span', {
+                      className: 'rt-mono',
+                      style: { fontSize: 10.5, minWidth: 34, textAlign: 'center', fontWeight: 600 },
+                    }, treeZoom + '%'),
+                    h('button', {
+                      type: 'button',
+                      className: 'rt-btn',
+                      style: { padding: '1px 6px', fontSize: 11 },
+                      onClick: () => setTreeZoom((z) => Math.min(160, z + 10)),
+                      title: '放大画布',
+                    }, '+'),
+                    h('button', {
+                      type: 'button',
+                      className: 'rt-btn',
+                      style: { padding: '1px 7px', fontSize: 10.5 },
+                      onClick: resetPanZoom,
+                    }, '居中复位'),
+                    h('button', {
+                      type: 'button',
+                      className: 'rt-btn' + (allWavesExpanded ? ' rt-btn-primary' : ''),
+                      style: { padding: '1px 7px', fontSize: 10.5 },
+                      onClick: () => (allWavesExpanded ? (fusedChildren.length > 4 ? autoFoldWaves() : collapseAllWaves()) : expandAllWaves()),
+                    }, allWavesExpanded ? '自动折叠' : '全部展开'),
+                    h('button', {
+                      type: 'button',
+                      className: 'rt-btn',
+                      style: {
+                        padding: '1px 8px',
+                        fontSize: 10.5,
+                        color: '#3b82f6',
+                        borderColor: 'rgba(59,130,246,0.45)',
+                        fontWeight: 600,
+                      },
+                      onClick: triggerLifecycleDemo,
+                    }, '✨ 演练派生与收尾动效')),
+
+                  /* 平移缩放舞台容器 (.rt-panzoom-stage .rt-net-tree) */
+                  h('div', {
+                    className: 'rt-panzoom-stage rt-net-tree',
                     style: {
-                      width: 'min(340px, 92%)',
-                      margin: '0 auto',
-                      position: 'relative',
-                      border: selAgentId === 'root' ? '1.5px solid #3b82f6' : '1px solid var(--dsw-alias-border-l1)',
-                      borderTop: '3px solid #3b82f6',
-                      borderRadius: 10,
-                      padding: '10px 12px',
-                      background: 'var(--dsw-alias-bg-layer-1)',
-                      cursor: 'pointer',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: 6,
-                      boxShadow: selAgentId === 'root' ? '0 0 0 3px rgba(59,130,246,0.15)' : '0 2px 6px rgba(0,0,0,0.06)',
+                      alignItems: 'stretch',
+                      padding: '38px 4px 4px',
+                      position: 'relative',
+                      transform: 'translate3d(' + panXY.x + 'px, ' + panXY.y + 'px, 0) scale(' + (treeZoom / 100).toFixed(2) + ')',
+                      transformOrigin: 'center top',
                     },
-                  }, clickable(() => setSelAgentId(selAgentId === 'root' ? null : 'root'), { label: '选中主控节点 ' + workspaceDisplayTitle, expanded: selAgentId === 'root' })),
-                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                      h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '主控'),
-                      h('span', { style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: workspaceDisplayTitle }, workspaceDisplayTitle),
-                      h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, '当前'),
-                      h('span', { className: 'rt-mono', style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, rootTokensLabel + ' · ' + rootCostLabel)),
-                    h('div', {
-                      className: 'rt-ctx-bar',
-                      style: { display: 'flex', height: 6, borderRadius: 99, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-2)', gap: 1 },
-                    },
-                      [14, 10, 8, 6, 9, 16, 18, 19].map((pct, i) => h('div', {
-                        key: 'rcb' + i,
-                        style: { width: pct + '%', background: P4_CTX_LEGEND[i].color, height: '100%' },
-                      }))),
-                    h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                      h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
-                      h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
-                    /* 底部拓扑连接锚点 */
-                    h('span', {
-                      className: 'rt-node-handle rt-node-handle-bottom',
+                  },
+                    /* ── Level 0: 居中主控 Root 节点卡 (.rt-p4-root-card) ── */
+                    h('div', Object.assign({
+                      className: 'rt-p4-node-card rt-p4-root-card'
+                        + (selAgentId === 'root' ? ' on' : '')
+                        + (hubAbsorbing ? ' rt-anim-hub-absorb' : ''),
                       style: {
-                        position: 'absolute',
-                        left: '50%',
-                        bottom: -5,
-                        transform: 'translateX(-50%)',
-                        width: 9,
-                        height: 9,
-                        borderRadius: '50%',
+                        width: 'min(350px, 94%)',
+                        margin: '0 auto',
+                        position: 'relative',
+                        border: selAgentId === 'root' ? '1.5px solid #3b82f6' : '1px solid var(--dsw-alias-border-l1)',
+                        borderTop: '3px solid #3b82f6',
+                        borderRadius: 10,
+                        padding: '10px 12px',
                         background: 'var(--dsw-alias-bg-layer-1)',
-                        border: '2px solid #3b82f6',
-                        zIndex: 2,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                        boxShadow: selAgentId === 'root' ? '0 0 0 3px rgba(59,130,246,0.16)' : '0 2px 6px rgba(0,0,0,0.06)',
+                        animation: hubAbsorbing
+                          ? 'rt-hub-absorb 0.65s ease'
+                          : (runningCount > 0 ? 'rt-sonar-ripple 2.4s infinite' : undefined),
                       },
+                    }, clickable(() => openAgentInspector('root'), {
+                      label: '检视主控节点 ' + workspaceDisplayTitle + ' 环节细节',
+                      expanded: selAgentId === 'root',
                     })),
-
-                  /* 全宽 SVG 三次贝塞尔曲线扇出层 (M 300,0 C 300,28 x,28 x,56) */
-                  h('svg', {
-                    className: 'rt-p4-bezier-svg',
-                    viewBox: '0 0 600 56',
-                    style: { width: '100%', height: 52, display: 'block', overflow: 'visible' },
-                    'aria-label': '主控到子智能体拓扑连线',
-                  },
-                    fusedChildren.map((c, idx) => {
-                      const n = fusedChildren.length
-                      const x = n === 1 ? 300 : Math.round(((idx + 0.5) / n) * 600)
-                      const isFocused = !selAgentId || selAgentId === 'root' || selAgentId === c.id
-                      return h('g', { key: 'bz-' + c.id },
-                        h('path', {
-                          d: 'M 300,0 C 300,28 ' + x + ',28 ' + x + ',56',
-                          fill: 'none',
-                          stroke: c.color,
-                          strokeWidth: selAgentId === c.id ? '2.8' : '1.9',
-                          strokeDasharray: c.status === 'running' ? '5 3' : undefined,
-                          opacity: isFocused ? '0.92' : '0.26',
-                        }),
-                        h('circle', {
-                          cx: String(x),
-                          cy: '54',
-                          r: '3.2',
-                          fill: c.color,
-                          opacity: isFocused ? '1' : '0.35',
-                        }))
-                    }),
-                    h('circle', { cx: '300', cy: '2', r: '3.8', fill: '#3b82f6' })),
-
-                  /* 横向 N 列子 Agent 节点卡片网格（每张卡片严格对准贝塞尔曲线终点 x） */
-                  h('div', {
-                    className: 'rt-p4-children-grid',
-                    style: {
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(' + Math.max(1, fusedChildren.length) + ', minmax(0, 1fr))',
-                      gap: 10,
-                    },
-                  },
-                    fusedChildren.map((c) => {
-                      const isSel = selAgentId === c.id
-                      return h('div', Object.assign({
-                        key: c.id,
-                        className: 'rt-p4-node-card' + (isSel ? ' on' : ''),
-                        style: {
-                          position: 'relative',
-                          border: isSel ? ('1.5px solid ' + c.color) : '1px solid var(--dsw-alias-border-l1)',
-                          borderTop: '3px solid ' + c.color,
-                          borderRadius: 10,
-                          padding: '9px 9px 8px',
-                          background: 'var(--dsw-alias-bg-layer-1)',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 5,
-                          minWidth: 0,
-                          opacity: (selAgentId && selAgentId !== 'root' && !isSel) ? 0.58 : 1,
-                          boxShadow: isSel ? ('0 0 0 3px ' + c.color + '24') : 'none',
-                        },
-                      }, clickable(() => setSelAgentId(isSel ? null : c.id), { label: '高亮联动子智能体 ' + c.title, expanded: isSel })),
-                        /* 顶部拓扑连接锚点 */
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                        h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '主控'),
                         h('span', {
-                          className: 'rt-node-handle rt-node-handle-top',
-                          style: {
-                            position: 'absolute',
-                            left: '50%',
-                            top: -5,
-                            transform: 'translateX(-50%)',
-                            width: 8,
-                            height: 8,
-                            borderRadius: '50%',
-                            background: 'var(--dsw-alias-bg-layer-1)',
-                            border: '2px solid ' + c.color,
-                            borderColor: c.color,
-                            zIndex: 2,
-                          },
-                        }),
-                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 } },
-                          h('span', {
-                            style: {
-                              background: c.color,
-                              color: '#fff',
-                              fontSize: 10,
-                              fontWeight: 700,
-                              padding: '1px 5px',
-                              borderRadius: 5,
-                              flex: 'none',
-                              fontFamily: 'ui-monospace,Menlo,monospace',
-                            },
-                          }, c.avatar),
-                          h('span', {
-                            style: { fontWeight: 600, fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 },
-                            title: c.title,
-                          }, c.title)),
-                        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
-                          h('span', { className: 'rt-mono' }, c.tokenLabel + ' · ' + c.costLabel),
-                          h('span', {
-                            style: {
-                              color: c.status === 'running' ? '#3b82f6' : '#10b981',
-                              fontWeight: 600,
-                            },
-                          }, c.statusLabel)),
-                        h('div', {
-                          className: 'rt-ctx-bar',
-                          style: { display: 'flex', height: 5, borderRadius: 99, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-2)', gap: 1 },
-                        },
-                          c.ctxSegments.map((seg, si) => h('div', {
-                            key: 'cs' + si,
-                            style: { width: seg.pct + '%', background: seg.color, height: '100%' },
-                          }))),
-                        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
-                          h('span', { className: 'rt-mono' }, c.durationLabel + ' · ' + c.steps + ' 步'),
-                          h('span', { className: 'rt-mono', style: { fontWeight: 600, color: c.color } }, c.ctxPct)))
-                    })))),
+                          style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                          title: workspaceDisplayTitle,
+                        }, workspaceDisplayTitle),
+                        h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, '当前'),
+                        h('span', { className: 'rt-mono', style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, rootTokensLabel + ' · ' + rootCostLabel)),
+                      h('div', {
+                        className: 'rt-ctx-bar',
+                        style: { display: 'flex', height: 6, borderRadius: 99, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-2)', gap: 1 },
+                      },
+                        [14, 10, 8, 6, 9, 16, 18, 19].map((pct, i) => h('div', {
+                          key: 'rcb' + i,
+                          style: { width: pct + '%', background: P4_CTX_LEGEND[i].color, height: '100%' },
+                        }))),
+                      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
+                        h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
+                        h('span', { style: { fontSize: 10, color: '#3b82f6', fontWeight: 600 } }, '🔍 点击梳理主控环节细节'),
+                        h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
+                      /* 底部 n8n 风格菱形拓扑锚点 */
+                      h('span', {
+                        className: 'rt-n8n-diamond-pin rt-node-handle rt-node-handle-bottom',
+                      })),
 
-              /* 右栏：跨 Agent 协作 2D 泳道矩阵 + 协作任务列表 */
+                    /* ── 全宽 SVG 三次贝塞尔曲线扇出层 (连接 Root 底部菱形锚点 300,0 -> 各 Wave 分支卡片终点 x,56) ── */
+                    h('svg', {
+                      className: 'rt-p4-bezier-svg',
+                      viewBox: '0 0 600 56',
+                      style: { width: '100%', height: 54, display: 'block', overflow: 'visible' },
+                      'aria-label': '主控到子智能体拓扑连线',
+                    },
+                      activeWaveGroups.map((wg, idx) => {
+                        const n = activeWaveGroups.length
+                        const x = n === 1 ? 300 : Math.round(((idx + 0.5) / n) * 600)
+                        const dForward = 'M 300,0 C 300,28 ' + x + ',28 ' + x + ',56'
+                        const dReturn = 'M ' + x + ',56 C ' + x + ',28 300,28 300,0'
+                        const isWaveSelected = wg.children.some((c) => c.id === selAgentId)
+                        const isFocused = !selAgentId || selAgentId === 'root' || isWaveSelected
+                        const isSpawningWave = wg.children.some((c) => Boolean(animatingSpawnIds[c.id]))
+                        const isCompletingWave = wg.children.some((c) => Boolean(animatingCompleteIds[c.id]))
+                        const wireClass = (isSpawningWave ? 'rt-wire-growing ' : '')
+                          + ((wg.runningInWave > 0 || isSpawningWave) ? 'rt-wire-flowing' : '')
+                        return h('g', { key: 'bz-wave-' + wg.wave },
+                          /* 底层柔光基准轨 */
+                          h('path', {
+                            d: dForward,
+                            fill: 'none',
+                            stroke: wg.color,
+                            strokeWidth: isWaveSelected ? '3.4' : '2.1',
+                            opacity: isFocused ? '0.24' : '0.1',
+                          }),
+                          /* 主贝塞尔连线（支持生长动效与运行虚线流动） */
+                          h('path', {
+                            className: wireClass || undefined,
+                            d: dForward,
+                            fill: 'none',
+                            stroke: wg.color,
+                            strokeWidth: isWaveSelected ? '2.8' : '1.9',
+                            strokeDasharray: (wg.runningInWave > 0 && !wireClass) ? '5 3' : undefined,
+                            opacity: isFocused ? '0.94' : '0.32',
+                          }),
+                          /* 下发能量粒子：当该 Wave 有运行中或刚派生子代理时沿曲线向下流动 */
+                          (wg.runningInWave > 0 || isSpawningWave)
+                            ? h('circle', { r: '3.3', fill: wg.color },
+                                h('animateMotion', {
+                                  dur: '1.25s',
+                                  repeatCount: 'indefinite',
+                                  path: dForward,
+                                }))
+                            : null,
+                          /* 完成回传粒子：当该 Wave 子代理完成回传时沿曲线向上汇入主控 */
+                          (isCompletingWave || wg.doneInWave > 0)
+                            ? h('circle', {
+                                r: isCompletingWave ? '3.8' : '2.6',
+                                fill: '#10b981',
+                                opacity: isCompletingWave ? '0.98' : '0.68',
+                              },
+                                h('animateMotion', {
+                                  dur: isCompletingWave ? '0.75s' : '2.1s',
+                                  repeatCount: 'indefinite',
+                                  path: dReturn,
+                                }))
+                            : null,
+                          /* Wave 分支顶部接入锚点圆 */
+                          h('circle', {
+                            cx: String(x),
+                            cy: '54',
+                            r: '3.5',
+                            fill: wg.color,
+                            opacity: isFocused ? '1' : '0.35',
+                          }))
+                      }),
+                      h('circle', { cx: '300', cy: '2', r: '4', fill: '#3b82f6' })),
+
+                    /* ── Level 1: Wave 自动折叠分支行 (.rt-tree-wave-row .rt-tree-wave-grid，最多 4 列，绝不挤压) ── */
+                    h('div', {
+                      className: 'rt-tree-wave-row rt-tree-wave-grid',
+                      style: {
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(' + Math.max(1, activeWaveGroups.length) + ', minmax(0, 1fr))',
+                        gap: 10,
+                      },
+                    },
+                      activeWaveGroups.map((wg) => {
+                        const expanded = isWaveExpanded(wg)
+                        const hasSelectedChild = wg.children.some((c) => c.id === selAgentId)
+                        const isSpawningWave = wg.children.some((c) => Boolean(animatingSpawnIds[c.id]))
+                        const isCompletingWave = wg.children.some((c) => Boolean(animatingCompleteIds[c.id]))
+                        const statusSummary = wg.runningInWave > 0
+                          ? ('● ' + wg.runningInWave + ' 运行中')
+                          : ('✓ ' + wg.doneInWave + ' 已完成')
+                        return h('div', Object.assign({
+                          key: 'wave-branch-' + wg.wave,
+                          className: 'rt-tree-wave-group rt-tree-wave-card'
+                            + (expanded ? ' expanded active' : '')
+                            + (hasSelectedChild ? ' on' : '')
+                            + (isSpawningWave ? ' rt-anim-spawn' : '')
+                            + (isCompletingWave ? ' rt-anim-complete' : ''),
+                          style: {
+                            borderTop: '3px solid ' + wg.color,
+                            borderColor: (expanded || hasSelectedChild) ? wg.color : 'var(--dsw-alias-border-l1)',
+                          },
+                        }, clickable(() => toggleWaveExpand(wg.wave), {
+                          label: (expanded ? '收起 ' : '展开 ') + wg.title + ' (' + wg.children.length + ' 个子智能体)',
+                          expanded: expanded,
+                        })),
+                          /* 顶部连接锚点 */
+                          h('span', {
+                            className: 'rt-node-handle rt-node-handle-top',
+                            style: {
+                              position: 'absolute',
+                              left: '50%',
+                              top: -5,
+                              transform: 'translateX(-50%)',
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              background: 'var(--dsw-alias-bg-layer-1)',
+                              border: '2px solid ' + wg.color,
+                              zIndex: 2,
+                            },
+                          }),
+                          /* 第一行：Wave 徽标 + 状态汇总 */
+                          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, flexWrap: 'wrap' } },
+                            h('span', {
+                              className: 'rt-tree-wave-card-badge',
+                              style: {
+                                color: wg.color,
+                                borderColor: wg.color + '55',
+                                background: wg.color + '18',
+                              },
+                            }, wg.shortLabel),
+                            h('span', {
+                              className: 'rt-mono',
+                              style: {
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: wg.runningInWave > 0 ? '#3b82f6' : '#10b981',
+                              },
+                            }, statusSummary)),
+                          /* 第二行：Wave 分支名称 */
+                          h('div', {
+                            style: {
+                              fontWeight: 700,
+                              fontSize: 11.5,
+                              color: 'var(--dsw-alias-label-primary)',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            },
+                            title: wg.title,
+                          }, wg.title),
+                          /* 第三行：子代理计数与聚合 Token */
+                          h('div', {
+                            className: 'rt-mono',
+                            style: {
+                              fontSize: 10,
+                              color: 'var(--dsw-alias-label-secondary)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 4,
+                            },
+                          },
+                            h('span', null, wg.children.length + ' 子代理 · ' + wg.runningInWave + ' 运行中 / ' + wg.doneInWave + ' 已完成'),
+                            h('span', null, wg.tokenLabel)),
+                          /* 第四行：迷你完成度进度条 */
+                          h('div', {
+                            style: {
+                              height: 4,
+                              borderRadius: 99,
+                              background: 'var(--dsw-alias-bg-layer-2)',
+                              overflow: 'hidden',
+                            },
+                          },
+                            h('div', {
+                              style: {
+                                width: wg.progressPct + '%',
+                                height: '100%',
+                                background: wg.color,
+                                borderRadius: 99,
+                                transition: 'width 0.25s ease',
+                              },
+                            })),
+                          /* 第五行：显式展开/折叠控制按钮 */
+                          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 } },
+                            h('span', {
+                              style: { fontSize: 9.5, color: 'var(--dsw-alias-label-secondary)' },
+                            }, wg.children.length > 3 && !expanded ? '已自动折叠防挤压' : (expanded ? '当前已展开明细' : '点击展开子卡片')),
+                            h('button', {
+                              type: 'button',
+                              className: 'rt-btn',
+                              style: { padding: '0 6px', fontSize: 10, lineHeight: '16px' },
+                              onClick: (e) => {
+                                if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+                                toggleWaveExpand(wg.wave)
+                              },
+                            }, expanded ? '[收起 ⌃]' : '[展开 ⌄]')),
+                          /* 底部 n8n 菱形连接锚点（展开时指向下方子代理网格） */
+                          expanded
+                            ? h('span', {
+                                className: 'rt-n8n-diamond-pin',
+                                style: { borderColor: wg.color },
+                              })
+                            : null)
+                      })),
+
+                    /* ── Level 2: 已展开 Wave 的子智能体卡片响应式网格 (.rt-tree-expanded-grid .rt-p4-children-grid) ──
+                         每张卡片最小宽度 215px，自动换行，彻底杜绝 56 个子代理被挤压成 7px 细条！ */
+                    expandedWaveGroups.length > 0
+                      ? h('div', {
+                          className: 'rt-tree-expanded-grid rt-p4-children-grid',
+                          style: {
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(215px, 1fr))',
+                            gap: 10,
+                            marginTop: 12,
+                          },
+                        },
+                          expandedWaveGroups.reduce((acc, wg) => acc.concat(wg.children), []).map((c) => {
+                            const isSel = selAgentId === c.id
+                            const isSpawning = Boolean(animatingSpawnIds[c.id])
+                            const isCompleting = Boolean(animatingCompleteIds[c.id])
+                            return h('div', Object.assign({
+                              key: c.id,
+                              className: 'rt-p4-node-card'
+                                + (isSel ? ' on' : '')
+                                + (isSpawning ? ' rt-anim-spawn' : '')
+                                + (isCompleting ? ' rt-anim-complete' : ''),
+                              style: {
+                                position: 'relative',
+                                border: isSel ? ('1.5px solid ' + c.color) : '1px solid var(--dsw-alias-border-l1)',
+                                borderTop: '3px solid ' + c.color,
+                                borderRadius: 10,
+                                padding: '10px 10px 8px',
+                                background: 'var(--dsw-alias-bg-layer-1)',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 5,
+                                minWidth: 0,
+                                opacity: (selAgentId && selAgentId !== 'root' && !isSel) ? 0.64 : 1,
+                                boxShadow: isSel ? ('0 0 0 3px ' + c.color + '26') : '0 2px 6px rgba(15,23,42,0.04)',
+                                animation: (!isSpawning && c.status === 'running') ? 'rt-sonar-ripple 2.1s infinite' : undefined,
+                              },
+                            }, clickable(() => openAgentInspector(c.id), {
+                              label: '梳理子智能体 ' + c.title + ' 环节细节',
+                              expanded: isSel,
+                            })),
+                              /* 顶部拓扑连接锚点 */
+                              h('span', {
+                                className: 'rt-node-handle rt-node-handle-top',
+                                style: {
+                                  position: 'absolute',
+                                  left: '50%',
+                                  top: -5,
+                                  transform: 'translateX(-50%)',
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: '50%',
+                                  background: 'var(--dsw-alias-bg-layer-1)',
+                                  border: '2px solid ' + c.color,
+                                  borderColor: c.color,
+                                  zIndex: 2,
+                                },
+                              }),
+                              /* 第一行：角色徽标 + Wave 标签 + 完整可读标题 */
+                              h('div', { style: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 } },
+                                h('span', {
+                                  style: {
+                                    background: c.color,
+                                    color: '#fff',
+                                    fontSize: 10,
+                                    fontWeight: 700,
+                                    padding: '1px 6px',
+                                    borderRadius: 5,
+                                    flex: 'none',
+                                    fontFamily: 'ui-monospace,Menlo,monospace',
+                                  },
+                                }, c.avatar),
+                                h('span', {
+                                  className: 'rt-mono',
+                                  style: {
+                                    fontSize: 9.5,
+                                    padding: '0 5px',
+                                    borderRadius: 4,
+                                    background: 'var(--dsw-alias-bg-layer-2)',
+                                    color: 'var(--dsw-alias-label-secondary)',
+                                    flex: 'none',
+                                  },
+                                }, 'W' + (c.wave || 2)),
+                                h('span', {
+                                  style: {
+                                    fontWeight: 600,
+                                    fontSize: 11.5,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    flex: 1,
+                                  },
+                                  title: c.title,
+                                }, c.title)),
+                              /* 第二行：Token/费用 与 状态徽标（完成态带 SVG 勾号描边动效 .rt-check-stroke） */
+                              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
+                                h('span', { className: 'rt-mono' }, c.tokenLabel + ' · ' + c.costLabel),
+                                h('span', {
+                                  style: {
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 3,
+                                    color: c.status === 'running' ? '#3b82f6' : '#10b981',
+                                    fontWeight: 600,
+                                  },
+                                },
+                                  c.status === 'running'
+                                    ? '● ' + c.statusLabel
+                                    : h('svg', {
+                                        width: '11',
+                                        height: '11',
+                                        viewBox: '0 0 12 12',
+                                        style: { display: 'inline-block', verticalAlign: 'middle' },
+                                        'aria-hidden': 'true',
+                                      },
+                                        h('path', {
+                                          className: 'rt-check-stroke',
+                                          d: 'M 2.2,6.3 L 4.9,9.0 L 9.8,3.2',
+                                          fill: 'none',
+                                          stroke: '#10b981',
+                                          strokeWidth: '1.8',
+                                          strokeLinecap: 'round',
+                                          strokeLinejoin: 'round',
+                                          style: {
+                                            strokeDasharray: '32',
+                                            animation: 'rt-check-stroke 0.45s ease-out forwards',
+                                          },
+                                        })),
+                                  c.status === 'running' ? null : c.statusLabel)),
+                              /* 第三行：8 色上下文构成进度条 */
+                              h('div', {
+                                className: 'rt-ctx-bar',
+                                style: { display: 'flex', height: 5, borderRadius: 99, overflow: 'hidden', background: 'var(--dsw-alias-bg-layer-2)', gap: 1 },
+                              },
+                                c.ctxSegments.map((seg, si) => h('div', {
+                                  key: 'cs' + si,
+                                  style: { width: seg.pct + '%', background: seg.color, height: '100%' },
+                                }))),
+                              /* 第四行：耗时/步数 + 两步检视提示 + 上下文占比 */
+                              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
+                                h('span', { className: 'rt-mono' }, c.durationLabel + ' · ' + c.steps + ' 步'),
+                                h('span', { style: { fontSize: 9.5, color: '#3b82f6', fontWeight: 600 } }, '🔍 点击梳理环节细节'),
+                                h('span', { className: 'rt-mono', style: { fontWeight: 600, color: c.color } }, c.ctxPct)))
+                          }))
+                      : h('div', {
+                          className: 'rt-tree-expanded-grid',
+                          style: {
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            marginTop: 10,
+                            padding: '8px 12px',
+                            fontSize: 11,
+                            color: 'var(--dsw-alias-label-secondary)',
+                          },
+                        },
+                          h('span', null, '已将全部 ' + fusedChildren.length + ' 个子智能体按 Wave 阶段折叠汇总，点击任意上方 Wave 分支卡片可展开对应子卡片网格。'),
+                          h('button', {
+                            type: 'button',
+                            className: 'rt-btn',
+                            style: { padding: '2px 8px', fontSize: 10.5 },
+                            onClick: expandAllWaves,
+                          }, '展开全部 (' + fusedChildren.length + ')'))))),
+
+              /* 右栏：跨 Agent 协作 3 段式环节流向泳道 + 二步式执行轨迹抽屉 + 协作任务列表 */
               h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 } },
-                /* 右上：跨 Agent 协作 2D 泳道矩阵 (.rt-swim-pane) */
+                /* ── Section A: 右上 · 跨 Agent 协作 (.rt-swim-pane .rt-p4-swimlane-pane) ── */
                 h('div', {
                   className: 'rt-swim-pane rt-p4-swimlane-pane',
                   style: {
@@ -1622,7 +2359,7 @@ window.__ModuleLoader__.load({
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                     h('span', { style: { fontWeight: 700, fontSize: 13 } }, '跨 Agent 协作'),
                     h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                      filteredEvents.length + '/' + allCollabEvents.length + ' 条记录 · ' + visibleLanes.length + ' 条泳道'),
+                      filteredEvents.length + '/' + allCollabEvents.length + ' 条记录 · ' + swimFilteredLanes.length + ' 条泳道 · 点击环节胶囊展开下方轨迹抽屉'),
                     h('div', { className: 'rt-spacer' }),
                     h('input', {
                       className: 'rt-input',
@@ -1642,7 +2379,26 @@ window.__ModuleLoader__.load({
                       onClick: () => setCollabSort('desc'),
                     }, '最新')),
 
-                  /* 2D 泳道时序矩阵 (.rt-swim-matrix-wrap) */
+                  /* Wave / 状态快捷筛选栏 */
+                  h('div', {
+                    className: 'rt-swim-wave-filter',
+                    style: { display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' },
+                  },
+                    [
+                      { k: 'all', lbl: '全部' },
+                      { k: 'running', lbl: '运行中' },
+                      { k: '1', lbl: 'Wave 1 立项' },
+                      { k: '2', lbl: 'Wave 2 架构' },
+                      { k: '3', lbl: 'Wave 3 构建' },
+                      { k: '4', lbl: 'Wave 4 审查' },
+                    ].map((wf) => h('button', {
+                      key: 'swf-' + wf.k,
+                      className: 'rt-p3-pill' + (swimWaveFilter === wf.k ? ' on' : ''),
+                      style: { fontSize: 10.5, padding: '2px 8px' },
+                      onClick: () => setSwimWaveFilter(wf.k),
+                    }, wf.lbl))),
+
+                  /* 3 段式执行环节流向泳道矩阵 (.rt-swim-matrix-wrap) */
                   h('div', {
                     className: 'rt-swim-matrix-wrap',
                     style: {
@@ -1652,45 +2408,56 @@ window.__ModuleLoader__.load({
                       border: '1px solid var(--dsw-alias-border-l1)',
                       borderRadius: 10,
                       background: 'var(--dsw-alias-bg-layer-1)',
-                      overflow: 'visible',
+                      overflow: 'hidden',
                     },
                   },
-                    visibleLanes.map((lane, lIdx) => {
-                      const isLaneSel = selAgentId === lane.id
-                      const childIdx = lane.isRoot
-                        ? -1
-                        : Math.max(0, fusedChildren.findIndex((c) => c.id === lane.id))
-                      const rawStart = 14 + Math.max(0, childIdx) * 24
-                      const rawDone = 54 + Math.max(0, childIdx) * 18
-                      const startXPct = Math.min(78, collabSort === 'desc' ? (100 - rawDone) : rawStart)
-                      const doneXPct = Math.min(92, collabSort === 'desc' ? (100 - rawStart) : rawDone)
-                      const midXPct = Math.round((startXPct + doneXPct) / 2)
-                      const laneSteps = lane.steps || (lane.isRoot ? rootSteps : 3)
+                    swimFilteredLanes.map((lane, lIdx) => {
+                      const isLaneSel = (activeInspectorAgent && activeInspectorAgent.id === lane.id) || selAgentId === lane.id
+                      const laneSteps = lane.steps || (lane.isRoot ? rootSteps : 12)
                       const laneTok = lane.tokenLabel || rootTokensLabel
+                      const laneDur = lane.durationLabel || (lane.isRoot ? rootDuration : '1m 20s')
+                      const laneStatus = lane.isRoot ? (runningCount > 0 ? 'running' : 'done') : (lane.status || 'done')
+                      const step1Text = lane.isRoot
+                        ? '全局需求拆解与 4-Wave 并发调度'
+                        : (lane.prompt || lane.title)
+                      const step2Text = laneSteps + ' 步工具调用 · ' + laneTok + ' · ' + laneDur
+                      const step3Text = lane.isRoot
+                        ? ('已统筹 ' + fusedChildren.length + ' 个子代理阶段产物与 PG 同步')
+                        : (lane.output || '契约与产物已同步')
+                      const orderedStages = collabSort === 'desc'
+                        ? [
+                            { key: 's3', tag: '📤 阶段结论', text: step3Text, isConclusion: true },
+                            { key: 's2', tag: '⚙️ 核心执行', text: step2Text, isConclusion: false },
+                            { key: 's1', tag: '📥 委派目标', text: step1Text, isConclusion: false },
+                          ]
+                        : [
+                            { key: 's1', tag: '📥 委派目标', text: step1Text, isConclusion: false },
+                            { key: 's2', tag: '⚙️ 核心执行', text: step2Text, isConclusion: false },
+                            { key: 's3', tag: '📤 阶段结论', text: step3Text, isConclusion: true },
+                          ]
 
                       return h('div', Object.assign({
                         key: 'lane-' + lane.id,
                         className: 'rt-swim-row' + (isLaneSel ? ' on' : ''),
                         style: {
                           display: 'grid',
-                          gridTemplateColumns: '176px minmax(0, 1fr)',
-                          alignItems: 'center',
-                          height: 52,
-                          borderBottom: lIdx < visibleLanes.length - 1 ? '1px solid var(--dsw-alias-border-l1)' : 'none',
-                          background: isLaneSel ? 'rgba(59,130,246,0.09)' : 'transparent',
+                          gridTemplateColumns: '180px minmax(0, 1fr)',
+                          alignItems: 'stretch',
+                          minHeight: 58,
+                          borderBottom: lIdx < swimFilteredLanes.length - 1 ? '1px solid var(--dsw-alias-border-l1)' : 'none',
+                          background: isLaneSel ? 'rgba(59,130,246,0.08)' : 'transparent',
                           cursor: 'pointer',
                           position: 'relative',
                         },
-                      }, clickable(() => setSelAgentId(isLaneSel ? null : lane.id), { label: '切换泳道高亮 ' + lane.title, expanded: isLaneSel })),
-                        /* 左列元数据单元格 (176px)：圆形/圆角徽标 + 标题 + 模型与遥测副标题 */
+                      }, clickable(() => openAgentInspector(lane.id), { label: '梳理 Agent 环节详情 ' + lane.title, expanded: isLaneSel })),
+                        /* 左列元数据单元格 (180px)：角色徽标 + 标题 + 模型与遥测副标题 */
                         h('div', {
                           className: 'rt-swim-meta',
                           style: {
                             display: 'flex',
                             alignItems: 'center',
                             gap: 8,
-                            padding: '0 10px',
-                            height: '100%',
+                            padding: '6px 10px',
                             borderRight: '1px solid var(--dsw-alias-border-l1)',
                             minWidth: 0,
                           },
@@ -1701,7 +2468,7 @@ window.__ModuleLoader__.load({
                               color: '#fff',
                               fontSize: 10,
                               fontWeight: 700,
-                              width: lane.isRoot ? 30 : 26,
+                              width: lane.isRoot ? 32 : 26,
                               height: 24,
                               borderRadius: 7,
                               display: 'inline-flex',
@@ -1712,7 +2479,7 @@ window.__ModuleLoader__.load({
                               boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
                             },
                           }, lane.avatar),
-                          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0, flex: 1 } },
+                          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 } },
                             h('span', {
                               style: {
                                 fontSize: 11.5,
@@ -1735,237 +2502,293 @@ window.__ModuleLoader__.load({
                               },
                             }, 'deepseek-v4.1 · ' + laneTok + ' · ' + laneSteps + ' 步'))),
 
-                        /* 右列 2D 时序轨道 (height: 52, position: relative) */
+                        /* 右列 3 段式环节执行链轨道 (.rt-swim-track) */
                         h('div', {
                           className: 'rt-swim-track',
                           style: {
                             position: 'relative',
-                            height: 52,
-                            overflow: 'visible',
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '6px 10px',
+                            minWidth: 0,
                           },
                         },
-                          /* 泳道水平中心基准轴线 (top: 26px) */
+                          /* 泳道水平中心基准轴线 */
                           h('div', {
                             style: {
                               position: 'absolute',
-                              left: 10,
-                              right: 10,
-                              top: 26,
+                              left: 12,
+                              right: 12,
+                              top: '50%',
                               height: 1.5,
                               background: 'var(--dsw-alias-border-l1)',
+                              zIndex: 0,
                             },
                           }),
-
-                          lane.isRoot
-                            /* 主控泳道：在每个子 Agent 的 startXPct 与 doneXPct 处渲染派发 (+) 与回传接收 (✓) 节点 */
-                            ? fusedChildren.map((c, idx) => {
-                                const rStart = 14 + idx * 24
-                                const rDone = 54 + idx * 18
-                                const cStartX = Math.min(78, collabSort === 'desc' ? (100 - rDone) : rStart)
-                                const cDoneX = Math.min(92, collabSort === 'desc' ? (100 - rStart) : rDone)
-                                const isFocused = !selAgentId || selAgentId === 'root' || selAgentId === c.id
-                                return h('div', { key: 'rt-root-ev-' + c.id, style: { opacity: isFocused ? 1 : 0.3 } },
-                                  /* 主控派发节点 (+) */
+                          /* 三段式环节胶囊链 (.rt-step-chain)：① 📥 委派目标 ──► ② ⚙️ 核心执行 ──► ③ 📤 阶段结论 */
+                          h('div', {
+                            className: 'rt-step-chain',
+                            style: {
+                              position: 'relative',
+                              zIndex: 1,
+                              display: 'grid',
+                              gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.08fr)',
+                              alignItems: 'center',
+                              gap: 5,
+                              width: '100%',
+                              minWidth: 0,
+                            },
+                          },
+                            orderedStages.reduce((acc, stg, sIdx) => {
+                              if (sIdx > 0) {
+                                acc.push(h('span', {
+                                  key: 'arr-' + lane.id + '-' + sIdx,
+                                  className: 'rt-step-arrow rt-mono',
+                                  style: {
+                                    fontSize: 10,
+                                    color: lane.color,
+                                    fontWeight: 700,
+                                    padding: '0 1px',
+                                    userSelect: 'none',
+                                  },
+                                }, collabSort === 'desc' ? '◄──' : '──►'))
+                              }
+                              acc.push(h('div', Object.assign({
+                                key: 'pill-' + lane.id + '-' + stg.key,
+                                className: 'rt-step-node rt-step-pill' + (isLaneSel ? ' on' : ''),
+                                title: stg.tag + '：' + stg.text,
+                                style: {
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 2,
+                                  padding: '4px 8px',
+                                  borderRadius: 8,
+                                  border: isLaneSel ? ('1px solid ' + lane.color) : '1px solid var(--dsw-alias-border-l1)',
+                                  borderLeft: '3px solid ' + lane.color,
+                                  background: 'var(--dsw-alias-bg-base)',
+                                  minWidth: 0,
+                                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                },
+                              }, clickable((e) => {
+                                if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+                                openAgentInspector(lane.id)
+                              }, { label: '展开 ' + lane.title + ' ' + stg.tag + ' 详情', expanded: isLaneSel })),
+                                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
                                   h('span', {
-                                    title: '主控委派 ' + c.avatar + ' (' + c.title + ')',
                                     style: {
-                                      position: 'absolute',
-                                      left: cStartX + '%',
-                                      top: 26,
-                                      transform: 'translate(-50%, -50%)',
-                                      zIndex: 3,
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      padding: '1px 6px',
-                                      height: 18,
-                                      borderRadius: 99,
                                       fontSize: 10,
                                       fontWeight: 700,
-                                      background: '#3b82f6',
-                                      color: '#fff',
-                                      border: '1.5px solid var(--dsw-alias-bg-layer-1)',
+                                      color: lane.color,
                                       whiteSpace: 'nowrap',
                                     },
-                                  }, '+ ' + c.avatar),
-                                  /* 主控接收回传节点 (✓/●) */
-                                  h('span', {
-                                    title: c.status === 'running' ? (c.avatar + ' 运行中同步') : ('主控接收 ' + c.avatar + ' 产物回传'),
-                                    style: {
-                                      position: 'absolute',
-                                      left: cDoneX + '%',
-                                      top: 26,
-                                      transform: 'translate(-50%, -50%)',
-                                      zIndex: 3,
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      width: 18,
-                                      height: 18,
-                                      borderRadius: '50%',
-                                      fontSize: 10,
-                                      fontWeight: 700,
-                                      background: c.color,
-                                      color: '#fff',
-                                      border: '1.5px solid var(--dsw-alias-bg-layer-1)',
-                                    },
-                                  }, c.status === 'running' ? '●' : '✓'))
-                              })
-                            /* 子 Agent 泳道：垂直跨泳道调用/回传连线 + 水平激活区间条 + 3 个时序事件节点 */
-                            : h('div', {
-                                style: {
-                                  position: 'absolute',
-                                  inset: 0,
-                                  pointerEvents: 'none',
-                                  opacity: (!selAgentId || selAgentId === 'root' || isLaneSel) ? 1 : 0.32,
-                                },
-                              },
-                                /* 1a. 垂直跨泳道委派下发连线 (从主控泳道 y=26 垂直连接到当前子泳道 y=26) */
-                                h('svg', {
-                                  viewBox: '0 0 12 ' + (lIdx * 52),
-                                  style: {
-                                    position: 'absolute',
-                                    left: startXPct + '%',
-                                    top: -(lIdx * 52 - 26),
-                                    width: 12,
-                                    height: lIdx * 52,
-                                    transform: 'translateX(-6px)',
-                                    overflow: 'visible',
-                                    zIndex: 1,
-                                  },
-                                  'aria-label': lIdx === 1 ? '跨 Agent 委派与回传时序流向' : undefined,
-                                },
-                                  h('line', {
-                                    x1: '6',
-                                    y1: '2',
-                                    x2: '6',
-                                    y2: String(lIdx * 52 - 2),
-                                    stroke: lane.color,
-                                    strokeWidth: '1.5',
-                                    strokeDasharray: '3 2',
-                                  }),
-                                  h('path', {
-                                    d: 'M 3,' + (lIdx * 52 - 11) + ' L 6,' + (lIdx * 52 - 6) + ' L 9,' + (lIdx * 52 - 11),
-                                    fill: 'none',
-                                    stroke: lane.color,
-                                    strokeWidth: '1.5',
-                                  })),
-                                /* 1b. 垂直跨泳道完成回传连线 (从当前子泳道 doneXPct 垂直回传至主控泳道) */
-                                h('svg', {
-                                  viewBox: '0 0 12 ' + (lIdx * 52),
-                                  style: {
-                                    position: 'absolute',
-                                    left: doneXPct + '%',
-                                    top: -(lIdx * 52 - 26),
-                                    width: 12,
-                                    height: lIdx * 52,
-                                    transform: 'translateX(-6px)',
-                                    overflow: 'visible',
-                                    zIndex: 1,
-                                  },
-                                },
-                                  h('line', {
-                                    x1: '6',
-                                    y1: String(lIdx * 52 - 2),
-                                    x2: '6',
-                                    y2: '2',
-                                    stroke: lane.color,
-                                    strokeWidth: '1.5',
-                                    strokeDasharray: lane.status === 'running' ? '2 3' : '3 2',
-                                  }),
-                                  h('path', {
-                                    d: 'M 3,11 L 6,6 L 9,11',
-                                    fill: 'none',
-                                    stroke: lane.color,
-                                    strokeWidth: '1.5',
-                                  })),
-                                /* 2. 水平活跃执行区间条 (startXPct -> doneXPct) */
-                                h('div', {
-                                  style: {
-                                    position: 'absolute',
-                                    left: Math.min(startXPct, doneXPct) + '%',
-                                    width: Math.max(6, Math.abs(doneXPct - startXPct)) + '%',
-                                    top: 23,
-                                    height: 6,
-                                    borderRadius: 99,
-                                    background: lane.color,
-                                    opacity: 0.22,
-                                    zIndex: 1,
-                                  },
-                                }),
-                                /* 3a. 起始接收委派节点 (+) */
+                                  }, stg.tag),
+                                  stg.isConclusion
+                                    ? h('span', {
+                                        style: {
+                                          fontSize: 9.5,
+                                          fontWeight: 700,
+                                          padding: '0 5px',
+                                          borderRadius: 99,
+                                          whiteSpace: 'nowrap',
+                                          background: laneStatus === 'running' ? 'rgba(59,130,246,0.14)' : 'rgba(16,185,129,0.14)',
+                                          color: laneStatus === 'running' ? '#3b82f6' : '#10b981',
+                                        },
+                                      }, laneStatus === 'running' ? '● 运行中' : '✓ 已完成')
+                                    : null),
                                 h('span', {
-                                  title: '主控委派 ' + lane.avatar + ' (' + lane.title + ')',
                                   style: {
-                                    position: 'absolute',
-                                    left: startXPct + '%',
-                                    top: 26,
-                                    transform: 'translate(-50%, -50%)',
-                                    zIndex: 2,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    width: 18,
-                                    height: 18,
-                                    borderRadius: '50%',
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    background: lane.color,
-                                    color: '#fff',
-                                    border: '1.5px solid var(--dsw-alias-bg-layer-1)',
-                                    pointerEvents: 'auto',
-                                  },
-                                }, '+'),
-                                /* 3b. 中段契约/产物写入节点 (■) */
-                                h('span', {
-                                  title: lane.avatar + ' 写入契约/产物 (' + lane.title + ')',
-                                  style: {
-                                    position: 'absolute',
-                                    left: midXPct + '%',
-                                    top: 26,
-                                    transform: 'translate(-50%, -50%)',
-                                    zIndex: 2,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 3,
-                                    padding: '1px 6px',
-                                    height: 18,
-                                    borderRadius: 99,
-                                    fontSize: 9.5,
-                                    fontWeight: 700,
-                                    background: lane.color,
-                                    color: '#fff',
-                                    border: '1.5px solid var(--dsw-alias-bg-layer-1)',
+                                    fontSize: 10.5,
+                                    color: 'var(--dsw-alias-label-secondary)',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
-                                    pointerEvents: 'auto',
                                   },
-                                }, '■ ' + lane.avatar),
-                                /* 3c. 结束回传/运行中节点 (● 或 ✓) */
-                                h('span', {
-                                  title: lane.status === 'running' ? (lane.avatar + ' 正在分析请求') : (lane.avatar + ' 完成并回传主控'),
-                                  style: {
-                                    position: 'absolute',
-                                    left: doneXPct + '%',
-                                    top: 26,
-                                    transform: 'translate(-50%, -50%)',
-                                    zIndex: 2,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    width: 18,
-                                    height: 18,
-                                    borderRadius: '50%',
-                                    fontSize: 10,
-                                    fontWeight: 700,
-                                    background: lane.status === 'running' ? '#3b82f6' : '#10b981',
-                                    color: '#fff',
-                                    border: '1.5px solid var(--dsw-alias-bg-layer-1)',
-                                    pointerEvents: 'auto',
-                                  },
-                                }, lane.status === 'running' ? '●' : '✓'))))
+                                }, stg.text)))
+                              return acc
+                            }, []))))
                     }))),
 
-                /* 右下：协作任务 (.rt-collab-pane) */
+                /* ── Section B: 二步式 Agent 环节执行轨迹抽屉 (.rt-agent-inspector-drawer) ── */
+                activeInspectorAgent
+                  ? h('div', {
+                      className: 'rt-agent-inspector-drawer',
+                      style: {
+                        border: '1.5px solid ' + (activeInspectorAgent.color || '#3b82f6'),
+                        borderRadius: 12,
+                        padding: 12,
+                        background: 'var(--dsw-alias-bg-base)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                        boxShadow: '0 4px 14px rgba(0,0,0,0.06)',
+                      },
+                    },
+                      /* 抽屉顶栏：Agent 身份徽标 + 会话 ID + 遥测标签 + 显式跳转侧边聊天框主按钮 + 关闭按钮 */
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                        h('span', {
+                          style: {
+                            background: activeInspectorAgent.color || '#3b82f6',
+                            color: '#fff',
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 6,
+                            fontFamily: 'ui-monospace,Menlo,monospace',
+                          },
+                        }, activeInspectorAgent.avatar),
+                        h('span', { style: { fontWeight: 700, fontSize: 13, color: 'var(--dsw-alias-label-primary)' } },
+                          activeInspectorAgent.title),
+                        h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } },
+                          activeInspectorAgent.isRoot
+                            ? 'Wave 0 · 主控 Orchestrator'
+                            : ('Wave ' + (activeInspectorAgent.wave || 1) + ' · ' + activeInspectorAgent.role)),
+                        h('span', { className: 'rt-tag rt-mono', style: { margin: 0, fontSize: 10 } },
+                          'session: ' + ((activeInspectorDetail && activeInspectorDetail.sessionId) || activeInspectorAgent.sessionId || activeInspectorAgent.id)),
+                        h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
+                          'deepseek-v4.1 · ' + (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || '1m 20s') + ' · ' + (activeInspectorAgent.steps || 12) + ' 步'),
+                        h('div', { className: 'rt-spacer' }),
+                        h('button', {
+                          className: 'rt-btn rt-btn-primary rt-jump-chat-btn',
+                          style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
+                          onClick: () => openAgentSessionInHostChat(activeInspectorAgent),
+                        }, '💬 跳转侧边聊天框打开该 Agent 会话 ↗'),
+                        h('button', {
+                          className: 'rt-btn',
+                          style: { padding: '2px 7px', fontSize: 11 },
+                          title: '收起环节轨迹抽屉',
+                          onClick: () => openAgentInspector('__closed__'),
+                        }, '✕')),
+
+                      /* 【环节 1 · 主控委派指令 (Input Prompt)】 */
+                      h('div', {
+                        style: {
+                          padding: '8px 10px',
+                          borderRadius: 8,
+                          border: '1px solid var(--dsw-alias-border-l1)',
+                          background: 'var(--dsw-alias-bg-layer-1)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 4,
+                        },
+                      },
+                        h('div', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
+                          '【环节 1 · 主控委派指令 (Input Prompt)】'),
+                        h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
+                          (activeInspectorDetail && activeInspectorDetail.prompt) || activeInspectorAgent.prompt)),
+
+                      /* 【环节 2 · 执行步骤与工具调用轨迹 (Step Trajectory)】 */
+                      h('div', {
+                        style: {
+                          padding: '8px 10px',
+                          borderRadius: 8,
+                          border: '1px solid var(--dsw-alias-border-l1)',
+                          background: 'var(--dsw-alias-bg-layer-1)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6,
+                        },
+                      },
+                        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
+                          h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
+                            '【环节 2 · 执行步骤与工具调用轨迹 (Step Trajectory)】'),
+                          h('span', { className: 'rt-mono', style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
+                            '共 ' + activeStepTimeline.length + ' 个关键步骤节点 · 支持工具级溯源')),
+                        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 5 } },
+                          activeStepTimeline.map((st, sIdx) => h('div', {
+                            key: 'traj-' + sIdx,
+                            style: {
+                              display: 'grid',
+                              gridTemplateColumns: 'auto auto minmax(0, 1fr) auto',
+                              alignItems: 'center',
+                              gap: 6,
+                              padding: '5px 8px',
+                              borderRadius: 7,
+                              background: 'var(--dsw-alias-bg-base)',
+                              border: '1px solid var(--dsw-alias-border-l1)',
+                              fontSize: 11,
+                            },
+                          },
+                            h('span', { className: 'rt-mono', style: { fontWeight: 700, color: activeInspectorAgent.color || '#3b82f6', fontSize: 10.5 } },
+                              '#' + st.step + ' ' + st.phase),
+                            h('span', {
+                              className: 'rt-mono',
+                              style: {
+                                fontSize: 10,
+                                padding: '1px 6px',
+                                borderRadius: 5,
+                                background: 'var(--dsw-alias-bg-layer-2)',
+                                color: 'var(--dsw-alias-label-primary)',
+                                fontWeight: 600,
+                              },
+                            }, st.tool),
+                            h('div', { style: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 } },
+                              h('span', { style: { color: 'var(--dsw-alias-label-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: st.input },
+                                '输入：' + st.input),
+                              h('span', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }, title: st.output },
+                                '产出：' + st.output)),
+                            h('span', {
+                              className: 'rt-mono',
+                              style: {
+                                fontSize: 10,
+                                fontWeight: 600,
+                                color: st.status === 'running' ? '#3b82f6' : '#10b981',
+                                whiteSpace: 'nowrap',
+                              },
+                            }, (st.duration ? st.duration + ' · ' : '') + (st.status === 'running' ? '● 执行中' : '✓ 完成')))))),
+
+                      /* 【环节 3 · 阶段交付结论 (Output Summary)】 + 底部二步跳转动作栏 */
+                      h('div', {
+                        style: {
+                          padding: '8px 10px',
+                          borderRadius: 8,
+                          border: '1px solid var(--dsw-alias-border-l1)',
+                          background: 'var(--dsw-alias-bg-layer-1)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6,
+                        },
+                      },
+                        h('div', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
+                          '【环节 3 · 阶段交付结论 (Output Summary)】'),
+                        h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55 } },
+                          (activeInspectorDetail && activeInspectorDetail.output) || activeInspectorAgent.output),
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', paddingTop: 4, borderTop: '1px dashed var(--dsw-alias-border-l1)' } },
+                          h('span', { style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
+                            '第一步：已在此抽屉梳理完整委派与工具调用环节 · 第二步：确认需介入对话时点击右侧按钮跳转'),
+                          h('div', { className: 'rt-spacer' }),
+                          h('button', {
+                            className: 'rt-btn',
+                            style: { padding: '2px 8px', fontSize: 10.5 },
+                            onClick: () => { setSelId(activeInspectorAgent.role || 'plan'); setMode('docwall') },
+                          }, '查看角色文稿 →'),
+                          h('button', {
+                            className: 'rt-btn rt-btn-primary rt-jump-chat-btn',
+                            style: { padding: '2px 10px', fontSize: 10.5, fontWeight: 700 },
+                            onClick: () => openAgentSessionInHostChat(activeInspectorAgent),
+                          }, '💬 跳转侧边聊天框打开该 Agent 会话 ↗'))))
+                  : h('div', {
+                      className: 'rt-agent-inspector-drawer',
+                      style: {
+                        border: '1px dashed var(--dsw-alias-border-l1)',
+                        borderRadius: 10,
+                        padding: '8px 12px',
+                        background: 'var(--dsw-alias-bg-base)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        fontSize: 11.5,
+                        color: 'var(--dsw-alias-label-secondary)',
+                      },
+                    },
+                      h('span', null, '🔍 点击上方任意泳道行、三段式环节胶囊或左侧拓扑节点，即可展开「Agent 环节执行轨迹抽屉」梳理细节并按需跳转聊天框'),
+                      h('button', {
+                        className: 'rt-btn',
+                        style: { padding: '2px 8px', fontSize: 11 },
+                        onClick: () => openAgentInspector('root'),
+                      }, '展开主控环节预览')),
+
+                /* ── Section C: 右下 · 协作任务 (.rt-collab-pane .rt-p4-tasks-pane) ── */
                 h('div', {
                   className: 'rt-collab-pane rt-p4-tasks-pane',
                   style: {
@@ -2074,6 +2897,16 @@ window.__ModuleLoader__.load({
                                 h('span', { className: 'rt-mono' }, '耗时 ' + tk.durationLabel),
                                 h('span', { className: 'rt-mono' }, tk.steps + ' 步'),
                                 h('div', { className: 'rt-spacer' }),
+                                h('button', {
+                                  className: 'rt-btn',
+                                  style: { padding: '1px 7px', fontSize: 10.5 },
+                                  onClick: (e) => { e.stopPropagation(); openAgentInspector(tk.agentId) },
+                                }, '🔍 梳理环节细节'),
+                                h('button', {
+                                  className: 'rt-btn rt-jump-chat-btn',
+                                  style: { padding: '1px 7px', fontSize: 10.5 },
+                                  onClick: (e) => { e.stopPropagation(); openAgentSessionInHostChat(tk) },
+                                }, '💬 跳转侧边聊天框打开该 Agent 会话 ↗'),
                                 h('button', {
                                   className: 'rt-btn',
                                   style: { padding: '1px 7px', fontSize: 10.5 },

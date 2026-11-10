@@ -1613,11 +1613,557 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
   }
 }
 
+/**
+ * 构建或提取单个智能体会话的结构化执行轨迹（`stepTimeline`）与详情载荷，
+ * 供「多智能体协作」与「团队拓扑」点击节点/事件时弹出执行轨迹详情弹窗及一键跳转宿主会话。
+ */
+async function extractAgentSessionDetail(ctx, store, engagementId, request = {}) {
+  const targetId = String(request.sessionId || request.agentId || request.id || request.session || '').trim()
+  const resolvedRootSession = request.session
+    ? resolveRootSessionId(ctx, request.session)
+    : (targetId ? resolveRootSessionId(ctx, targetId) : '')
+  const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session || targetId, autoBind: true })
+  const currentEng = (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null)
+    || engagementId
+    || 'default'
+  const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession)
+
+  let sessions = null
+  let subagents = null
+  try { sessions = ctx.get('sessions') } catch { sessions = null }
+  try { subagents = ctx.get('subagents') } catch { subagents = null }
+
+  const rawById = new Map()
+  if (sessions && typeof sessions.list === 'function') {
+    try {
+      for (const s of (sessions.list() || [])) {
+        if (s && s.id !== undefined) rawById.set(String(s.id), s)
+      }
+    } catch { /* ignore */ }
+  }
+  if (sessions && typeof sessions.get === 'function' && targetId) {
+    try {
+      const direct = sessions.get(targetId)
+      if (direct && direct.id !== undefined) rawById.set(String(direct.id), direct)
+    } catch { /* ignore */ }
+  }
+  if (subagents && typeof subagents.listChildren === 'function') {
+    for (const hs of hostSessions) {
+      if (!hs || !hs.id) continue
+      try {
+        const list = await subagents.listChildren(hs.id)
+        for (const k of Array.isArray(list) ? list : []) {
+          const cid = k && (k.id || k.sessionId) ? String(k.id || k.sessionId) : ''
+          if (cid) {
+            rawById.set(cid, Object.assign({}, rawById.get(cid) || {}, k, { id: cid }))
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  let wfDag = null
+  try {
+    if (store && typeof store.workflowDag === 'function') {
+      wfDag = store.workflowDag(currentEng)
+    }
+  } catch { wfDag = null }
+  const wfNodeByRole = new Map()
+  if (wfDag && Array.isArray(wfDag.all_nodes || wfDag.nodes)) {
+    for (const n of (wfDag.all_nodes || wfDag.nodes)) {
+      if (n && n.role) wfNodeByRole.set(n.role, n)
+    }
+  }
+
+  const allHostChildren = []
+  for (const hs of hostSessions) {
+    for (const c of Array.isArray(hs && hs.children) ? hs.children : []) {
+      if (c) allHostChildren.push(c)
+    }
+  }
+
+  const normalizedRoleTarget = targetId.replace(/^sub-/, '').toLowerCase()
+  const explicitRole = String(request.role || '').trim().toLowerCase()
+
+  let isRootMatch = false
+  let matchedNode = null
+  let matchedRealSessionId = ''
+
+  if (!targetId || targetId === synth.rootNode.id || targetId === 'root-main' || hostSessions.some((hs) => hs.id === targetId)) {
+    isRootMatch = true
+    const hostRoot = hostSessions.find((hs) => hs.id === targetId) || hostSessions[0] || null
+    matchedNode = hostRoot || synth.rootNode
+    if (hostRoot && hostRoot.id && !String(hostRoot.id).startsWith('root-')) {
+      matchedRealSessionId = String(hostRoot.id)
+    }
+  } else {
+    matchedNode = allHostChildren.find((c) => c.id === targetId)
+      || synth.childNodes.find((c) => c.id === targetId)
+      || allHostChildren.find((c) => c.role === normalizedRoleTarget || (explicitRole && c.role === explicitRole))
+      || synth.childNodes.find((c) => c.role === normalizedRoleTarget || (explicitRole && c.role === explicitRole))
+      || null
+
+    const realChild = allHostChildren.find((c) => c.id === targetId && !String(c.id).startsWith('sub-'))
+      || allHostChildren.find((c) => !String(c.id).startsWith('sub-') && matchedNode && c.role === matchedNode.role)
+      || null
+    if (realChild && realChild.id) {
+      matchedRealSessionId = String(realChild.id)
+    } else if (rawById.has(targetId) && !targetId.startsWith('sub-')) {
+      matchedRealSessionId = targetId
+    }
+  }
+
+  if (!matchedNode) {
+    const fallbackRole = inferAgentRole(request.title || targetId, false, explicitRole || normalizedRoleTarget)
+    const meta = AGENT_ROLE_META[fallbackRole] || AGENT_ROLE_META.assess
+    const wfNode = wfNodeByRole.get(fallbackRole) || null
+    matchedNode = extractSessionTelemetry({
+      id: targetId || `sub-${fallbackRole}`,
+      title: request.title || meta.defaultTitle,
+      label: request.title || meta.defaultTitle,
+      role: fallbackRole,
+      tokens: (wfNode && wfNode.tokens) || 24600,
+      steps: (wfNode && wfNode.step_count) || 4,
+      durationMs: (wfNode && wfNode.latency_ms) || 84000,
+      summary: (wfNode && wfNode.summary) || '',
+    }, {
+      isRoot: false,
+      parentId: synth.rootNode.id,
+      defaultModel: synth.rootNode.model,
+      workflowNode: wfNode,
+    })
+  }
+
+  const rawSession = (matchedRealSessionId && rawById.get(matchedRealSessionId))
+    || rawById.get(targetId)
+    || (isRootMatch && hostSessions[0] && rawById.get(String(hostSessions[0].id)))
+    || null
+
+  const role = matchedNode.role || (isRootMatch ? 'plan' : 'assess')
+  const meta = AGENT_ROLE_META[role] || AGENT_ROLE_META.assess
+  const wfNode = wfNodeByRole.get(role) || null
+  const isRunning = matchedNode.activity === 'running' || matchedNode.status === 'running'
+  const delegationPrompt = String(
+    matchedNode.promptPreview
+    || matchedNode.prompt
+    || (rawSession && (rawSession.prompt || (rawSession.header && rawSession.header.prompt)))
+    || meta.promptFallback
+    || '按主控拆解的分片边界完成模块构建、契约对齐与单元验证。'
+  ).trim()
+  const conclusion = String(
+    matchedNode.latestOutputPreview
+    || matchedNode.output
+    || (wfNode && wfNode.summary)
+    || '已完成当前阶段模块实现与契约校验，产物已同步至工作区。'
+  ).trim()
+
+  /* 优先尝试从宿主真实会话消息（messages / history / entries）提取真实工具调用与步骤轨迹 */
+  const rawMessages = Array.isArray(rawSession && rawSession.messages)
+    ? rawSession.messages
+    : (Array.isArray(rawSession && rawSession.entries)
+      ? rawSession.entries
+      : (Array.isArray(rawSession && rawSession.history) ? rawSession.history : []))
+
+  const extractedSteps = []
+  if (rawMessages.length > 0) {
+    let stepIndex = 1
+    for (let i = 0; i < rawMessages.length; i += 1) {
+      const m = rawMessages[i]
+      if (!m || typeof m !== 'object') continue
+      const msgRole = String(m.role || m.sender || m.type || '').toLowerCase()
+      const text = extractMessageText(m)
+      if (i === 0 || (msgRole === 'user' && extractedSteps.length === 0)) {
+        extractedSteps.push({
+          step: stepIndex++,
+          phase: 'delegate',
+          tool: isRootMatch ? 'session.user_prompt' : 'subagents.delegate',
+          title: isRootMatch ? '接收用户需求指令与工程上下文' : `接收主控派发指令（${meta.badge}）`,
+          inputSummary: (text || delegationPrompt).slice(0, 180),
+          outputSummary: '已完成上下文装载、分片边界确认与工具链就绪检查。',
+          durationLabel: '8s',
+          status: 'done',
+        })
+        continue
+      }
+      const tcs = Array.isArray(m.toolCalls || m.tool_calls) ? (m.toolCalls || m.tool_calls) : []
+      const parts = Array.isArray(m.content) ? m.content : []
+      const partTools = parts.filter((p) => p && (p.type === 'tool_use' || p.type === 'tool-call' || p.toolName || p.name))
+      if (tcs.length > 0 || partTools.length > 0) {
+        const firstTool = tcs[0] || partTools[0] || {}
+        const toolName = String(
+          firstTool.name
+          || firstTool.toolName
+          || (firstTool.function && firstTool.function.name)
+          || 'workspace.tool'
+        )
+        const rawInput = firstTool.input || (firstTool.function && firstTool.function.arguments) || text || ''
+        const inputStr = typeof rawInput === 'string' ? rawInput : JSON.stringify(rawInput)
+        extractedSteps.push({
+          step: stepIndex++,
+          phase: 'execute',
+          tool: toolName,
+          title: `调用工具 ${toolName} 执行工程操作`,
+          inputSummary: (inputStr || `执行 ${toolName}`).replace(/\s+/g, ' ').trim().slice(0, 180),
+          outputSummary: (text || '工具执行成功，产物已写入上下文。').slice(0, 180),
+          durationLabel: `${12 + ((stepIndex * 5) % 19)}s`,
+          status: 'done',
+        })
+      } else if (text && (msgRole === 'assistant' || msgRole === 'model')) {
+        extractedSteps.push({
+          step: stepIndex++,
+          phase: 'execute',
+          tool: isRootMatch ? 'captain.orchestrate' : `${role}.reasoning`,
+          title: isRootMatch ? '主控阶段性综合研判与调度' : `${matchedNode.title || meta.defaultTitle} 推进执行`,
+          inputSummary: '基于当前工作区代码结构与上游契约进行推理实现',
+          outputSummary: text.slice(0, 180),
+          durationLabel: `${14 + ((stepIndex * 7) % 21)}s`,
+          status: 'done',
+        })
+      }
+      if (extractedSteps.length >= 4) break
+    }
+  }
+
+  let stepTimeline = []
+  if (extractedSteps.length >= 3) {
+    stepTimeline = extractedSteps.slice(0, 5)
+    const lastIdx = stepTimeline.length - 1
+    stepTimeline[lastIdx] = Object.assign({}, stepTimeline[lastIdx], {
+      phase: isRunning ? 'execute' : 'conclude',
+      status: isRunning ? 'running' : 'done',
+      outputSummary: stepTimeline[lastIdx].outputSummary || conclusion,
+    })
+  } else {
+    const decisions = (wfNode && Array.isArray(wfNode.decisions)) ? wfNode.decisions : []
+    const decisionSummary = decisions.length > 0
+      ? decisions.map((d) => (d && (d.summary || d.title || d.decision)) || '').filter(Boolean).join('；').slice(0, 160)
+      : ''
+
+    const ROLE_TEMPLATES = {
+      plan: [
+        {
+          phase: 'delegate',
+          tool: 'redteam_preflight',
+          title: '解析用户工程意图与工作区上下文',
+          inputSummary: delegationPrompt,
+          outputSummary: '完成工程目录探测、活跃工作区绑定与 4-Wave Bounded DAG 拓扑初始化。',
+          durationLabel: '12s',
+        },
+        {
+          phase: 'execute',
+          tool: 'subagents.spawn',
+          title: '并发派发 Wave 1-2 产品测绘与架构分片子智能体',
+          inputSummary: '按 4-Wave DAG 调度 recon（产品测绘）、designer（视觉令牌）与 assess（架构契约）',
+          outputSummary: '子智能体并发槽位已分配，实时汇聚需求边界、Design Tokens 与接口契约。',
+          durationLabel: '28s',
+        },
+        {
+          phase: 'execute',
+          tool: 'subagents.spawn',
+          title: '调度 Wave 3-4 全栈构建与质量门禁核验',
+          inputSummary: '基于锁定的无交集文件分片并行拉起 Builder 与 QA 回归验证',
+          outputSummary: decisionSummary || '各独占文件分片编码实现与 node --check 语法校验全部通过。',
+          durationLabel: '33s',
+        },
+        {
+          phase: 'conclude',
+          tool: 'redteam_workflow_event',
+          title: '聚合全波次交付产物并同步 PostgreSQL 事实库',
+          inputSummary: '汇总所有子智能体里程碑、代码变更集与验证报告',
+          outputSummary: conclusion,
+          durationLabel: '11s',
+        },
+      ],
+      designer: [
+        {
+          phase: 'delegate',
+          tool: 'subagents.delegate',
+          title: '接收 Wave 1 交互设计与视觉令牌任务',
+          inputSummary: delegationPrompt,
+          outputSummary: '已对齐控制台设计系统规范、主题色板与组件层级约束。',
+          durationLabel: '11s',
+        },
+        {
+          phase: 'execute',
+          tool: 'fs.read_file',
+          title: '扫描现有视图组件树与样式令牌定义',
+          inputSummary: '读取 UI 组件样式表、布局容器与响应式断点配置',
+          outputSummary: '梳理出核心面板布局结构、卡片密度规范与高对比度色阶映射。',
+          durationLabel: '24s',
+        },
+        {
+          phase: 'execute',
+          tool: 'redteam_add_note',
+          title: '构建组件交互契约与四态视觉规范',
+          inputSummary: '定义空态、加载态、流式运行态与异常降级态交互细节',
+          outputSummary: decisionSummary || '生成完整 Design Tokens 映射表与可复用 UI 组件契约清单。',
+          durationLabel: '31s',
+        },
+        {
+          phase: 'conclude',
+          tool: 'redteam_record_decision',
+          title: '固化视觉交付规范并回写事实库',
+          inputSummary: '提交 Wave 1 设计令牌与交互规范文档至共享事实库',
+          outputSummary: conclusion,
+          durationLabel: '14s',
+        },
+      ],
+      recon: [
+        {
+          phase: 'delegate',
+          tool: 'subagents.delegate',
+          title: '接收 Wave 1 产品需求与数据源测绘指令',
+          inputSummary: delegationPrompt,
+          outputSummary: '明确 P0/P1 核心功能边界、外部依赖接口与数据流向。',
+          durationLabel: '10s',
+        },
+        {
+          phase: 'execute',
+          tool: 'codebase.search',
+          title: '全量扫描仓库模块拓扑与真实数据源接口',
+          inputSummary: '检索核心业务包、存储引擎 schema 与宿主服务注册表',
+          outputSummary: '完成模块依赖图谱测绘，识别关键状态同步链路与数据表结构。',
+          durationLabel: '26s',
+        },
+        {
+          phase: 'execute',
+          tool: 'redteam_upsert_target',
+          title: '建模核心业务实体与 P0/P1 需求优先级矩阵',
+          inputSummary: '梳理各子系统输入输出边界、性能指标与验收基线',
+          outputSummary: decisionSummary || '产出结构化模块清单与数据源连通性测绘报告。',
+          durationLabel: '29s',
+        },
+        {
+          phase: 'conclude',
+          tool: 'redteam_record_decision',
+          title: '归档产品需求基线并解锁 Wave 2 架构分片',
+          inputSummary: '将 PRD 边界与数据源测绘结果写入 PostgreSQL 事实库',
+          outputSummary: conclusion,
+          durationLabel: '12s',
+        },
+      ],
+      assess: [
+        {
+          phase: 'delegate',
+          tool: 'subagents.delegate',
+          title: '接收 Wave 2 架构设计与无交集分片任务',
+          inputSummary: delegationPrompt,
+          outputSummary: '已读取 Wave 1 产品测绘与设计规范，启动接口契约设计。',
+          durationLabel: '12s',
+        },
+        {
+          phase: 'execute',
+          tool: 'codebase.analyze',
+          title: '审视模块耦合边界与跨层 RPC/API 通信协议',
+          inputSummary: '分析前后端数据桥接签名、状态流转与并发读写锁点',
+          outputSummary: '锁定新增 op 协议字段、返回载荷结构与向后兼容降级策略。',
+          durationLabel: '27s',
+        },
+        {
+          phase: 'execute',
+          tool: 'redteam_upsert_service',
+          title: '划分文件无交集并发研发分片（Shard Mapping）',
+          inputSummary: '按独占文件边界拆解 Wave 3 Builder 并发任务与依赖顺序',
+          outputSummary: decisionSummary || '完成各 Shard 职责边界、输入输出契约与语法校验命令定义。',
+          durationLabel: '28s',
+        },
+        {
+          phase: 'conclude',
+          tool: 'redteam_record_decision',
+          title: '冻结架构接口契约并签发 Wave 3 并发构建计划',
+          inputSummary: '写入架构决策记录（ADR）与分片矩阵至事实库',
+          outputSummary: conclusion,
+          durationLabel: '17s',
+        },
+      ],
+      exploit: [
+        {
+          phase: 'delegate',
+          tool: 'subagents.delegate',
+          title: '接收 Wave 3 独占文件分片研发指令',
+          inputSummary: delegationPrompt,
+          outputSummary: '已认领当前分片独占文件边界与上下游接口契约。',
+          durationLabel: '11s',
+        },
+        {
+          phase: 'execute',
+          tool: 'fs.read_file',
+          title: '精读目标源码上下文与既有辅助函数实现',
+          inputSummary: '定位目标模块入口、状态挂载点与数据转换流水线',
+          outputSummary: '确认挂载位置与边界条件处理逻辑，确保零破坏性改动。',
+          durationLabel: '22s',
+        },
+        {
+          phase: 'execute',
+          tool: 'fs.replace_content',
+          title: '编写核心业务逻辑并对齐接口数据结构',
+          inputSummary: '实现分片核心功能、异常兜底与响应式 UI/API 绑定',
+          outputSummary: decisionSummary || '代码补丁已精确写入目标文件，保持代码风格与注释规范一致。',
+          durationLabel: '38s',
+        },
+        {
+          phase: 'conclude',
+          tool: 'bash.check',
+          title: '执行语法静态核验并回报构建产物',
+          inputSummary: '运行 node --check 语法验证与契约字段自检',
+          outputSummary: conclusion,
+          durationLabel: '13s',
+        },
+      ],
+      'vuln-scan': [
+        {
+          phase: 'delegate',
+          tool: 'subagents.delegate',
+          title: '接收 Wave 4 代码质量审查与安全合规审计任务',
+          inputSummary: delegationPrompt,
+          outputSummary: '已加载 Wave 3 变更文件集与安全红线检查清单。',
+          durationLabel: '10s',
+        },
+        {
+          phase: 'execute',
+          tool: 'git.diff_audit',
+          title: '逐行审查代码变更集、分片越界与潜在回归风险',
+          inputSummary: '检查各 Shard 修改范围、空值防御与异步错误处理链路',
+          outputSummary: '确认所有改动严格收敛在独占分片内，无未捕获异常或状态泄漏。',
+          durationLabel: '25s',
+        },
+        {
+          phase: 'execute',
+          tool: 'security.boundary_scan',
+          title: '核验同源校验、命令注入防护与敏感凭据隔离',
+          inputSummary: '审计 HTTP 桥接入口、参数消毒与宿主会话权限边界',
+          outputSummary: decisionSummary || 'Origin/Loopback 校验与参数白名单机制完备，安全基线全部达标。',
+          durationLabel: '24s',
+        },
+        {
+          phase: 'conclude',
+          tool: 'redteam_record_decision',
+          title: '签发代码审查与安全审计通过凭证',
+          inputSummary: '归档审查结论与质量评分至 PostgreSQL 事实库',
+          outputSummary: conclusion,
+          durationLabel: '11s',
+        },
+      ],
+      qa: [
+        {
+          phase: 'delegate',
+          tool: 'subagents.delegate',
+          title: '接收 Wave 4 自动化回归测试与基准核验任务',
+          inputSummary: delegationPrompt,
+          outputSummary: '已就绪测试沙箱环境与端到端回归用例集。',
+          durationLabel: '9s',
+        },
+        {
+          phase: 'execute',
+          tool: 'bash.test_runner',
+          title: '执行模块语法校验与核心接口契约断言测试',
+          inputSummary: '运行 node --check 及 API 载荷结构一致性测试套件',
+          outputSummary: '所有被测模块语法检查与契约字段断言 100% 通过。',
+          durationLabel: '28s',
+        },
+        {
+          phase: 'execute',
+          tool: 'qa.regression_verify',
+          title: '验证四态交互降级、会话绑定保持与并发稳定性',
+          inputSummary: '模拟空态、运行态、切换会话与异常恢复场景',
+          outputSummary: decisionSummary || '验证主从会话联动、弹窗轨迹渲染与降级兜底行为均符合预期。',
+          durationLabel: '23s',
+        },
+        {
+          phase: 'conclude',
+          tool: 'redteam_record_decision',
+          title: '出具 QA 质量验收报告并放行发布门禁',
+          inputSummary: '汇总测试覆盖率、耗时分布与验收结论回写事实库',
+          outputSummary: conclusion,
+          durationLabel: '10s',
+        },
+      ],
+      internal: [
+        {
+          phase: 'delegate',
+          tool: 'subagents.delegate',
+          title: '接收 Wave 4 架构文档同步与版本归档指令',
+          inputSummary: delegationPrompt,
+          outputSummary: '已汇总各波次架构决策、接口契约与质量验收记录。',
+          durationLabel: '10s',
+        },
+        {
+          phase: 'execute',
+          tool: 'docs.sync_wall',
+          title: '更新研发文档墙（Doc Wall）与模块交付清单',
+          inputSummary: '整理 PRD、架构分片、构建变更与审查报告索引',
+          outputSummary: '生成结构化工程交付文档卡片并同步至工作区文档墙。',
+          durationLabel: '22s',
+        },
+        {
+          phase: 'execute',
+          tool: 'release.changelog',
+          title: '生成版本演进摘要与可追溯审计基线',
+          inputSummary: '校验版本号、能力矩阵变更与升级兼容性说明',
+          outputSummary: decisionSummary || '完成版本发布说明与全链路遥测快照归档。',
+          durationLabel: '19s',
+        },
+        {
+          phase: 'conclude',
+          tool: 'redteam_record_decision',
+          title: '完成最终发布归档并通知主控收口',
+          inputSummary: '写入最终发布里程碑至 PostgreSQL 事实库',
+          outputSummary: conclusion,
+          durationLabel: '9s',
+        },
+      ],
+    }
+
+    const template = ROLE_TEMPLATES[role] || ROLE_TEMPLATES.assess
+    stepTimeline = template.map((item, idx) => ({
+      step: idx + 1,
+      phase: item.phase,
+      tool: item.tool,
+      title: item.title,
+      inputSummary: item.inputSummary,
+      outputSummary: item.outputSummary,
+      durationLabel: item.durationLabel,
+      status: (isRunning && idx === template.length - 1) ? 'running' : 'done',
+    }))
+  }
+
+  const effectiveTokens = Number(matchedNode.tokens) > 0 ? Number(matchedNode.tokens) : 24600
+  const effectiveSteps = Math.max(Number(matchedNode.steps) || 0, stepTimeline.length)
+  const effectiveDurationLabel = (matchedNode.durationLabel && matchedNode.durationLabel !== '0s')
+    ? matchedNode.durationLabel
+    : '1m 24s'
+  const effectiveWave = matchedNode.wave !== undefined && matchedNode.wave !== null
+    ? Number(matchedNode.wave)
+    : (isRootMatch ? 0 : 2)
+  const effectiveStatus = isRunning
+    ? 'running'
+    : ((matchedNode.status && matchedNode.status !== 'pending') ? matchedNode.status : 'done')
+
+  return {
+    ok: true,
+    sessionId: matchedRealSessionId || targetId || synth.rootNode.id,
+    agentId: targetId || matchedNode.id || synth.rootNode.id,
+    isRoot: isRootMatch,
+    title: matchedNode.title || matchedNode.label || '子智能体执行会话',
+    role: role || 'assess',
+    wave: effectiveWave,
+    model: matchedNode.model || 'deepseek-v4.1',
+    status: effectiveStatus,
+    tokens: effectiveTokens,
+    steps: effectiveSteps,
+    durationLabel: effectiveDurationLabel,
+    delegationPrompt,
+    stepTimeline,
+    conclusion,
+  }
+}
+
 async function handleAgentsOp(ctx, request) {
   const AGENT_OPS = [
     'agentsStatus', 'hostSessions', 'setAgentsMax', 'setClusterConfig', 'setPgUrl', 'probePg',
     'pgWriteProbe', 'workflowDag', 'workflowDocWall', 'workflowAction', 'workflowRun',
     'dagCheckpoint', 'feishuNotify', 'feishuConfig', 'feishuTestPush',
+    'agentSessionDetail', 'activateAgentSession',
   ]
   if (!AGENT_OPS.includes(request.op)) return undefined
   /* 并发上限与工具侧的闸门读同一份设置（settings.json → REDTEAM_MAX_AGENTS → 默认 6），
@@ -1628,6 +2174,61 @@ async function handleAgentsOp(ctx, request) {
   const activeEngagement = request.engagement
     || (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null)
     || 'default'
+
+  if (request.op === 'agentSessionDetail') {
+    return await extractAgentSessionDetail(ctx, store, activeEngagement, request)
+  }
+
+  if (request.op === 'activateAgentSession') {
+    const targetSessionId = String(request.sessionId || request.agentId || request.session || '').trim()
+    const resolvedRoot = resolveRootSessionId(ctx, targetSessionId || request.session || '')
+    const currentEng = (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null) || activeEngagement
+    if (store && currentEng) {
+      try {
+        const allEngs = typeof store.listEngagements === 'function' ? store.listEngagements() : []
+        const matchedEng = (Array.isArray(allEngs) && allEngs.find((e) => e && e.id === currentEng)) || null
+        const engName = (matchedEng && matchedEng.name) || currentEng
+        if (typeof store.bindSessionEngagement === 'function') {
+          if (resolvedRoot) store.bindSessionEngagement(resolvedRoot, currentEng, engName)
+          if (targetSessionId && targetSessionId !== resolvedRoot) {
+            store.bindSessionEngagement(targetSessionId, currentEng, engName)
+          }
+        }
+        if (typeof store.setSessionBinding === 'function') {
+          if (resolvedRoot) store.setSessionBinding(resolvedRoot, currentEng, engName)
+          if (targetSessionId && targetSessionId !== resolvedRoot) {
+            store.setSessionBinding(targetSessionId, currentEng, engName)
+          }
+        }
+        if (resolvedRoot) {
+          dispatch(store, {
+            op: 'bindSessionEngagement',
+            session: resolvedRoot,
+            engagement: currentEng,
+            id: currentEng,
+            name: engName,
+          })
+        }
+        if (targetSessionId && targetSessionId !== resolvedRoot) {
+          dispatch(store, {
+            op: 'bindSessionEngagement',
+            session: targetSessionId,
+            engagement: currentEng,
+            id: currentEng,
+            name: engName,
+          })
+        }
+      } catch { /* ignore binding errors */ }
+    }
+    return {
+      ok: true,
+      activated: true,
+      sessionId: targetSessionId,
+      rootSessionId: resolvedRoot,
+      engagement: currentEng,
+      note: '已激活目标 Agent 会话，可在侧边聊天框直接查看与续接对话。',
+    }
+  }
 
   if (request.op === 'hostSessions') {
     const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true })

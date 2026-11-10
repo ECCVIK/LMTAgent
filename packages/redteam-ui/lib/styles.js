@@ -2008,4 +2008,331 @@ body[data-ds-dark-theme] .rt-p5-status.done{
   gap:6px;
   margin-top:2px;
 }
+
+/* ── v0.19.0: Interactive Pan-Zoom Path Tree, n8n/ComfyUI/BluePrintRenderer Lifecycle Animations & 3-Stage Step Inspector ── */
+
+/* 1. Hand-Grab Pan & Zoom Viewport */
+.rt-panzoom-viewport{
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: radial-gradient(circle at 12px 12px, rgba(59,130,246,0.13) 1.2px, transparent 1.2px), var(--dsw-alias-bg-base);
+  background-size: 18px 18px;
+}
+body[data-ds-dark-theme] .rt-panzoom-viewport{
+  background: radial-gradient(circle at 12px 12px, rgba(96,165,250,0.18) 1.2px, transparent 1.2px), var(--dsw-alias-bg-base);
+  background-size: 18px 18px;
+  border-color: rgba(148,163,184,0.22);
+}
+.rt-panzoom-viewport.grabbing{
+  cursor: grabbing;
+}
+.rt-panzoom-toolbar{
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--dsw-alias-border-l1);
+  box-shadow: 0 4px 12px rgba(15,23,42,0.12);
+}
+body[data-ds-dark-theme] .rt-panzoom-toolbar{
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 90%, transparent);
+  border-color: rgba(148,163,184,0.24);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.38);
+}
+.rt-panzoom-stage{
+  transform-origin: center top;
+  transition: transform 0.08s ease-out;
+  will-change: transform;
+  position: relative;
+}
+
+/* 2. Hierarchical Auto-Folding Wave Path Tree */
+.rt-tree-wave-row{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  position: relative;
+}
+.rt-tree-wave-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 10px;
+  width: 100%;
+  align-items: start;
+}
+.rt-tree-wave-group{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  position: relative;
+}
+.rt-tree-wave-card{
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1.5px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  min-width: 0;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.14s ease, background 0.16s ease;
+  box-shadow: 0 2px 8px rgba(15,23,42,0.05);
+}
+body[data-ds-dark-theme] .rt-tree-wave-card{
+  background: var(--dsw-alias-bg-layer-2);
+  border-color: rgba(148,163,184,0.22);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+}
+.rt-tree-wave-card:hover{
+  border-color: #3b82f6;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px -4px rgba(59,130,246,0.18);
+}
+body[data-ds-dark-theme] .rt-tree-wave-card:hover{
+  border-color: #60a5fa;
+  box-shadow: 0 6px 18px -4px rgba(59,130,246,0.32);
+}
+.rt-tree-wave-card.active,.rt-tree-wave-card.on,.rt-tree-wave-card.expanded{
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.22), 0 6px 18px -4px rgba(59,130,246,0.2);
+  background: linear-gradient(180deg, rgba(59,130,246,0.08) 0%, transparent 65%), var(--dsw-alias-bg-layer-1);
+}
+body[data-ds-dark-theme] .rt-tree-wave-card.active,
+body[data-ds-dark-theme] .rt-tree-wave-card.on,
+body[data-ds-dark-theme] .rt-tree-wave-card.expanded{
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96,165,250,0.28), 0 8px 20px -4px rgba(37,99,235,0.34);
+  background: linear-gradient(180deg, rgba(59,130,246,0.16) 0%, transparent 70%), var(--dsw-alias-bg-layer-2);
+}
+.rt-tree-wave-card-badge{
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #2563eb;
+  background: rgba(59,130,246,0.12);
+  border: 1px solid rgba(59,130,246,0.28);
+  white-space: nowrap;
+}
+body[data-ds-dark-theme] .rt-tree-wave-card-badge{
+  color: #93c5fd;
+  background: rgba(59,130,246,0.22);
+  border-color: rgba(96,165,250,0.38);
+}
+.rt-tree-expanded-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px dashed var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+  box-sizing: border-box;
+}
+body[data-ds-dark-theme] .rt-tree-expanded-grid{
+  border-color: rgba(148,163,184,0.26);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 85%, var(--dsw-alias-bg-base));
+}
+.rt-n8n-diamond-pin{
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 10px;
+  height: 10px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 2px solid #3b82f6;
+  border-radius: 2px;
+  z-index: 3;
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-base);
+}
+body[data-ds-dark-theme] .rt-n8n-diamond-pin{
+  background: var(--dsw-alias-bg-layer-2);
+  border-color: #60a5fa;
+}
+
+/* 3. Right Pane 3-Stage Step Chain & Two-Step Inspector Drawer */
+.rt-step-chain{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  position: relative;
+}
+.rt-step-node{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  position: relative;
+}
+.rt-step-pill{
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  min-width: 0;
+  flex: 1;
+  position: relative;
+  transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+}
+body[data-ds-dark-theme] .rt-step-pill{
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 88%, var(--dsw-alias-bg-base));
+  border-color: rgba(148,163,184,0.22);
+}
+.rt-step-pill:hover{
+  border-color: #3b82f6;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px -2px rgba(59,130,246,0.16);
+}
+body[data-ds-dark-theme] .rt-step-pill:hover{
+  border-color: #60a5fa;
+  box-shadow: 0 4px 12px -2px rgba(59,130,246,0.3);
+}
+.rt-step-arrow{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dsw-alias-label-secondary);
+  opacity: 0.78;
+  user-select: none;
+}
+body[data-ds-dark-theme] .rt-step-arrow{
+  color: #93c5fd;
+  opacity: 0.85;
+}
+.rt-agent-inspector-drawer{
+  border: 1.5px solid #3b82f6;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(180deg, rgba(59,130,246,0.08) 0%, transparent 46%), var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 8px 24px -6px rgba(59,130,246,0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: rt-subnode-spawn 0.36s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+body[data-ds-dark-theme] .rt-agent-inspector-drawer{
+  border-color: #60a5fa;
+  background: linear-gradient(180deg, rgba(59,130,246,0.16) 0%, transparent 52%), var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 10px 28px -6px rgba(0,0,0,0.45), 0 0 0 1px rgba(96,165,250,0.22);
+}
+.rt-jump-chat-btn{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border: 1px solid #2563eb;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(59,130,246,0.28);
+  transition: transform 0.14s ease, box-shadow 0.14s ease, opacity 0.14s ease;
+}
+.rt-jump-chat-btn:hover{
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(59,130,246,0.38);
+}
+body[data-ds-dark-theme] .rt-jump-chat-btn{
+  background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+  border-color: #60a5fa;
+  box-shadow: 0 2px 12px rgba(59,130,246,0.42);
+}
+
+/* 4. 7 Lifecycle Animation Keyframes & Utility Classes (BluePrintRenderer + ComfyUI + n8n) */
+@keyframes rt-wire-grow{
+  from { stroke-dashoffset: 240; opacity: 0.25; }
+  to { stroke-dashoffset: 0; opacity: 1; }
+}
+@keyframes rt-subnode-spawn{
+  0% { opacity: 0; transform: translateY(-14px) scale(0.84); filter: blur(3px); }
+  65% { opacity: 1; transform: translateY(2px) scale(1.02); filter: blur(0); }
+  100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+@keyframes rt-sonar-ripple{
+  0% { box-shadow: 0 0 0 0 rgba(59,130,246,0.45); opacity: 1; }
+  100% { box-shadow: 0 0 0 12px rgba(59,130,246,0); opacity: 0; }
+}
+@keyframes rt-dash-flow{
+  to { stroke-dashoffset: -24; }
+}
+@keyframes rt-hub-absorb{
+  0% { transform: scale(1); }
+  50% { transform: scale(1.03); box-shadow: 0 0 0 6px rgba(16,185,129,0.22); }
+  100% { transform: scale(1); }
+}
+@keyframes rt-complete-sheen{
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes rt-check-stroke{
+  from { stroke-dashoffset: 32; }
+  to { stroke-dashoffset: 0; }
+}
+.rt-anim-spawn{
+  animation: rt-subnode-spawn 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.rt-anim-complete{
+  background-image: linear-gradient(110deg, transparent 35%, rgba(16,185,129,0.16) 50%, transparent 65%);
+  background-size: 200% 100%;
+  animation: rt-complete-sheen 1.2s ease-out 1;
+}
+body[data-ds-dark-theme] .rt-anim-complete{
+  background-image: linear-gradient(110deg, transparent 35%, rgba(52,211,153,0.22) 50%, transparent 65%);
+}
+.rt-anim-hub-absorb{
+  animation: rt-hub-absorb 0.52s cubic-bezier(0.34, 1.56, 0.64, 1) 1;
+}
+.rt-wire-flowing{
+  stroke-dasharray: 6 6;
+  animation: rt-dash-flow 0.9s linear infinite;
+}
+.rt-wire-growing{
+  stroke-dasharray: 240;
+  animation: rt-wire-grow 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.rt-sonar-ring{
+  border-radius: inherit;
+  animation: rt-sonar-ripple 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
 `

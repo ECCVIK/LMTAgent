@@ -200,6 +200,53 @@ ok(
   'client.js 通过 Math.min(max, ...) 截断 activeSlots 防止并发槽按钮溢出上限',
 )
 
+/* ── 6. v0.19.0 交互式手抓平移缩放路径树、波次自动折叠、三段式环节执行链与双步跳转契约 ── */
+console.log('— 冒烟六：v0.19.0 交互式手抓平移缩放路径树、波次自动折叠、三段式环节执行链与双步跳转契约')
+const V019_CSS_SELECTORS = [
+  '.rt-panzoom-viewport',
+  '.rt-tree-wave-row',
+  '.rt-tree-expanded-grid',
+  '.rt-n8n-diamond-pin',
+  '.rt-step-chain',
+  '.rt-step-node',
+  '.rt-agent-inspector-drawer',
+  '.rt-jump-chat-btn',
+]
+for (const selector of V019_CSS_SELECTORS) {
+  ok(PANEL_CSS.includes(selector), `styles.js 包含 v0.19.0 布局与透视抽屉选择器「${selector}」`)
+}
+ok(
+  /repeat\(\s*auto-fill\s*,\s*minmax\(\s*215px\s*,\s*1fr\s*\)\s*\)/.test(PANEL_CSS),
+  'styles.js 定义 .rt-tree-expanded-grid 自适应最小列宽 repeat(auto-fill, minmax(215px, 1fr))，确保 56+ 子代理自动折行不挤压成细条',
+)
+
+const V019_LIFECYCLE_KEYFRAMES = [
+  'rt-wire-grow',
+  'rt-subnode-spawn',
+  'rt-sonar-ripple',
+  'rt-dash-flow',
+  'rt-hub-absorb',
+  'rt-complete-sheen',
+  'rt-check-stroke',
+]
+for (const kf of V019_LIFECYCLE_KEYFRAMES) {
+  ok(PANEL_CSS.includes(kf), `styles.js 包含 v0.19.0 全生命周期关键帧动画「${kf}」`)
+}
+
+const V019_STEP_CHAIN_LABELS = ['委派目标', '核心执行', '阶段结论']
+for (const label of V019_STEP_CHAIN_LABELS) {
+  ok(source.includes(label), `client.js 包含三段式环节执行链阶段标签「${label}」`)
+}
+
+const V019_INSPECT_JUMP_TOKENS = [
+  '跳转侧边聊天框打开该 Agent 会话',
+  'openAgentSessionInHostChat',
+  'agentSessionDetail',
+]
+for (const token of V019_INSPECT_JUMP_TOKENS) {
+  ok(source.includes(token), `client.js 包含双步透视与宿主聊天框跳转契约「${token}」`)
+}
+
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)
 
