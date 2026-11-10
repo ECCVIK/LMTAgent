@@ -1,0 +1,104 @@
+name: Publish to npm
+
+# 受信发布（Trusted Publishing / OIDC）：由 GitHub Actions 直接向 npm 发布，
+# 不需要任何长期 token，也不需要人工按安全密钥。
+#
+# 为什么用这个：npm 的 2FA 只支持 WebAuthn 安全密钥，而 CI 里没法"按一下密钥"。
+# 受信发布正是 npm 为这种场景提供的方案，同时也是双用途内容政策认可的
+# 「强制 2FA 的发布方式」。
+#
+# 启用前提（两处，都要做）：
+#   1) npmjs.com → 本包 → Settings → Trusted Publisher 绑定：
+#        Publisher: GitHub Actions
+#        Repository: Jueze-2019/dsh-redteam-mode
+#        Workflow filename: publish.yml        ← 必须与本文件名完全一致
+#        Environment: （留空）
+#   2) 本仓库 → Settings → Secrets and variables → Actions → Variables 新建：
+#        NPM_TRUSTED_PUBLISHING_ENABLED = true
+#      （没设这个变量时 workflow 会跳过发布，避免绑定还没配好就推 tag 导致失败）
+#
+# 发布方式：推一个与 package.json 版本一致的 tag，例如
+#   git tag v0.11.3 && git push origin v0.11.3
+
+on:
+  # 默认**不**在推 tag 时自动发布：本包是双用途，npm 规定必须"暂存 + 人工批准"，
+  # 而 CI 无法完成人工存在性证明（要按安全密钥），自动跑只会留下一次失败记录。
+  # 发版请按 docs/详细文档.md 第 7 章在能验证的机器上手动做，或手动触发本 workflow
+  # 生成"暂存"，再由人在浏览器里批准。
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write        # OIDC 换取 npm 的短期发布凭据，必须有
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/redteam-bundle
+    steps:
+      - uses: actions/checkout@v4
+
+      # 受信发布（OIDC）要求 npm CLI >= 11.5.1。
+      # 为什么不是 Node 22：Node 22.14 **自带 npm 10.9.2**（22.23.x 也只带 10.9.8），
+      # npm 10 没有 OIDC 交换逻辑 —— 它只会拿 .npmrc 里的占位 token 去发，
+      # registry 只看到一个未授权的 PUT，报出来就是那个极具误导性的
+      # `404 Not Found - PUT https://registry.npmjs.org/<pkg>`（像是"没绑定"，其实是客户端太老）。
+      # 而 `npm install -g npm@12` 又要求 Node >= 22.22.2，所以直接上 Node 24（自带 npm 11.19），
+      # 与 npm 官方文档的受信发布示例一致。Node 24 只用于发布，测试仍在本地/其他 CI 跑。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: 记录运行时版本（排查发布问题时先看这一行）
+        run: |
+          echo "node: $(node --version)"
+          echo "npm:  $(npm --version)（受信发布要求 >= 11.5.1）"
+
+      - name: 检查绑定开关
+        id: gate
+        run: |
+          if [ "${{ vars.NPM_TRUSTED_PUBLISHING_ENABLED }}" != "true" ]; then
+            echo "跳过：仓库变量 NPM_TRUSTED_PUBLISHING_ENABLED 未设为 true（受信发布还没配好）"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 版本号与 tag 必须一致，否则会出现"tag 是 v0.11.3、发出去的是别的版本"
+      - name: 校验 tag 与 package.json 版本一致
+        if: steps.gate.outputs.enabled == 'true' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag package.json=$pkg"
+          [ "$tag" = "$pkg" ] || { echo "::error::tag ($tag) 与 package.json ($pkg) 不一致"; exit 1; }
+
+      # 构建自检 + 全量回归（零依赖，不需要 npm install）
+      - name: 构建自检与全量测试
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          node tools/build.mjs --check
+          node tools/test-all.mjs
+
+      # 双用途包只能走暂存：直接发布（无论 token 还是受信发布）都会被 registry 拒：
+      #   "A credential that bypasses two-factor authentication cannot publish a dual-use
+      #    security package"（token）
+      #   "Direct trusted publishing cannot publish a dual-use security package"（OIDC）
+      # 官方给的出路就是 stage publish + 人工批准 —— 批准那一下必须由人在浏览器里按安全密钥，
+      # CI 代替不了（这正是"人工存在性证明"的意义）。
+      - name: 暂存到 npm（OIDC，人工批准后生效）
+        if: steps.gate.outputs.enabled == 'true'
+        run: npm stage publish --access public
+
+      - name: 提示下一步（暂存不校验 registry）
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          echo "已暂存 dsh-redteam-mode@$pkg。"
+          echo "双用途包暂存后必须由人在浏览器里按一次安全密钥批准才会真正发布，"
+          echo "所以此刻 registry 上还查不到它是正常的 —— 批准后用它确认："
+          echo "  npm view dsh-redteam-mode version"
+          echo "批准入口：npx npm@12 stage list → npx npm@12 stage approve <stage-id>"

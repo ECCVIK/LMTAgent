@@ -1,0 +1,69 @@
+# ── 依赖 ────────────────────────────────────────────────────────────────────
+node_modules/
+package-lock.json
+
+# ── 演练实体数据：绝不入库 ──────────────────────────────────────────────────
+# SQLite 事实库、证据、攻击文件、扫描结果都落在 $DSH_HOME/redteam/，
+# 若因调试被复制到仓库目录，这些规则保证它们不会被误提交。
+engagements/
+runs/
+toolkit/
+# 知识库是全局的（$DSH_HOME/redteam/knowledge.db + pocs/），同样不入库
+pocs/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.jsonl
+*.har
+*.pcap
+*.pcapng
+*.log
+
+# ── 打包产物 ────────────────────────────────────────────────────────────────
+*.tgz
+/dist/
+
+# ── 凭据与密钥 ──────────────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+secrets/
+# 下面三条只锚定仓库根：不锚定的话 `credential*` 会连
+# packages/redteam-bundle/skills/credential-attack.md（随包分发的技能）一起吞掉，
+# 让"文档说有、仓库里没有"的缺口出现在干净检出上。
+/secret*
+/token*
+/credential*
+
+# ── 编辑器 / 系统 ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# playwright-cli 运行产物（页面快照，可能含抓取内容）
+.playwright-cli/
+
+# 就地重构/升级时留的备份
+*.bak-*
+
+# ── 演练现场产物（在仓库根生成的，一律不入库）─────────────────────────────
+# 2026-09 巡检发现：根目录这几个文件是实战现场产物，绝不能进公开仓库。
+#   · runs_cgroup_targets.tsv —— 某靶标全部资产 IP/域名/端口清单（185 行真实数据）
+#   · ligolo-ng.yaml          —— 隧道配置，含 web.secret 与用户 argon2 口令哈希
+#   · screenshots/            —— 目标页面留证截图
+#   · reach_*.py              —— 走 SOCKS 隧道的连通性探测脚本（靶标可达性）
+#   · .sock.lock              —— 本机隧道运行时锁文件
+# 备份位置：$DSH_HOME/redteam/local-backup-<日期>/
+/runs_*.tsv
+/ligolo-ng.yaml
+/screenshots/
+/reach_*.py
+/.sock.lock

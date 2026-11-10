@@ -1,0 +1,96 @@
+{
+  "name": "dsh-redteam-mode",
+  "version": "0.15.1",
+  "description": "DSH RedTeam 模式：一句话拉起红队作战智能体（资产测绘 / 得分目标 / 报告 / POC 知识库），含六个角色、38 个原生技能（29 个随 npm 包）、常驻右侧控制台与一键自动更新",
+  "license": "MIT",
+  "contentPolicy": {
+    "class": "dual-use"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./store": "./lib/store.js",
+    "./ui": "./lib/ui.js",
+    "./tools": "./lib/tools.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "presets",
+    "skills/active-scan.md",
+    "skills/asset-correlation.md",
+    "skills/browser-automation.md",
+    "skills/campaign-planning.md",
+    "skills/cn-proxy-pool.md",
+    "skills/deepseek-web-intel.md",
+    "skills/dir-bruteforce.md",
+    "skills/fofa-recon.md",
+    "skills/fscan-intranet.md",
+    "skills/gogo-intranet.md",
+    "skills/kimi-webbridge.md",
+    "skills/netspy-recon.md",
+    "skills/nuclei-scan.md",
+    "skills/passive-recon.md",
+    "skills/recon-pipeline.md",
+    "skills/redteam-setup.md",
+    "skills/score-coverage.md",
+    "skills/specialist-paths.md",
+    "skills/web-fingerprint.md",
+    "skills/ad-attack.md",
+    "skills/ai-agent-attack.md",
+    "skills/api-data-exfil.md",
+    "skills/c2-infra.md",
+    "skills/cloud-k8s.md",
+    "skills/mobile-code-recon.md",
+    "skills/network-device.md",
+    "skills/oob-verify.md",
+    "skills/opsec-hygiene.md",
+    "skills/supply-chain.md",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "DISCLOSURE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek-harness-plugin",
+    "redteam",
+    "红队",
+    "攻防演练",
+    "pentest",
+    "security",
+    "asset-management",
+    "knowledge-base"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  },
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "prepublishOnly": "node tools/build.mjs --check && node tools/test-all.mjs",
+    "test": "node tools/test-all.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ECCVIK/lmtagent.git",
+    "directory": "packages/redteam-bundle"
+  },
+  "homepage": "https://github.com/ECCVIK/lmtagent",
+  "bugs": {
+    "url": "https://github.com/ECCVIK/lmtagent/issues"
+  },
+  "author": "ECCVIK",
+  "engines": {
+    "dsh": ">=0.1.0-rc.6"
+  }
+}
