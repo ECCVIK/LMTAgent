@@ -46,16 +46,22 @@ const write = (rel, text) => {
    无需改写导入路径 —— 只要把这 5 个文件都放进 lib/ 即可。 */
 const core = read('redteam-store/lib/core.js')
 write('lib/store-core.js', core)
-/* 1a) core.js 依赖的模块（纯函数与 PostgreSQL 引擎，零外部依赖） */
-for (const name of ['ip-utils', 'schema', 'validate', 'score-rules', 'report-replay', 'settings', 'pg-engine']) {
-  write('lib/' + name + '.js', read('redteam-store/lib/' + name + '.js'))
+/* 1a) core.js 依赖的模块（纯函数、提示词与 PostgreSQL 引擎，零外部依赖） */
+for (const name of ['ip-utils', 'schema', 'validate', 'score-rules', 'report-replay', 'settings', 'pg-engine', 'prompts']) {
+  if (existsSync(join(packagesDir, 'redteam-store/lib/' + name + '.js'))) {
+    write('lib/' + name + '.js', read('redteam-store/lib/' + name + '.js'))
+  }
 }
 
 /* 1b) 技能可用性判定与「不可用修复方法」：tools 与面板共用（零依赖，原样拷） */
 const skillAvailability = read('redteam-store/lib/skill-availability.js')
 write('lib/skill-availability.js', skillAvailability)
 write('lib/skill-fixes.js', read('redteam-store/lib/skill-fixes.js'))
-const storeIndex = read('redteam-store/lib/index.js').replace("from './core.js'", "from './store-core.js'")
+if (existsSync(join(packagesDir, 'redteam-tools/lib/concurrency.js'))) {
+  write('lib/concurrency.js', read('redteam-tools/lib/concurrency.js'))
+}
+const storeIndex = read('redteam-store/lib/index.js')
+  .replace("from './core.js'", "from './store-core.js'")
 write('lib/store.js', storeIndex)
 
 /* 2) 控制台 host 半侧：把跨包的 core 引用改成本地 store-core */
@@ -65,6 +71,8 @@ const uiIndex = read('redteam-ui/lib/index.js')
   .replace("from '../../redteam-store/lib/settings.js'", "from './settings.js'")
   .replace("from '../../redteam-store/lib/pg-engine.js'", "from './pg-engine.js'")
   .replace("from '../../redteam-store/lib/skill-fixes.js'", "from './skill-fixes.js'")
+  .replace("from '../../redteam-store/lib/prompts.js'", "from './prompts.js'")
+  .replace("from '../../redteam-tools/lib/concurrency.js'", "from './concurrency.js'")
 write('lib/ui.js', uiIndex)
 
 /* 3) 浏览器半侧：拷过来，并把注册 id 改成**本包的包名**。
@@ -106,6 +114,8 @@ const tools = read('redteam-tools/lib/index.js')
   .replace("from '../../redteam-store/lib/settings.js'", "from './settings.js'")
   .replace("from '../../redteam-store/lib/pg-engine.js'", "from './pg-engine.js'")
   .replace("from '../../redteam-store/lib/skill-fixes.js'", "from './skill-fixes.js'")
+  .replace("from '../../redteam-store/lib/prompts.js'", "from './prompts.js'")
+  .replace("from '../../redteam-tools/lib/concurrency.js'", "from './concurrency.js'")
 write('lib/tools.js', tools)
 
 /* 5) 预设：源码是仓库根的 `preset/agent.cordis.yml`（指挥者）与
@@ -330,9 +340,10 @@ if (!isScriptShipped('redteam-setup.sh')) {
 /* 校验：生成的 lib 里不允许再出现跨包的相对路径 */
 const generated = [
   'lib/store-core.js', 'lib/ip-utils.js', 'lib/schema.js', 'lib/validate.js', 'lib/score-rules.js',
-  'lib/report-replay.js',
+  'lib/report-replay.js', 'lib/pg-engine.js',
   'lib/skill-availability.js', 'lib/skill-fixes.js', 'lib/settings.js', 'lib/store.js', 'lib/ui.js', 'lib/tools.js', 'lib/client.js',
-]
+  'lib/prompts.js', 'lib/concurrency.js',
+].filter((rel) => existsSync(join(pkgRoot, rel)))
 const offenders = []
 for (const rel of generated) {
   const text = readFileSync(join(pkgRoot, rel), 'utf8')
@@ -350,6 +361,10 @@ if (!existsSync(join(pkgRoot, 'presets/redteam/agent.cordis.yml'))) {
   console.error('✗ 预设未生成（目录预设给 DSH < 0.1.7，声明行写在 cordis.patch.yml 里）')
   process.exit(1)
 }
+if (!preset.includes('maxDepth: 3') || !workerPreset.includes('maxDepth: 3')) {
+  console.error('✗ 主预设或执行角色预设未启用递归子代理委派（maxDepth: 3）')
+  process.exit(1)
+}
 const patchGenerated = readFileSync(join(pkgRoot, 'cordis.patch.yml'), 'utf8')
 if (!patchGenerated.includes('id: preset-redteam')) {
   console.error('✗ cordis.patch.yml 里没有生成出 preset-redteam 声明行')
@@ -365,7 +380,7 @@ if (CHECK) {
     for (const d of drift) console.error('   ' + d)
     process.exit(1)
   }
-  console.log(`✓ 生成物与源码同步（lib/ ${generated.length} 个文件、预设 7 份、cordis.patch.yml 七条声明行、技能 ${skills} 个）`)
+  console.log(`✓ 生成物与源码同步（lib/ ${generated.length} 个文件、预设 9 份、cordis.patch.yml 九条声明行、技能 ${skills} 个）`)
   process.exit(0)
 }
-console.log(`✓ dsh-redteam-mode 已生成：lib/ ${generated.length} 个文件（含 core 与报告拆出的模块）、预设 7 份（指挥者 + 执行角色 + 5 个角色变体）+ cordis.patch.yml 七条声明行、技能 ${skills} 个、安装脚本 ${setupCopied ? '1 个' : '缺失'}`)
+console.log(`✓ dsh-redteam-mode 已生成：lib/ ${generated.length} 个文件（含 core、prompts、concurrency 与报告模块）、预设 9 份（指挥者 + 执行角色 + 7 个角色变体，支持 maxDepth: 3 递归子代理 + thinking: low 默认）+ cordis.patch.yml 九条声明行、技能 ${skills} 个、安装脚本 ${setupCopied ? '1 个' : '缺失'}`)

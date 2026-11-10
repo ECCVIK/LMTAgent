@@ -124,8 +124,8 @@ for (const wanted of ['persona', 'redteam-tools', 'skill-filesystem', 'delegatio
   ok(declRows.includes(wanted), `关键顶层行在：${wanted}`)
 }
 /* 委派行嵌在 `delegation` 组里（缩进更深），单独确认没有被平铺/丢掉 */
-ok(/^\s+- id: tool-subagent$/m.test(decl) && /maxDepth: 1/.test(decl),
-  '组内的 tool-subagent 行与其 maxDepth=1 硬约束随声明行一起带过来')
+ok(/^\s+- id: tool-subagent$/m.test(decl) && /maxDepth: 3/.test(decl),
+  '组内的 tool-subagent 行与其 maxDepth=3 递归派发配置随声明行一起带过来')
 ok(/agentPreset: redteam-worker/.test(decl), 'tool-subagent 用 agentPreset 指向执行角色预设')
 ok(/allowedAgentPresets:/.test(decl) && ['recon','designer','assess','vuln-scan','exploit','qa','internal'].every((r) => decl.includes('redteam-worker-' + r)),
   '主预设列出 7 个按角色裁剪的执行预设（recon/designer/assess/vuln-scan/exploit/qa/internal）')
@@ -136,13 +136,12 @@ for (const r of ['recon','designer','assess','vuln-scan','exploit','qa','interna
     '角色预设文件随包：worker-' + r + '.cordis.yml')
 }
 
-/* 执行角色预设（redteam-worker）必须真的没有委派工具：它是子智能体"连看都看不到"的
-   唯一保证。DSH 0.2.1 删除了 toolFilter，这一条取代了旧的 toolFilter.deny 断言。 */
+/* 执行角色预设（redteam-worker）同样支持递归派发子智能体（maxDepth: 3，默认 low 思考模式）解决局部小问题 */
 const workerDeclAt = decl.indexOf('- id: preset-redteam-worker')
 ok(workerDeclAt > 0, '找得到 preset-redteam-worker 声明行')
 const workerDecl = workerDeclAt > 0 ? decl.slice(workerDeclAt) : ''
-ok(workerDeclAt > 0 && !/name: '@deepseek-ai\/dsh-tool-subagent'/.test(workerDecl),
-  '执行角色预设不挂任何 dsh-tool-subagent 行（subagent / fork / codex / claude-code 都没有）')
+ok(workerDeclAt > 0 && /name: '@deepseek-ai\/dsh-tool-subagent'/.test(workerDecl) && /maxDepth: 3/.test(workerDecl),
+  '执行角色预设挂载 dsh-tool-subagent（支持 maxDepth=3 递归子智能体派发）')
 ok(workerDeclAt > 0 && !/name: '@deepseek-ai\/dsh-tool-workflow'/.test(workerDecl)
   && !/name: '@deepseek-ai\/dsh-tool-ralph'/.test(workerDecl),
   '执行角色预设不挂 workflow / ralph')
@@ -170,11 +169,11 @@ ok(!preset.includes('/home/'), '预设里没有本机绝对路径')
 ok(!/^\s+toolFilter:/m.test(preset), '主预设不再写 toolFilter（0.2.1 的 apply() 会直接抛错）')
 ok(/agentPreset: redteam-worker/.test(preset), '主预设用 agentPreset 把子会话交给 redteam-worker')
 
-/* 执行角色的源码预设：只挂执行侧工具，委派工具一个都没有。 */
+/* 执行角色的源码预设：支持递归委派子智能体（maxDepth: 3，thinking: low）解决局部小问题。 */
 const workerSource = readFileSync(join(root, '..', '..', 'preset', 'worker.cordis.yml'), 'utf8')
 ok(/红队（RedTeam）作战的\*\*执行角色\*\*智能体/.test(workerSource), '执行角色人设在')
 ok(/角色系统提示词/.test(workerSource) && /严格按那段角色职责执行/.test(workerSource), '执行角色人设要求按 redteam_role_prompt 的职责执行')
-ok(/叶子节点/.test(workerSource), '执行角色人设写明自己是叶子节点')
+ok(/thinking: low/.test(workerSource) && /maxDepth: 3/.test(workerSource), '执行角色人设写明默认 low 思考模式且支持 maxDepth=3 递归派发')
 ok(/技能路由/.test(workerSource) && /外部工具\/技能/.test(workerSource), '执行角色人设有技能路由与外部能力入口')
 ok(/curl \| bash/.test(workerSource), '执行角色人设禁止无法审阅的 curl|bash 安装')
 ok(/作战优先级/.test(workerSource) && /P0/.test(workerSource) && /三要素/.test(workerSource), '执行角色人设写入 P0 进内网 / P1 三要素优先级')
@@ -182,9 +181,9 @@ ok(/资产准入/.test(workerSource) && /T0/.test(workerSource) && /T2/.test(wor
 for (const wanted of ['persona', 'redteam-tools', 'skill-filesystem', 'tool-skill', 'tool-bash', 'tool-fs', 'tool-web']) {
   ok(new RegExp('^- id: ' + wanted + '$', 'm').test(workerSource), `执行角色预设包含：${wanted}`)
 }
-ok(!/^- id: delegation$/m.test(workerSource), '执行角色预设没有 delegation 组')
-ok(!/^- id: tool-subagent$/m.test(workerSource), '执行角色预设没有 subagent 工具行')
-ok(!/name: '@deepseek-ai\/dsh-tool-subagent'/.test(workerSource), '执行角色预设不引用 dsh-tool-subagent')
+ok(/^- id: delegation$/m.test(workerSource), '执行角色预设包含 delegation 组（支持递归派发）')
+ok(/^\s+- id: tool-subagent$/m.test(workerSource), '执行角色预设包含 subagent 工具行')
+ok(/name: '@deepseek-ai\/dsh-tool-subagent'/.test(workerSource), '执行角色预设引用 dsh-tool-subagent')
 ok(!/name: '@deepseek-ai\/dsh-tool-workflow'/.test(workerSource) && !/name: '@deepseek-ai\/dsh-tool-ralph'/.test(workerSource),
   '执行角色预设不引用 workflow / ralph')
 ok(!workerSource.includes('{{REDTEAM_SKILLS_DIR}}'), '执行角色源预设不含落地占位符（由 build 注入）')
@@ -194,13 +193,13 @@ ok(!workerSource.includes('/home/'), '执行角色预设里没有本机绝对路
 console.log('— 子智能体委派的硬约束（agentPreset / maxDepth）')
 {
   /* DSH 0.2.1 起 tool-subagent 移除了 persona / toolFilter（写在配置里 apply() 直接抛错）。
-     现在子会话的人设与工具集由独立的 redteam-worker 预设提供；maxDepth: 1 仍作二道保险。 */
+     现在子会话的人设与工具集由独立的 redteam-worker 预设提供；maxDepth: 3 允许递归拆解微任务。 */
   const subagentRow = /- id: tool-subagent\n([\s\S]*?)(?=\n    - id: )/.exec(preset)
   ok(subagentRow !== null, '找得到 tool-subagent 行')
   if (subagentRow !== null) {
     const row = subagentRow[1]
     const depth = /maxDepth: (\d+)/.exec(row)
-    ok(depth !== null && Number(depth[1]) === 1, 'maxDepth = 1（子智能体不得再往下派发）')
+    ok(depth !== null && Number(depth[1]) === 3, 'maxDepth = 3（允许子智能体递归派发解决局部小问题）')
     ok(/agentPreset: redteam-worker/.test(row), '子会话选用 redteam-worker 预设（人设 + 执行侧工具集）')
     ok(!/^\s+toolFilter:/m.test(row), '不再写 toolFilter（0.2.1 会直接抛错）')
     ok(!/^\s+persona:/m.test(row), '不再写 persona（0.2.1 会直接抛错）')

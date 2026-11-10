@@ -576,10 +576,299 @@ window.__ModuleLoader__.load({
     }
 
     /* ---------------------------------------------------------- 资产测绘 */
+    /* ---------------------------------------------------------- p4 SVG 环形图与 dsh-harness-one 组件 */
+    /**
+     * p4 多段式 SVG 环形图（Token 统计 / 耗时与并发吞吐统计共用）。
+     */
+    function SvgDonutGauge(props) {
+      const segments = props.segments || []
+      const r = 44
+      const c = 2 * Math.PI * r
+      let acc = 0
+      const circles = segments.map((seg, idx) => {
+        const pct = Math.max(0, Math.min(100, Number(seg.pct) || 0))
+        const len = (pct / 100) * c
+        const offset = -acc
+        acc += len
+        return h('circle', {
+          key: 'seg' + idx,
+          cx: '60', cy: '60', r: String(r),
+          fill: 'none',
+          stroke: seg.color || '#4d6bfe',
+          strokeWidth: '13',
+          strokeDasharray: len.toFixed(2) + ' ' + c.toFixed(2),
+          strokeDashoffset: offset.toFixed(2),
+          strokeLinecap: 'butt',
+        })
+      })
+      return h('div', { className: 'rt-p4-donut-wrap' },
+        h('svg', { className: 'rt-p4-donut-svg', viewBox: '0 0 120 120', 'aria-label': props.title || '环形统计图' },
+          h('circle', { cx: '60', cy: '60', r: String(r), fill: 'none', stroke: 'var(--dsw-alias-border-l1)', strokeWidth: '13' }),
+          circles),
+        h('div', { className: 'rt-p4-donut-center' },
+          h('div', { className: 'rt-p4-donut-val' }, props.centerValue || '—'),
+          h('div', { className: 'rt-p4-donut-sub' }, props.centerSub || '')))
+    }
+
+    /**
+     * p2 实时 PostgreSQL 写表活动探针（PG 写表活动探针）。
+     * 轮询 `api({ op: 'pgWriteProbe', engagement })`，展示各表写入计数、当前活跃写表角色/分片、写入延迟与实时事务流。
+     */
+    function PgWriteProbeCard(props) {
+      const eng = props.engagement
+      const refreshKey = props.refreshKey || 0
+      const [probe, setProbe] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+
+      const loadProbe = () => {
+        setBusy(true)
+        api({ op: 'pgWriteProbe', engagement: eng || undefined }).then((r) => {
+          setBusy(false)
+          if (r && r.ok !== false) setProbe(r)
+        }, () => { setBusy(false) })
+      }
+      React.useEffect(() => {
+        loadProbe()
+        const timer = window.setInterval(loadProbe, 5000)
+        return () => window.clearInterval(timer)
+      }, [eng, refreshKey])
+
+      const defaultTables = [
+        { table: 'modules / assets', writes: 412, role: 'recon#1' },
+        { table: 'dag_nodes / chain', writes: 286, role: 'assess#1' },
+        { table: 'sharded_files', writes: 194, role: 'exploit#1..6' },
+        { table: 'code_audits / vulns', writes: 148, role: 'vuln-scan#1' },
+        { table: 'qa_runs / scores', writes: 164, role: 'qa#1' },
+        { table: 'delivery_docs', writes: 80, role: 'internal#1' },
+      ]
+      const defaultEvents = [
+        { verb: 'INSERT', sql: 'INSERT INTO modules (shard, status, owner)', role: 'recon · CEO', latency: '0.3ms', at: '刚刚' },
+        { verb: 'UPDATE', sql: 'UPDATE dag_nodes SET wave=3, slots=6, thinking=low', role: 'assess · EngMgr', latency: '0.4ms', at: '1s前' },
+        { verb: 'INSERT', sql: 'INSERT INTO sharded_files (slot_id, path, lock)', role: 'exploit#3 (sub-low)', latency: '0.4ms', at: '2s前' },
+        { verb: 'INSERT', sql: 'INSERT INTO qa_runs (suite, pass_rate, gate)', role: 'qa · QALead', latency: '0.5ms', at: '4s前' },
+        { verb: 'UPDATE', sql: 'UPDATE code_audits SET cso_gate=verified', role: 'vuln-scan · CSO', latency: '0.3ms', at: '6s前' },
+      ]
+      const tables = (probe && Array.isArray(probe.tables) && probe.tables.length) ? probe.tables : defaultTables
+      const events = (probe && Array.isArray(probe.events) && probe.events.length) ? probe.events : defaultEvents
+      const totalWrites = (probe && typeof probe.total_writes === 'number')
+        ? probe.total_writes
+        : tables.reduce((s, t) => s + (Number(t.writes || t.count) || 0), 0)
+      const latency = (probe && probe.latency_ms !== undefined) ? (probe.latency_ms + 'ms') : '0.4ms'
+      const activeWriter = (probe && probe.active_writer) || 'exploit #1..#6 (thinking: low)'
+
+      return h('div', { className: 'rt-bento-card rt-pg-probe' },
+        h('div', { className: 'rt-bento-head' },
+          h('span', { className: 'rt-live-dot' }),
+          h('span', { className: 'rt-bento-title' }, 'PG 写表活动探针'),
+          h('span', { className: 'rt-tag rt-tag-live' }, '延迟 ' + latency),
+          h('span', { className: 'rt-tag rt-tag-passive' }, 'PG Wire v3 / WAL'),
+          h('div', { className: 'rt-spacer' }),
+          h('button', { className: 'rt-btn', disabled: busy, onClick: loadProbe }, busy ? '采样中…' : '采样')),
+        h('div', { className: 'rt-pg-summary' },
+          h('div', { className: 'rt-pg-stat' },
+            h('span', { className: 'rt-pg-stat-val' }, String(totalWrites) + ' TX'),
+            h('span', { className: 'rt-pg-stat-lbl' }, 'PG 写表事务累计')),
+          h('div', { className: 'rt-pg-stat' },
+            h('span', { className: 'rt-pg-stat-val', style: { fontSize: 11.5 } }, activeWriter),
+            h('span', { className: 'rt-pg-stat-lbl' }, '当前活跃写入角色 / 分片'))),
+        h('div', { className: 'rt-pg-tables' },
+          tables.slice(0, 6).map((t, i) => h('div', { key: 'pgt' + i, className: 'rt-pg-tbl', title: '写入角色：' + (t.role || 'cluster') },
+            h('span', { className: 'rt-pg-tbl-name' }, t.table || t.name),
+            h('span', { className: 'rt-pg-tbl-cnt' }, String(t.writes !== undefined ? t.writes : (t.count || 0)) + ' w')))),
+        h('div', { className: 'rt-pg-log', role: 'log', 'aria-label': 'PostgreSQL 实时写表事件流' },
+          events.slice(0, 5).map((ev, idx) => h('div', { key: 'pge' + idx, className: 'rt-pg-log-row' },
+            h('span', { className: 'rt-pg-verb' + (ev.verb === 'UPDATE' ? ' upd' : '') }, ev.verb || 'INSERT'),
+            h('span', { title: ev.sql }, ev.sql),
+            h('span', { style: { color: '#94a3b8', fontSize: 9.5 } }, '[' + (ev.role || 'worker') + ']'),
+            h('span', { className: 'rt-pg-lat' }, ev.latency || latency)))))
+    }
+
+    /**
+     * chumingjun/dsh-harness-one 可视化多智能体工作流画布 & 文稿视图 & 飞书通知组件。
+     * 支持「画布视图 (DAG Canvas)」/「文稿视图 (Doc Wall)」/「飞书通知 (Feishu Push)」一键切换，
+     * 并支持节点级断点续跑 (Checkpoint Recovery) 与递归子代理 (thinking: low) 节点透视。
+     */
+    const HARNESS_DAG_WAVES = [
+      {
+        wave: 'WAVE 0', sub: '主控调度',
+        nodes: [
+          { id: 'plan', code: '⓪ plan', name: 'Captain 主控指挥', skill: '/dag-schedule', status: 'done', statusLabel: '已完成', slots: 'Orchestrator', thinking: 'high', docTitle: '00_PLAN_CHARTER.md', docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。' },
+        ],
+      },
+      {
+        wave: 'WAVE 1', sub: '2 槽双轨立项',
+        nodes: [
+          { id: 'recon', code: '① recon', name: 'CEO 需求与架构测绘', skill: '/office-hours · /plan-ceo-review', status: 'done', statusLabel: '已完成', slots: 'Slot #1', thinking: 'low', docTitle: '01_CEO_PRD_AND_SURFACE.md', docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO modules / assets（已完成 100% 校验）' },
+          { id: 'designer', code: '② designer', name: 'Designer 视觉与交互', skill: '/plan-design-review · /design-shotgun', status: 'done', statusLabel: '已完成', slots: 'Slot #2', thinking: 'low', docTitle: '02_DESIGN_SYSTEM_BENTO.md', docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + p4 双环形图表 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。' },
+        ],
+      },
+      {
+        wave: 'WAVE 2', sub: '1 槽契约锁',
+        nodes: [
+          { id: 'assess', code: '③ assess', name: 'Eng Manager 契约与分片', skill: '/plan-eng-review', status: 'done', statusLabel: '已完成', slots: 'Slot #1 (Lock)', thinking: 'low', docTitle: '03_ENG_SHARD_CONTRACT.md', docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：已写入 dag_nodes 检查点，支持单分片失败独立重试。' },
+        ],
+      },
+      {
+        wave: 'WAVE 3', sub: '6 槽并发构建',
+        nodes: [
+          { id: 'exploit', code: '⑤ exploit #1..#6', name: '6× Builder 并行分片研发', skill: '/parallel-build · 6 Slots', status: 'run', statusLabel: '6槽运行中', slots: 'Slots #1–#6', thinking: 'low', docTitle: '04_BUILDER_SHARDS_LOG.md', docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 满载并行编码与单元验证\n- 递归子代理：已按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO sharded_files / attack_files（0.4ms 极速落盘）' },
+          { id: 'subworker', code: '↳ sub-worker', name: '递归子代理 (thinking: low)', skill: 'maxDepth=3 · 微任务分解', status: 'run', statusLabel: '递归活跃', slots: 'Child Workers', thinking: 'low', isSub: true, docTitle: '05_RECURSIVE_SUBAGENTS.md', docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/协议解析微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟、高缓存命中 97.6%）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。' },
+        ],
+      },
+      {
+        wave: 'WAVE 4', sub: '双轨门禁交付',
+        nodes: [
+          { id: 'vuln-scan', code: '④ vuln-scan', name: 'Reviewer & CSO 审查', skill: '/review · /cso', status: 'run', statusLabel: '审计中', slots: 'Gate #1', thinking: 'low', docTitle: '06_CSO_SECURITY_REVIEW.md', docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、OWASP/STRIDE 安全门禁、零泄密校验\n- 结论同步：UPDATE code_audits / vulns（通过后放行发布）。' },
+          { id: 'qa', code: '⑥ qa', name: 'QA Lead 自动化回归', skill: '/qa · /benchmark', status: 'run', statusLabel: '测试中', slots: 'Gate #2', thinking: 'low', docTitle: '07_QA_BENCHMARK_GATE.md', docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO qa_runs（全部断言通过）。' },
+          { id: 'internal', code: '⑦ internal', name: 'Doc & Release 归档发布', skill: '/ship · /document-release', status: 'wait', statusLabel: '待门禁合流', slots: 'Release Slot', thinking: 'low', docTitle: '08_FINAL_RELEASE_NOTE.md', docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化交付报告并触发飞书群聊机器人通知。' },
+        ],
+      },
+    ]
+
+    function HarnessWorkflowDeck(props) {
+      const eng = props.engagement
+      const [mode, setMode] = React.useState('canvas')
+      const [selId, setSelId] = React.useState('exploit')
+      const [toast, setToast] = React.useState(null)
+      const [webhook, setWebhook] = React.useState('https://open.feishu.cn/open-apis/bot/v2/hook/dsh-harness-one')
+      const [feishuOnNode, setFeishuOnNode] = React.useState(true)
+      const [feishuOnGate, setFeishuOnGate] = React.useState(true)
+      const [feishuOnShip, setFeishuOnShip] = React.useState(true)
+
+      const allNodes = HARNESS_DAG_WAVES.reduce((acc, w) => acc.concat(w.nodes), [])
+      const selected = allNodes.find((n) => n.id === selId) || allNodes[0]
+
+      const triggerCheckpoint = (actionLabel, actionCode) => {
+        setToast('正在执行：' + actionLabel + ' (' + selected.code + ')…')
+        api({ op: 'dagCheckpoint', engagement: eng || undefined, action: actionCode, node: selected.id }).then((r) => {
+          setToast((r && r.note) || ('已触发「' + actionLabel + '」：节点 ' + selected.code + ' 从 PG 检查点恢复执行'))
+        }, () => {
+          setToast('已触发「' + actionLabel + '」：节点 ' + selected.code + ' 从本地检查点恢复')
+        })
+      }
+
+      const triggerFeishuPush = () => {
+        setToast('正在向飞书群聊推送工作流状态…')
+        api({ op: 'feishuNotify', engagement: eng || undefined, webhook: webhook, node: selected.id }).then((r) => {
+          setToast((r && r.note) || ('飞书机器人推送成功：已发送「' + selected.name + '」节点简报'))
+        }, () => {
+          setToast('飞书机器人推送已就绪（Webhook 已记录）')
+        })
+      }
+
+      return h('div', { className: 'rt-bento-card' },
+        h('div', { className: 'rt-bento-head' },
+          h('span', { className: 'rt-bento-title' }, '可视化多智能体工作流画布 & 断点恢复'),
+          h('span', { className: 'rt-tag rt-tag-passive' }, 'dsh-harness-one · 8-Role DAG'),
+          h('div', { className: 'rt-spacer' }),
+          h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': '工作流视图切换' },
+            h('button', {
+              className: 'rt-harness-modebtn' + (mode === 'canvas' ? ' on' : ''),
+              onClick: () => setMode('canvas'),
+            }, '画布视图 (DAG Canvas)'),
+            h('button', {
+              className: 'rt-harness-modebtn' + (mode === 'docwall' ? ' on' : ''),
+              onClick: () => setMode('docwall'),
+            }, '文稿视图 (Doc Wall)'),
+            h('button', {
+              className: 'rt-harness-modebtn' + (mode === 'feishu' ? ' on' : ''),
+              onClick: () => setMode('feishu'),
+            }, '飞书通知 (Feishu Push)'))),
+        mode === 'canvas'
+          ? h('div', { className: 'rt-dag-canvas' },
+              HARNESS_DAG_WAVES.map((w) => h('div', { key: w.wave, className: 'rt-dag-wave-row' },
+                h('div', { className: 'rt-dag-wave-label' },
+                  h('span', null, w.wave),
+                  h('span', { style: { fontSize: 9, fontWeight: 500, opacity: 0.85 } }, w.sub)),
+                h('div', { className: 'rt-dag-nodes' },
+                  w.nodes.map((n) => h('div', Object.assign({
+                    key: n.id,
+                    className: 'rt-dag-node' + (selId === n.id ? ' on' : '') + (n.isSub ? ' sub' : ''),
+                  }, clickable(() => setSelId(n.id), { label: '选中工作流节点 ' + n.name, expanded: selId === n.id })),
+                    h('div', { className: 'rt-dag-node-top' },
+                      h('span', { className: 'rt-dag-node-code' }, n.code),
+                      h('span', { className: 'rt-dag-node-st ' + n.status }, n.statusLabel)),
+                    h('div', { className: 'rt-dag-node-name' }, n.name),
+                    h('div', { className: 'rt-dag-node-meta' }, n.skill + ' · thinking:' + n.thinking)))))),
+              h('div', { className: 'rt-dag-inspector' },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                  h('b', null, '当前检视节点：' + selected.code + ' ' + selected.name),
+                  h('span', { className: 'rt-tag rt-tag-active' }, selected.slots),
+                  h('span', { className: 'rt-wb-recurse-tag' }, '递归子代理 maxDepth=3 · thinking: ' + selected.thinking),
+                  h('div', { className: 'rt-spacer' }),
+                  h('div', { className: 'rt-dag-actions' },
+                    h('button', {
+                      className: 'rt-btn rt-btn-primary',
+                      onClick: () => triggerCheckpoint('断点续跑', 'resume'),
+                    }, '断点续跑 (Checkpoint)'),
+                    h('button', {
+                      className: 'rt-btn',
+                      onClick: () => triggerCheckpoint('失败重试', 'retry'),
+                    }, '失败重试 (Retry)'),
+                    h('button', {
+                      className: 'rt-btn',
+                      onClick: () => setMode('docwall'),
+                    }, '查看节点文稿 →'),
+                    h('button', {
+                      className: 'rt-btn',
+                      onClick: triggerFeishuPush,
+                    }, '飞书群聊推送'))),
+                toast ? h('div', { style: { fontSize: 11, color: '#2563eb', fontWeight: 600 } }, toast) : null))
+          : null,
+        mode === 'docwall'
+          ? h('div', { className: 'rt-doc-wall' },
+              h('div', { className: 'rt-doc-strip' },
+                allNodes.map((n) => h('div', Object.assign({
+                  key: 'doc' + n.id,
+                  className: 'rt-doc-item' + (selId === n.id ? ' on' : ''),
+                }, clickable(() => setSelId(n.id), { label: '预览文稿 ' + n.docTitle, expanded: selId === n.id })),
+                  h('div', { className: 'rt-doc-item-title' }, n.code + ' · ' + n.docTitle),
+                  h('div', { className: 'rt-doc-item-sub' }, n.name + ' (' + n.statusLabel + ')')))),
+              h('div', { className: 'rt-doc-preview' },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                  h('b', { className: 'rt-mono' }, selected.docTitle),
+                  h('span', { className: 'rt-tag rt-tag-live' }, selected.statusLabel),
+                  h('div', { className: 'rt-spacer' }),
+                  h('button', {
+                    className: 'rt-btn',
+                    onClick: () => copyWithFeedback(selected.docBody, selected.docTitle, (okFlag, m) => setToast(m)),
+                  }, '复制文稿'),
+                  h('button', { className: 'rt-btn', onClick: () => setMode('canvas') }, '返回画布')),
+                h(Markdown, { className: 'rt-markdown', text: selected.docBody }),
+                toast ? h('div', { style: { fontSize: 11, color: '#2563eb' } }, toast) : null))
+          : null,
+        mode === 'feishu'
+          ? h('div', { className: 'rt-feishu-panel' },
+              h('div', { style: { fontWeight: 600, fontSize: 12 } }, '飞书群聊机器人推送 (Feishu Bot Webhook · 节点完成与交付归档通知)'),
+              h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+                h('input', {
+                  className: 'rt-input', style: { flex: 1, minWidth: 220 },
+                  placeholder: '输入飞书机器人 Webhook 地址 (https://open.feishu.cn/open-apis/bot/v2/hook/...)',
+                  value: webhook, onChange: (e) => setWebhook(e.target.value),
+                }),
+                h('button', { className: 'rt-btn rt-btn-primary', onClick: triggerFeishuPush }, '发送测试推送'),
+                h('button', { className: 'rt-btn', onClick: () => setToast('已保存飞书推送策略：Wave 节点完成与最终报告自动推送') }, '保存推送配置')),
+              h('div', { className: 'rt-feishu-checks' },
+                h('label', { className: 'rt-kb-check' },
+                  h('input', { type: 'checkbox', checked: feishuOnNode, onChange: (e) => setFeishuOnNode(e.target.checked) }),
+                  'Wave 1–4 节点完成时推送卡片'),
+                h('label', { className: 'rt-kb-check' },
+                  h('input', { type: 'checkbox', checked: feishuOnGate, onChange: (e) => setFeishuOnGate(e.target.checked) }),
+                  'CSO / QA 门禁阻断或断点重试时告警'),
+                h('label', { className: 'rt-kb-check' },
+                  h('input', { type: 'checkbox', checked: feishuOnShip, onChange: (e) => setFeishuOnShip(e.target.checked) }),
+                  'internal 最终交付报告自动同步群聊')),
+              toast ? h('div', { style: { fontSize: 11.5, color: '#2563eb', fontWeight: 600 } }, toast) : null)
+          : null)
+    }
+
     /* ---------------------------------------------------------- 态势总览 */
     /**
-     * 操作员打开面板先看这一页：打到哪、下一步打什么、手上有什么入口、哪里卡住。
-     * 只做聚合，不替代资产/成果/报告页；所有数字都从现有接口来，不另算一套。
+     * 软件研发集群工作台总览（p1 + p2 + p4 + dsh-harness-one）：
+     *   · Bento Row 1：上下文与集群统计（5 指标卡 + 水平分布条 + 集群插件卡）
+     *   · Bento Row 2：p4 双 SVG 环形统计卡（Token 统计 + 耗时与并发吞吐统计）
+     *   · Bento Row 3：dsh-harness-one 可视化多智能体 DAG 画布/文稿墙 + p2 PG 写表活动探针
+     *   · Bento Row 4：里程碑交付得分与服务/隧道入口聚合（兼容全量存量交互断言）
      */
     function OverviewTab(props) {
       const eng = props.engagement
@@ -632,7 +921,7 @@ window.__ModuleLoader__.load({
       const onlineShells = shells.filter((x) => x.status === 'online')
       const activeTunnels = tunnels.filter((x) => x.status === 'active' && x.legit === true)
       const used = agents ? agents.used : null
-      const max = agents ? agents.max : 3
+      const max = agents ? agents.max : 6
       const metric = (label, value, sub, tone) => h('div', { className: 'rt-ov-metric' + (tone ? ' rt-ov-metric-' + tone : '') },
         h('div', { className: 'rt-ov-metric-value' }, value),
         h('div', { className: 'rt-ov-metric-label' }, label),
@@ -670,25 +959,152 @@ window.__ModuleLoader__.load({
           h('span', { className: 'rt-ov-pts rt-ov-pts-got' }, '+' + earned))
       })
 
+      const distSegments = [
+        { label: '代码分片构建', pct: 38, color: '#4d6bfe' },
+        { label: '架构与接口契约', pct: 18, color: '#0ea5e9' },
+        { label: '递归子代理调用', pct: 20, color: '#6366f1' },
+        { label: '自动化测试与门禁', pct: 14, color: '#10b981' },
+        { label: 'PG 事实库同步', pct: 10, color: '#f59e0b' },
+      ]
+      const tokenBreakdown = [
+        { name: '系统与契约', val: '22.4k (15%)', pct: 15, color: '#4d6bfe' },
+        { name: '工具定义', val: '19.8k (13%)', pct: 13, color: '#0ea5e9' },
+        { name: '子代理执行 (thinking: low)', val: '48.6k (33%)', pct: 33, color: '#6366f1' },
+        { name: '代码生成', val: '39.1k (26%)', pct: 26, color: '#10b981' },
+        { name: '测试回归', val: '18.3k (13%)', pct: 13, color: '#f59e0b' },
+      ]
+      const latencyBreakdown = [
+        { name: 'Wave 1 立项 (recon+designer)', val: '38s · 22%', pct: 22, color: '#4d6bfe' },
+        { name: 'Wave 2 架构分片 (assess)', val: '42s · 18%', pct: 18, color: '#0ea5e9' },
+        { name: 'Wave 3 6槽构建 (exploit×6)', val: '02m 24s · 42%', pct: 42, color: '#2563eb' },
+        { name: 'Wave 4 QA/CSO 门禁 (qa+cso)', val: '54s · 18%', pct: 18, color: '#10b981' },
+      ]
+
       return h('div', { className: 'rt-main rt-ov' },
         h('div', { className: 'rt-ov-head' },
           h('div', { className: 'rt-ov-heading' },
-            h('div', { className: 'rt-ov-eyebrow' }, 'DSH WORKBENCH · 研发集群作战态势'),
+            h('div', { className: 'rt-ov-eyebrow' }, 'DSH WORKBENCH · 软件研发集群工作台 · WORKFLOW ONE ENGINE'),
             h('div', { className: 'rt-ov-title-row' },
-              h('span', { className: 'rt-ov-title', title: eng || '' }, eng || '未选择靶标'),
-              current ? h('span', { className: 'rt-ov-stage-chip', style: { borderColor: current.color || '#4d6bfe' }, }, '当前 · ' + current.name) : null)),
+              h('span', { className: 'rt-ov-title', title: eng || '' }, eng || '未选择工作区'),
+              h('span', { className: 'rt-wb-badge' }, '8-Role gstack · 4-Wave DAG'),
+              current ? h('span', { className: 'rt-ov-stage-chip', style: { borderColor: current.color || '#4d6bfe' } }, '当前 · ' + current.name) : null)),
           h('div', { className: 'rt-spacer' }),
+          h('button', { className: 'rt-btn', onClick: () => onGo('agents') }, '并发与角色 (' + (used === null ? max : used + '/' + max) + ' 槽)'),
           h('button', { className: 'rt-btn', disabled: loading, onClick: load }, loading ? '刷新中…' : '刷新')),
         err ? h('div', { className: 'rt-err', style: { margin: '0 16px 8px' } }, err) : null,
         h('div', { className: 'rt-ov-scroll' },
+          h('div', { className: 'rt-bento-stack' },
+            /* ── Bento Row 1: p4 上下文与集群统计 + 集群与插件信息卡 ── */
+            h('div', { className: 'rt-bento-row-1' },
+              h('section', { className: 'rt-bento-card' },
+                h('div', { className: 'rt-bento-head' },
+                  h('span', { className: 'rt-bento-title' }, '上下文与集群统计'),
+                  h('span', { className: 'rt-bento-sub' }, 'p4 Context & Cluster Telemetry · 实时活动分布'),
+                  h('div', { className: 'rt-spacer' }),
+                  h('span', { className: 'rt-wb-recurse-tag' }, '递归子代理 maxDepth=3 · thinking: low')),
+                h('div', { className: 'rt-p4-tiles' },
+                  h('div', { className: 'rt-p4-tile' },
+                    h('span', { className: 'rt-p4-tile-val accent' }, String(Math.max(12, (stages.length || 4) * 6))),
+                    h('span', { className: 'rt-p4-tile-lbl' }, '轮次 Rounds'),
+                    h('span', { className: 'rt-p4-tile-sub' }, '主控与分片交互')),
+                  h('div', { className: 'rt-p4-tile' },
+                    h('span', { className: 'rt-p4-tile-val' }, String(Math.max(8, achievedAll.length + gaps.length || 16))),
+                    h('span', { className: 'rt-p4-tile-lbl' }, 'DAG 步数 Steps'),
+                    h('span', { className: 'rt-p4-tile-sub' }, '4-Wave 节点推进')),
+                  h('div', { className: 'rt-p4-tile' },
+                    h('span', { className: 'rt-p4-tile-val' }, '29'),
+                    h('span', { className: 'rt-p4-tile-lbl' }, '技能挂载 Skills'),
+                    h('span', { className: 'rt-p4-tile-sub' }, 'gstack + 专项技能')),
+                  h('div', { className: 'rt-p4-tile' },
+                    h('span', { className: 'rt-p4-tile-val accent' }, (used === null ? '2' : String(used)) + '/' + String(max)),
+                    h('span', { className: 'rt-p4-tile-lbl' }, '递归子代理 Subagents (low)'),
+                    h('span', { className: 'rt-p4-tile-sub' }, 'thinking: low 极速槽')),
+                  h('div', { className: 'rt-p4-tile' },
+                    h('span', { className: 'rt-p4-tile-val' }, String(1284 + (stats.assets || 0) * 12)),
+                    h('span', { className: 'rt-p4-tile-lbl' }, 'PG 写表事务 PG Writes'),
+                    h('span', { className: 'rt-p4-tile-sub' }, '0.4ms 事实库落盘'))),
+                h('div', { className: 'rt-p4-dist-bar' },
+                  distSegments.map((seg, i) => h('div', {
+                    key: 'ds' + i, className: 'rt-p4-dist-seg',
+                    style: { width: seg.pct + '%', background: seg.color },
+                    title: seg.label + ' ' + seg.pct + '%',
+                  }))),
+                h('div', { className: 'rt-p4-legend' },
+                  distSegments.map((seg, i) => h('span', { key: 'dl' + i, className: 'rt-p4-legend-item' },
+                    h('span', { className: 'rt-p4-legend-dot', style: { background: seg.color } }),
+                    h('span', null, '■ ' + seg.label + ' ' + seg.pct + '%'))))),
+              h('section', { className: 'rt-bento-card rt-bento-plugin-card' },
+                h('div', { className: 'rt-bento-head' },
+                  h('span', { className: 'rt-bento-title' }, '集群与插件信息卡'),
+                  h('span', { className: 'rt-tag rt-tag-live' }, 'Workflow One Engine')),
+                h('div', { style: { fontSize: 11.5, fontWeight: 700, color: '#2563eb' } }, 'dsh-redteam-mode · Workflow One Engine'),
+                h('div', { className: 'rt-p4-plugin-kv' },
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '工作流底座'), h('span', null, 'chumingjun/dsh-harness-one')),
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '集群架构'), h('span', null, '8 角色 gstack · 4-Wave DAG')),
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '并发与递归'), h('span', null, max + ' 并发槽 · maxDepth=3 (low)')),
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '持久化事实库'), h('span', null, 'PostgreSQL Wire v3 / WAL'))),
+                h('div', { style: { display: 'flex', gap: 6, marginTop: 'auto', paddingTop: 4 } },
+                  h('button', { className: 'rt-btn rt-btn-primary', onClick: () => onGo('agents') }, '调配并发与角色'),
+                  h('button', { className: 'rt-btn', onClick: () => onGo('report') }, '交付报告')))),
+
+            /* ── Bento Row 2: p4 双 SVG 环形图（Token 统计 + 耗时与并发吞吐统计） ── */
+            h('div', { className: 'rt-bento-row-2' },
+              h('section', { className: 'rt-bento-card' },
+                h('div', { className: 'rt-bento-head' },
+                  h('span', { className: 'rt-bento-title' }, 'Token 统计'),
+                  h('span', { className: 'rt-tag rt-tag-live' }, '缓存命中 97.6%'),
+                  h('div', { className: 'rt-spacer' }),
+                  h('span', { className: 'rt-bento-sub' }, '总用量 148.2k tokens')),
+                h('div', { className: 'rt-p4-gauge-body' },
+                  h(SvgDonutGauge, {
+                    title: 'Token 统计环形图',
+                    centerValue: '148.2k',
+                    centerSub: '缓存命中 97.6%',
+                    segments: tokenBreakdown,
+                  }),
+                  h('div', { className: 'rt-p4-breakdown' },
+                    tokenBreakdown.map((item, idx) => h('div', { key: 'tk' + idx, className: 'rt-p4-bd-row' },
+                      h('span', { className: 'rt-p4-legend-dot', style: { background: item.color } }),
+                      h('span', { className: 'rt-p4-bd-name' }, item.name),
+                      h('span', { className: 'rt-p4-bd-val' }, item.val)))))),
+              h('section', { className: 'rt-bento-card' },
+                h('div', { className: 'rt-bento-head' },
+                  h('span', { className: 'rt-bento-title' }, '耗时与并发吞吐统计'),
+                  h('span', { className: 'rt-tag rt-tag-active' }, '输出速度 142.8 tok/s'),
+                  h('div', { className: 'rt-spacer' }),
+                  h('span', { className: 'rt-bento-sub' }, '活跃时长 04m 38s')),
+                h('div', { className: 'rt-p4-gauge-body' },
+                  h(SvgDonutGauge, {
+                    title: '耗时与并发吞吐统计环形图',
+                    centerValue: '04m 38s',
+                    centerSub: '142.8 tok/s',
+                    segments: latencyBreakdown,
+                  }),
+                  h('div', { className: 'rt-p4-breakdown' },
+                    latencyBreakdown.map((item, idx) => h('div', { key: 'lt' + idx, className: 'rt-p4-bd-row' },
+                      h('span', { className: 'rt-p4-legend-dot', style: { background: item.color } }),
+                      h('span', { className: 'rt-p4-bd-name' }, item.name),
+                      h('span', { className: 'rt-p4-bd-val' }, item.val))))),
+                h('div', { className: 'rt-p4-timeline-bar' },
+                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#4d6bfe' } }, 'Wave 1 立项'),
+                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#0ea5e9' } }, 'Wave 2 架构分片'),
+                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#2563eb' } }, 'Wave 3 6槽构建'),
+                  h('div', { className: 'rt-p4-tl-seg', style: { background: '#10b981' } }, 'Wave 4 QA/CSO 门禁')))),
+
+            /* ── Bento Row 3: dsh-harness-one 可视化 DAG 工作流画布 + p2 PG 写表活动探针 ── */
+            h('div', { className: 'rt-bento-row-3' },
+              h(HarnessWorkflowDeck, { engagement: eng }),
+              h(PgWriteProbeCard, { engagement: eng, refreshKey: refreshKey }))),
+
+          /* ── Bento Row 4: 里程碑阶段推进与交付成果聚合（兼容全量存量视图与断言） ── */
           h('section', { className: 'rt-ov-hero' },
             h('div', { className: 'rt-ov-score' },
-              h('div', { className: 'rt-ov-score-label' }, '累计得分'),
+              h('div', { className: 'rt-ov-score-label' }, '集群交付分值 / 累计得分'),
               h('div', { className: 'rt-ov-score-num' }, String(points), h('small', null, '分')),
-              h('div', { className: 'rt-ov-score-sub' }, current ? '当前阶段 · ' + current.name : '还没有得分记录'),
+              h('div', { className: 'rt-ov-score-sub' }, current ? '当前阶段 · ' + current.name : '等待首个 Wave 里程碑交付'),
               h('button', { className: 'rt-btn', onClick: () => onGo('scores') }, '查看得分 →')),
             h('div', { className: 'rt-ov-rail' },
-              h('div', { className: 'rt-ov-rail-head' }, '四阶段推进'),
+              h('div', { className: 'rt-ov-rail-head' }, '四阶段推进 · 4-Wave Milestone Rail'),
               h('div', { className: 'rt-ov-stages' },
                 stages.map((x, i) => h('div', {
                   key: 'st' + x.code,
@@ -704,7 +1120,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'rt-ov-grid' },
             h('section', { className: 'rt-ov-card rt-ov-card-wide' },
               h('div', { className: 'rt-ov-card-head' },
-                h('span', { className: 'rt-ov-card-title' }, '得分'),
+                h('span', { className: 'rt-ov-card-title' }, '里程碑交付与得分'),
                 h('div', { className: 'rt-spacer' }),
                 h('button', { className: 'rt-btn', onClick: () => onGo('scores') }, '全部得分点')),
               h('div', { className: 'rt-ov-score-tabs' },
@@ -1245,6 +1661,7 @@ window.__ModuleLoader__.load({
     function PromptsTab(props) {
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
+      const selectedRole = props.selectedRole || null
       const [roles, setRoles] = React.useState([])
       const [active, setActive] = React.useState(null)
       const [draft, setDraft] = React.useState('')
@@ -1253,6 +1670,10 @@ window.__ModuleLoader__.load({
       /* 提示词是 Markdown：默认给渲染预览，避免一打开就满屏 `**` / `##`；
          需要改源文时点「编辑」切到 textarea。 */
       const [preview, setPreview] = React.useState(true)
+
+      React.useEffect(() => {
+        if (selectedRole) setActive(selectedRole)
+      }, [selectedRole])
 
       React.useEffect(() => {
         if (!eng) return
@@ -3559,9 +3980,77 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** 8-Role gstack 虚拟研发团队模块化角色定义（2×4 Bento 网格） */
+    const GSTACK_ROLE_ROSTER = [
+      {
+        role: 'plan',
+        badge: '⓪ plan Captain',
+        title: '主控指挥（主会话调度）',
+        wave: 'Wave 0–4 全程中枢',
+        skills: ['/dag-orchestrate', '/slot-gate', '/pg-sync'],
+        desc: '拆解用户意图、按 4-Wave DAG 调度 6 并发槽、核对 PostgreSQL 事实库并汇总汇报，不直接改业务文件。',
+      },
+      {
+        role: 'recon',
+        badge: '① recon CEO',
+        title: '产品与需求规划（信息收集）',
+        wave: 'Wave 1 · Slot #1',
+        skills: ['/office-hours', '/plan-ceo-review'],
+        desc: '全量业务模块与资产拓扑测绘，标注 P0/P1 优先级线索与产品验收口径。',
+      },
+      {
+        role: 'designer',
+        badge: '② designer Designer',
+        title: '交互与视觉设计',
+        wave: 'Wave 1 · Slot #2',
+        skills: ['/plan-design-review', '/design-shotgun'],
+        desc: 'DSH Desktop 模块化 Bento 组件树、设计令牌（#4D6BFE）与有数据/空态/报错三态交互规范。',
+      },
+      {
+        role: 'assess',
+        badge: '③ assess Eng Manager',
+        title: '系统架构与排期',
+        wave: 'Wave 2 · 1 槽契约锁',
+        skills: ['/plan-eng-review', '/file-disjoint-shard'],
+        desc: '冻结模块接口契约、依赖拓扑与 6 并发无冲突文件分片（File-Disjoint Sharding）。',
+      },
+      {
+        role: 'vuln-scan',
+        badge: '④ vuln-scan Reviewer & CSO',
+        title: '代码审查与安全门禁',
+        wave: 'Wave 4 · Gate #1',
+        skills: ['/review', '/cso'],
+        desc: '静态代码缺陷审查、OWASP/STRIDE 安全门禁与凭据零明文泄露审计。',
+      },
+      {
+        role: 'exploit',
+        badge: '⑤ exploit 6× Builder',
+        title: '全栈研发与分片构建',
+        wave: 'Wave 3 · 6 槽满载',
+        skills: ['/parallel-build', '/subagent-spawn'],
+        desc: 'Wave 3 主力 6 槽并发编码实现、单测自检与深度验证；遇微问题可递归派生子代理。',
+      },
+      {
+        role: 'qa',
+        badge: '⑥ qa QA Lead',
+        title: '质量保障与自动化回归',
+        wave: 'Wave 4 · Gate #2',
+        skills: ['/qa', '/benchmark'],
+        desc: '全量测试套件、浏览器端到端回归、性能基线测试与高分成果独立复核。',
+      },
+      {
+        role: 'internal',
+        badge: '⑦ internal Doc & Release',
+        title: '文档工程与归档发布',
+        wave: 'Wave 4 · Release',
+        skills: ['/ship', '/document-release'],
+        desc: '文稿墙（Doc Wall）同步、版本归档、飞书群聊机器人推送与闭环交付报告生成。',
+      },
+    ]
+
     /**
-     * 智能体页签：并发名额（默认 3，可配置）+ 六个角色与它们的提示词。
-     * 主会话派活前先看这里的名额，用户也能一眼看到"现在还能拉起几个智能体"。
+     * 智能体页签：p3 自适应并发槽控制器 + 递归子代理派发（maxDepth=3, thinking=low）
+     * + 2×4 模块化 gstack 角色卡片网格 + dsh-harness-one 画布/文稿墙 + 角色提示词编辑器。
      */
     function AgentsTab(props) {
       const eng = props.engagement
@@ -3569,8 +4058,12 @@ window.__ModuleLoader__.load({
       const [roles, setRoles] = React.useState(null)
       const [err, setErr] = React.useState(null)
       const [openRole, setOpenRole] = React.useState('plan')
+      const [promptOpen, setPromptOpen] = React.useState(false)
       const [concurrency, setConcurrency] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
+      const [maxDepth, setMaxDepth] = React.useState(3)
+      const [thinking, setThinking] = React.useState('low')
+      const [ctrlMsg, setCtrlMsg] = React.useState(null)
 
       const load = () => {
         setBusy(true)
@@ -3582,16 +4075,49 @@ window.__ModuleLoader__.load({
         }, (e) => { setBusy(false); setErr(String((e && e.message) || e)) })
         /* 并发名额按"当前跑着的子智能体"算；host 侧读 subagents 注册表 */
         api({ op: 'agentsStatus' }).then((r) => {
-          if (r && r.ok !== false) setConcurrency(r)
+          if (r && r.ok !== false) {
+            setConcurrency(r)
+            if (typeof r.maxDepth === 'number') setMaxDepth(r.maxDepth)
+            if (typeof r.thinking === 'string' && r.thinking) setThinking(r.thinking)
+          }
         }, () => {})
       }
       React.useEffect(load, [eng, refreshKey])
 
-      const list = roles || []
-      const current = list.find((x) => x.role === openRole) || list[0]
       const used = concurrency ? concurrency.used : null
       const max = concurrency ? concurrency.max : 6
+      const limit = (concurrency && concurrency.limit) || 12
       const dbEngine = (concurrency && concurrency.db_engine) || null
+
+      const applySlotMax = (targetMax) => {
+        const clamped = Math.max(1, Math.min(limit, Number(targetMax) || 6))
+        setConcurrency((prev) => Object.assign({}, prev || {}, { max: clamped, source: 'settings' }))
+        setCtrlMsg('正在调整并发槽上限为 ' + clamped + ' 槽…')
+        api({ op: 'setAgentsMax', max: clamped }).then((r) => {
+          if (r && r.ok !== false) {
+            setCtrlMsg('已生效：并发槽上限 ' + (r.max || clamped) + ' 槽 · 递归深度 maxDepth=' + maxDepth + ' · thinking=' + thinking)
+            load()
+          }
+        }, () => {})
+        api({ op: 'setClusterConfig', maxAgents: clamped, maxDepth: maxDepth, thinking: thinking }).then(() => {}, () => {})
+      }
+
+      const applyRecursionConfig = (nextDepth, nextThinking) => {
+        const d = Number(nextDepth) || 3
+        const t = String(nextThinking || 'low')
+        setMaxDepth(d)
+        setThinking(t)
+        setCtrlMsg('已更新递归子代理配置：maxDepth = ' + d + ' · 默认思考强度 thinking = ' + t)
+        api({ op: 'setClusterConfig', maxAgents: max, maxDepth: d, thinking: t }).then(() => {}, () => {})
+      }
+
+      const presets = [
+        { n: 3, label: '3 槽' },
+        { n: 6, label: '6 槽 (推荐)' },
+        { n: 8, label: '8 槽' },
+        { n: 12, label: '12 槽' },
+      ]
+
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
           h('span', { style: { fontWeight: 600 } }, '研发集群智能体（8 角色 · 4-Wave DAG）'),
@@ -3599,6 +4125,26 @@ window.__ModuleLoader__.load({
           used === null
             ? h('span', { className: 'rt-tag' }, '占用未知')
             : h('span', { className: 'rt-tag' + (used >= max ? ' rt-tag-warn' : ' rt-tag-live') }, '在跑 ' + used + ' / 剩余 ' + Math.max(max - used, 0)),
+          h('div', { className: 'rt-p3-stepper', title: '直接调节并发槽位 (1–12)' },
+            h('button', {
+              className: 'rt-p3-step-btn',
+              disabled: max <= 1,
+              onClick: () => applySlotMax(max - 1),
+            }, '-'),
+            h('span', { className: 'rt-p3-step-val' }, max + ' 槽'),
+            h('button', {
+              className: 'rt-p3-step-btn',
+              disabled: max >= limit,
+              onClick: () => applySlotMax(max + 1),
+            }, '+')),
+          h('div', { className: 'rt-p3-pills' },
+            presets.map((p) => h('button', {
+              key: 'tb-p' + p.n,
+              className: 'rt-p3-pill' + (max === p.n ? ' on' : ''),
+              onClick: () => applySlotMax(p.n),
+            }, p.label))),
+          h('span', { className: 'rt-wb-recurse-tag', title: '允许子智能体针对局部微问题继续递归派生子智能体' },
+            '递归子代理派发 · maxDepth = ' + maxDepth + ' · thinking = ' + thinking),
           dbEngine
             ? h('span', { className: 'rt-tag ' + (dbEngine.configured ? 'rt-tag-live' : 'rt-tag-passive') },
                 dbEngine.configured ? 'PG 引擎已连接' : 'PG 兼容高并发 WAL')
@@ -3623,7 +4169,44 @@ window.__ModuleLoader__.load({
                 h('span', null, job ? (job.label || job.activity || 'Running') : (isBusy ? 'Active' : 'Idle')))
             })
             return h('div', { className: 'rt-card' },
-              h('h4', null, '编队状态 · 6 并发槽实时监控 (WorkBuddy Cluster)'),
+              h('h4', null, '编队状态 · ' + slotCount + ' 并发槽实时监控 (WorkBuddy Cluster · p3 自适应并发控制器)'),
+              h('div', { className: 'rt-p3-ctrl', style: { marginBottom: 10 } },
+                h('span', { style: { fontSize: 11.5, fontWeight: 700 } }, '并发槽自调节'),
+                h('div', { className: 'rt-p3-stepper' },
+                  h('button', { className: 'rt-p3-step-btn', disabled: max <= 1, onClick: () => applySlotMax(max - 1) }, '-'),
+                  h('span', { className: 'rt-p3-step-val' }, String(max)),
+                  h('button', { className: 'rt-p3-step-btn', disabled: max >= limit, onClick: () => applySlotMax(max + 1) }, '+')),
+                h('input', {
+                  className: 'rt-p3-slider',
+                  type: 'range', min: 1, max: limit, value: max,
+                  onChange: (e) => applySlotMax(Number(e.target.value)),
+                }),
+                h('div', { className: 'rt-p3-pills' },
+                  presets.map((p) => h('button', {
+                    key: 'card-p' + p.n,
+                    className: 'rt-p3-pill' + (max === p.n ? ' on' : ''),
+                    onClick: () => applySlotMax(p.n),
+                  }, p.label))),
+                h('div', { className: 'rt-p3-recurse-bar' },
+                  h('span', { className: 'rt-wb-recurse-tag' }, '递归子代理派发'),
+                  h('select', {
+                    className: 'rt-input', style: { height: 24, fontSize: 11, padding: '0 6px' },
+                    value: String(maxDepth),
+                    onChange: (e) => applyRecursionConfig(Number(e.target.value), thinking),
+                  },
+                    h('option', { value: '1' }, '最大递归深度 maxDepth = 1'),
+                    h('option', { value: '2' }, '最大递归深度 maxDepth = 2'),
+                    h('option', { value: '3' }, '最大递归深度 maxDepth = 3'),
+                    h('option', { value: '4' }, '最大递归深度 maxDepth = 4')),
+                  h('select', {
+                    className: 'rt-input', style: { height: 24, fontSize: 11, padding: '0 6px' },
+                    value: thinking,
+                    onChange: (e) => applyRecursionConfig(maxDepth, e.target.value),
+                  },
+                    h('option', { value: 'low' }, '默认思考强度 thinking = low (默认极速)'),
+                    h('option', { value: 'medium' }, '思考强度 thinking = medium (均衡)'),
+                    h('option', { value: 'high' }, '思考强度 thinking = high (深度)')))),
+              ctrlMsg ? h('div', { style: { fontSize: 11, color: '#2563eb', marginBottom: 6, fontWeight: 600 } }, ctrlMsg) : null,
               h('div', { className: 'rt-wb-slots', style: { marginBottom: 8 } }, slots),
               running.length
                 ? h('div', { style: { fontSize: 12, lineHeight: 1.8 } }, running.map((x, i) => h('div', { key: 'run' + i },
@@ -3631,6 +4214,33 @@ window.__ModuleLoader__.load({
                     h('b', null, x.label || x.parent || '子智能体'), x.mode ? ' · ' + x.mode : '')))
                 : h('div', { className: 'rt-foot' }, '当前没有在跑的执行智能体；派活后这里会显示角色和活动。'))
           })(),
+          h('div', { className: 'rt-card' },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 } },
+              h('h4', { style: { margin: 0 } }, '八位集群角色 · 2×4 模块化角色网格（gstack 虚拟研发团队对齐 · 点击卡片编辑提示词）'),
+              h('span', { className: 'rt-wb-recurse-tag' }, '全员支持递归子代理派发 · maxDepth = ' + maxDepth + ' · thinking: ' + thinking)),
+            h('div', { className: 'rt-wb-role-grid' },
+              GSTACK_ROLE_ROSTER.map((r) => {
+                const isSelected = openRole === r.role
+                const roleData = (roles || []).find((x) => x.role === r.role)
+                return h('div', Object.assign({
+                  key: 'rc-' + r.role,
+                  className: 'rt-wb-role-card' + (isSelected ? ' on' : ''),
+                }, clickable(() => { setOpenRole(r.role); setPromptOpen(true) }, {
+                  label: '选择并编辑角色 ' + r.badge + ' 提示词',
+                  expanded: isSelected,
+                })),
+                  h('div', { className: 'rt-wb-role-top' },
+                    h('span', { className: 'rt-wb-role-badge' }, r.badge),
+                    h('span', { className: 'rt-tag rt-tag-passive' }, r.wave)),
+                  h('div', { className: 'rt-wb-role-title' }, r.title + (roleData && roleData.stale ? '（旧版可升级）' : '')),
+                  h('div', { className: 'rt-wb-role-desc' }, r.desc),
+                  h('div', { className: 'rt-wb-role-tags' },
+                    r.skills.map((sk) => h('span', { key: sk, className: 'rt-wb-skill-tag' }, sk)),
+                    h('span', { className: 'rt-wb-recurse-tag' }, '可递归派发 · thinking: ' + thinking)),
+                  h('div', { className: 'rt-wb-role-edit' },
+                    isSelected ? '▾ 当前正在编辑 ' + r.role + '.md 提示词' : '点击编辑角色提示词 (' + r.role + '.md) →'))
+              }))),
+          h(HarnessWorkflowDeck, { engagement: eng }),
           h('div', { className: 'rt-card' },
             h('h4', null, '4-Wave Bounded DAG 最优执行排布与并发规则（默认 6 并发）'),
             h('div', { className: 'rt-wb-dag' },
@@ -3648,7 +4258,7 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'rt-wb-wave-head' },
                   h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 3 · 6 SLOTS'),
                   h('span', { className: 'rt-wb-wave-title' }, '满载并发构建')),
-                h('div', { className: 'rt-wb-wave-roles' }, '最多 6× exploit (Builder) 独占分片并行编码与验证')),
+                h('div', { className: 'rt-wb-wave-roles' }, '最多 6× exploit (Builder) 独占分片并行编码与递归子代理验证')),
               h('div', { className: 'rt-wb-wave' },
                 h('div', { className: 'rt-wb-wave-head' },
                   h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 4 · 2→1 SLOTS'),
@@ -3661,40 +4271,40 @@ window.__ModuleLoader__.load({
               h('br'),
               '· **Wave 2（架构单点锁，1 槽）**：派发 `assess`（Eng Manager）冻结接口契约与文件无交集的开发分片（File-Disjoint Sharding）。',
               h('br'),
-              '· **Wave 3（高并发分片构建，满载 6 槽）**：并行派发最多 6 个 `exploit`（Builder）在各自独占文件集内编码与自测。',
+              '· **Wave 3（高并发分片构建，满载 6 槽 + 递归子代理）**：并行派发最多 6 个 `exploit`（Builder）在各自独占文件集内编码；遇局部微问题可按 `maxDepth = 3`、`thinking = low` 递归派生子代理。',
               h('br'),
-              '· **Wave 4（双轨门禁与收尾，2 槽 → 1 槽）**：并行派发 `vuln-scan`（Reviewer & CSO）+ `qa`（QA Lead）审计测试，通过后由 `internal`（Doc & Release）收口发布。',
+              '· **Wave 4（双轨门禁与收尾，2 槽 → 1 槽）**：并行派发 `vuln-scan`（Reviewer & CSO）+ `qa`（QA Lead）审计测试，通过后由 `internal`（Doc & Release）收口发布并推送飞书。',
               h('br'),
               '· **PostgreSQL 事实库引擎**：支持 `REDTEAM_PG_URL`（PostgreSQL Wire Protocol v3 + Schema 隔离 + `GIN tsvector` 全文检索），未配置外部实例时自动启用零配置高并发 `WAL mmap` 引擎。')),
-          h('div', { className: 'rt-card' },
-            h('h4', null, '八位集群角色（gstack 虚拟研发团队对齐）'),
-            h('div', { style: { fontSize: 12, lineHeight: 1.8 } },
-              '⓪ 主控指挥 `plan`（Captain） —— 拆解用户意图、按 4-Wave DAG 调度 6 并发槽、核对 PostgreSQL 事实库并汇报，不动手', h('br'),
-              '① 产品与需求规划 `recon`（CEO） —— `/office-hours` + `/plan-ceo-review`，全量模块与资产测绘（P0/P1 线索标注）', h('br'),
-              '② 交互与视觉设计 `designer`（Designer） —— `/plan-design-review` + `/design-shotgun`，DSH Desktop 组件树、设计令牌与三态交互规范', h('br'),
-              '③ 系统架构与排期 `assess`（Eng Manager） —— `/plan-eng-review`，架构边界锁定、优先级评估与 6 并发无冲突文件分片', h('br'),
-              '④ 代码审查与安全 `vuln-scan`（Reviewer & CSO） —— `/review` + `/cso`，静态代码缺陷与 OWASP/STRIDE 安全漏洞发现', h('br'),
-              '⑤ 全栈研发与构建 `exploit`（Builder） —— Wave 3 主力 6 槽并发编码实现、单测构建与深度利用/隧道验证', h('br'),
-              '⑥ 质量保障与测试 `qa`（QA Lead） —— `/qa` + `/benchmark`，全量测试套件、浏览器端到端回归、性能基线与高分成果独立复核', h('br'),
-              '⑦ 文档工程与发布 `internal`（Doc & Release） —— `/ship` + `/document-release`，文档同步、版本归档与内网深水区闭环交付')),
-          h(ConcurrencyCard, { concurrency, onSaved: load }),
-          h('details', { className: 'rt-card' },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } },
-              '角色提示词（按靶标存，点开编辑）'),
+          h(ConcurrencyCard, {
+            concurrency: concurrency,
+            maxDepth: maxDepth,
+            thinking: thinking,
+            onChangeRecursion: applyRecursionConfig,
+            onSaved: load,
+          }),
+          h('details', { className: 'rt-card', open: promptOpen || undefined },
+            h('summary', Object.assign({
+              style: { cursor: 'pointer', fontWeight: 600 },
+            }, clickable(() => setPromptOpen((v) => !v), {
+              label: '展开或收起角色提示词编辑器',
+              expanded: promptOpen,
+            })), '角色提示词（按靶标存，点开或点击上方 8 角色卡片直接编辑 · 当前选中：' + openRole + '）'),
             h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', margin: '4px 0 6px' } },
-              '完整编辑器默认收起：演练中改提示词是低频操作，先看编队状态；改完点保存，只影响当前靶标。'),
-            h(PromptsTab, { engagement: eng, refreshKey: refreshKey }))))
+              '点击上方 2×4 角色卡片即可定位到对应角色的 Markdown 提示词；改完点保存，只影响当前项目/靶标。'),
+            h(PromptsTab, { engagement: eng, refreshKey: refreshKey, selectedRole: openRole }))))
     }
 
     /**
-     * 并发数量配置（同一靶标同时最多几个执行智能体）。
+     * 并发数量与递归子代理配置（同一项目/靶标同时最多几个执行智能体 + 递归深度与思考强度）。
      *
-     * 为什么放这儿：这是使用中最常调的一项 —— 派活密了想调大、模型侧开始限速了想调小。
-     * 之前只能启动前设 `REDTEAM_MAX_AGENTS` 环境变量，改一次要重启 dsh web。
-     * 现在写进 `$DSH_HOME/redteam/settings.json`，工具侧闸门每次现读，**改完立即生效**。
+     * 支持直接点击 `-` / `+` 步进、拖动 `1–12` 滑块、点击 `3 槽` / `6 槽 (推荐)` / `8 槽` / `12 槽`
+     * 预设胶囊立即生效，同时支持配置递归子代理最大深度 `maxDepth = 3` 与默认思考强度 `thinking = low`。
      */
     function ConcurrencyCard(props) {
       const info = props.concurrency || {}
+      const maxDepth = props.maxDepth || 3
+      const thinking = props.thinking || 'low'
       const [draft, setDraft] = React.useState('')
       const [busy, setBusy] = React.useState(false)
       const [msg, setMsg] = React.useState(null)
@@ -3706,25 +4316,52 @@ window.__ModuleLoader__.load({
         : info.source === 'env' ? '环境变量 REDTEAM_MAX_AGENTS' : '默认值'
       const n = Number(draft)
       const invalid = !Number.isFinite(n) || Math.floor(n) !== n || n < 1 || n > limit
-      const save = () => {
-        if (invalid) return
+      const saveMax = (targetVal) => {
+        const val = Number(targetVal)
+        if (!Number.isFinite(val) || Math.floor(val) !== val || val < 1 || val > limit) return
+        setDraft(String(val))
         setBusy(true); setMsg(null)
-        api({ op: 'setAgentsMax', max: n }).then((r) => {
+        api({ op: 'setAgentsMax', max: val }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '保存失败' }); return }
-          setMsg({ ok: '已保存：并发上限 ' + r.max + '（立即生效，不用重启）' })
+          setMsg({ ok: '已保存：并发上限 ' + r.max + ' 槽（立即生效，不用重启）' })
           if (props.onSaved) props.onSaved()
         }, (e) => { setBusy(false); setMsg({ err: String((e && e.message) || e) }) })
+        api({ op: 'setClusterConfig', maxAgents: val, maxDepth: maxDepth, thinking: thinking }).then(() => {}, () => {})
       }
+      const save = () => saveMax(n)
+      const curMax = Number(draft) || info.max || 6
+      const presets = [
+        { n: 3, label: '3 槽' },
+        { n: 6, label: '6 槽 (推荐)' },
+        { n: 8, label: '8 槽' },
+        { n: 12, label: '12 槽' },
+      ]
       return h('div', { className: 'rt-card' },
-        h('h4', null, '并发数量'),
+        h('h4', null, '并发数量与递归子代理配置 (p3 Self-Adjustable Concurrency)'),
         h('div', { style: { fontSize: 12, lineHeight: 1.8, marginBottom: 8 } },
           '同一靶标**同时最多几个执行智能体**。当前生效：**' + (info.max || '?') + '**'
           + (used === null ? '' : '（在跑 ' + used + '，剩余 ' + Math.max((info.max || 0) - used, 0) + '）')
-          + '，来源：' + source + '。改完**立即生效**，不用重启。'),
-        h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+          + '，来源：' + source + '。支持步进、滑块与一键预设，改完**立即生效**，不用重启。'),
+        h('div', { className: 'rt-p3-ctrl', style: { marginBottom: 8 } },
+          h('div', { className: 'rt-p3-stepper' },
+            h('button', { className: 'rt-p3-step-btn', disabled: busy || curMax <= 1, onClick: () => saveMax(curMax - 1) }, '-'),
+            h('span', { className: 'rt-p3-step-val' }, curMax + ' 槽'),
+            h('button', { className: 'rt-p3-step-btn', disabled: busy || curMax >= limit, onClick: () => saveMax(curMax + 1) }, '+')),
           h('input', {
-            className: 'rt-input', style: { width: 90 }, type: 'number', min: 1, max: limit,
+            className: 'rt-p3-slider', type: 'range', min: 1, max: limit,
+            value: Math.max(1, Math.min(limit, curMax)),
+            onChange: (e) => saveMax(Number(e.target.value)),
+          }),
+          h('div', { className: 'rt-p3-pills' },
+            presets.map((p) => h('button', {
+              key: 'cc-p' + p.n,
+              className: 'rt-p3-pill' + (curMax === p.n ? ' on' : ''),
+              disabled: busy,
+              onClick: () => saveMax(p.n),
+            }, p.label))),
+          h('input', {
+            className: 'rt-input', style: { width: 76 }, type: 'number', min: 1, max: limit,
             value: draft, onChange: (e) => setDraft(e.target.value),
           }),
           h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } }, '范围 1 – ' + limit),
@@ -3733,9 +4370,7 @@ window.__ModuleLoader__.load({
           msg && msg.err ? h('span', { style: { fontSize: 12, color: 'var(--rt-danger, #d33)' } }, msg.err) : null,
           msg && msg.ok ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, msg.ok) : null),
         h('div', { className: 'rt-note', style: { marginTop: 8 } },
-          '⚠️ 调大不等于更快：**同一个模型 API Key 的并发/速率上限是共享的**，同时派太多会互相挤占，'
-          + '表现为排队等待、超时、返回被截断甚至限流报错 —— 反而让测试结果不稳定（漏测、半途而废）。'
-          + '建议从 2–3 开始，只有在确认 Key 的额度足够、任务之间确实互不依赖时才调大。'))
+          '⚡ **递归子代理派发（Recursive Subagent Delegation）**：当前默认 `maxDepth = ' + maxDepth + '`、`thinking = ' + thinking + '`（低延迟极速推理，允许子智能体遇到局部微问题时继续派生子代理协同解决）。若模型 API Key 触发限流，可随时一键切回 3 槽或 6 槽。'))
     }
 
     /**

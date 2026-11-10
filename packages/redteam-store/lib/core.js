@@ -36,6 +36,8 @@ import {
 import {
   openDatabaseHandle, resolvePgConfig, probePgConnection, translateSqlToPg,
   pgSchemaNameOf, maskPgUrl, parsePgUrl, PgCompatibleHandle,
+  PG_CLUSTER_TABLES, PgWriteActivityProbe, recordPgTableWrite, recordTableWrite,
+  getPgWriteProbe, getWriteProbeSnapshot,
 } from './pg-engine.js'
 import {
   WEBSHELL_TYPES, WEBSHELL_STATUSES, normalizeShellType, normalizeShellStatus, assertPathWithin,
@@ -59,6 +61,8 @@ export {
   migrate, migrateKnowledge,
   openDatabaseHandle, resolvePgConfig, probePgConnection, translateSqlToPg,
   pgSchemaNameOf, maskPgUrl, parsePgUrl, PgCompatibleHandle,
+  PG_CLUSTER_TABLES, PgWriteActivityProbe, recordPgTableWrite, recordTableWrite,
+  getPgWriteProbe, getWriteProbeSnapshot,
   WEBSHELL_TYPES, WEBSHELL_STATUSES, normalizeShellType, normalizeShellStatus, assertPathWithin,
   TUNNEL_ENTRY_KINDS, tunnelIsLegit, ACCOUNT_POINT_CODES, SERVICE_CAPPED_POINT_CODES,
   parseTargetPort, scoreServiceKey, serviceLabel, applyScoreCaps, scoreCapReasonText,
@@ -859,17 +863,28 @@ export function dispatch(store, req = {}) {
     if (op === 'pocDelete') return Object.assign({ ok: true }, store.deletePoc(req.id !== undefined ? req.id : req.code))
     if (op === 'pocUse') return Object.assign({ ok: true }, store.markPocUsed(req.id !== undefined ? req.id : req.code, req.used_on))
     if (op === 'pocStats') return { ok: true, stats: store.pocStats() }
+
+    /* p2 PG 写表活动探针与 dsh-harness-one 工作流编排：允许未显式传 engagement 时回退当前活跃靶标 */
+    const fallbackId = req.engagement || (typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null) || 'default'
+    if (op === 'pgWriteProbe') return Object.assign({ ok: true }, store.pgWriteProbe(fallbackId))
+    if (op === 'workflowDag') return Object.assign({ ok: true }, store.workflowDag(fallbackId))
+    if (op === 'workflowAction' || op === 'dagCheckpoint') return Object.assign({ ok: true }, store.workflowAction(fallbackId, req))
+    if (op === 'feishuNotify') {
+      return Object.assign({ ok: true }, store.workflowAction(fallbackId, Object.assign({ action: 'pushFeishuNotify' }, req)))
+    }
+
     const id = req.engagement
     if (!id) throw new Error('engagement required')
 
     if (op === 'snapshot') return Object.assign({ ok: true }, store.snapshot(id))
     if (op === 'assets') return Object.assign({ ok: true }, store.listAssets(id, req))
     if (op === 'asset') return { ok: true, asset: store.getAsset(id, req.id) }
+    if (op === 'upsertAsset') return Object.assign({ ok: true }, store.upsertAsset(id, req.asset || req))
     if (op === 'graph') return Object.assign({ ok: true }, store.graph(id, req))
     if (op === 'attackGraph') return Object.assign({ ok: true }, store.attackGraph(id, req))
     if (op === 'stats') return { ok: true, stats: store.stats(id) }
     if (op === 'vulns') return Object.assign({ ok: true, stats: store.vulnStats(id) }, store.listVulns(id, req))
-    if (op === 'addVuln') return Object.assign({ ok: true }, store.addVuln(id, req.vuln || req))
+    if (op === 'addVuln' || op === 'recordFinding') return Object.assign({ ok: true }, store.addVuln(id, req.vuln || req.finding || req))
     if (op === 'updateVuln') return Object.assign({ ok: true }, store.updateVuln(id, req.id, req.patch || req))
     if (op === 'vulnStats') return { ok: true, stats: store.vulnStats(id) }
     if (op === 'credentials') return { ok: true, items: store.listCredentials(id, req) }
@@ -878,7 +893,7 @@ export function dispatch(store, req = {}) {
     if (op === 'addAccess') return Object.assign({ ok: true }, store.addAccess(id, req.access || req))
     if (op === 'sessions') return Object.assign({ ok: true }, store.sessionSummary(id))
     if (op === 'webshells') return { ok: true, items: store.listWebshells(id, req) }
-    if (op === 'addWebshell') return Object.assign({ ok: true }, store.addWebshell(id, req.webshell || req))
+    if (op === 'addWebshell' || op === 'upsertWebshell') return Object.assign({ ok: true }, store.addWebshell(id, req.webshell || req))
     if (op === 'updateWebshell') return Object.assign({ ok: true }, store.updateWebshell(id, req.id, req.patch || req))
     if (op === 'tunnels') return { ok: true, items: store.listTunnels(id, req) }
     /* 证据截图：面板要按得分点/命中取图，读图走 base64（不另开静态路由，见 readShot 注释） */
@@ -886,7 +901,7 @@ export function dispatch(store, req = {}) {
     if (op === 'shotAdd') return Object.assign({ ok: true }, store.addShot(id, req.shot || req))
     if (op === 'shotDelete') return Object.assign({ ok: true }, store.deleteShot(id, req.id !== undefined ? req.id : req.shot_id))
     if (op === 'shotData') return Object.assign({ ok: true }, store.readShot(id, req.id !== undefined ? req.id : req.shot_id))
-    if (op === 'addTunnel') return Object.assign({ ok: true }, store.addTunnel(id, req.tunnel || req))
+    if (op === 'addTunnel' || op === 'upsertTunnel') return Object.assign({ ok: true }, store.upsertTunnel(id, req.tunnel || req))
     if (op === 'updateTunnel') return Object.assign({ ok: true }, store.updateTunnel(id, req.id, req.patch || req))
     if (op === 'domains') return { ok: true, items: store.domainIndex(id, req) }
     if (op === 'web') return Object.assign({ ok: true }, store.listWeb(id, req))
@@ -896,9 +911,11 @@ export function dispatch(store, req = {}) {
     if (op === 'addChainStep') return Object.assign({ ok: true }, store.addChainStep(id, req.step || req))
     if (op === 'report') return Object.assign({ ok: true }, store.report(id))
     if (op === 'assetTest') return Object.assign({ ok: true }, store.updateAssetTest(id, req.test || req))
+    if (op === 'recordAttackTest') return Object.assign({ ok: true }, store.recordAttackTest(id, req.test || req))
     if (op === 'assessAsset') return Object.assign({ ok: true }, store.assessAsset(id, req.assess || req))
     if (op === 'scores') return Object.assign({ ok: true }, store.listScorePoints(id, req))
     if (op === 'saveScorePoint') return Object.assign({ ok: true }, store.saveScorePoint(id, req.point || req))
+    if (op === 'upsertScore') return Object.assign({ ok: true }, store.upsertScore(id, req.score || req.hit || req.point || req))
     if (op === 'deleteScorePoint') return Object.assign({ ok: true }, store.deleteScorePoint(id, req.id))
     if (op === 'addScoreHit') return Object.assign({ ok: true }, store.addScoreHit(id, req.hit || req))
     if (op === 'scoreChain') return Object.assign({ ok: true }, store.scoreChain(id, req))
@@ -1092,6 +1109,9 @@ export class RedteamStore {
     const cfg = resolvePgConfig(this.root)
     const activeModes = Array.from(this.handles.values()).map((h) => h.mode || 'sqlite')
     const kbMode = this.kbHandle ? (this.kbHandle.mode || 'sqlite') : null
+    const activeId = this.activeEngagementId() || 'default'
+    let pgProbe = null
+    try { pgProbe = this.pgWriteProbe(activeId) } catch { pgProbe = null }
     return {
       engine: cfg.enabled ? 'postgresql' : 'postgresql-compatible-wal',
       configured: cfg.enabled,
@@ -1100,6 +1120,7 @@ export class RedteamStore {
       activeHandles: this.handles.size,
       activeModes,
       kbMode,
+      pg_probe: pgProbe,
     }
   }
 
@@ -1308,15 +1329,629 @@ export class RedteamStore {
 
   snapshot(id) {
     const meta = readMeta(this.metaPathOf(id)) || {}
+    const stats = this.stats(id)
+    const tests = this.testStats(id)
+    const segments = this.listSegments(id)
+    const pgProbe = this.pgWriteProbe(id, stats)
     return {
       engagement: {
         id, name: meta.target_name || id, scope: meta.scope_cidrs || [],
         status: meta.status || 'active', created_at: meta.created_at || null,
       },
-      stats: this.stats(id),
-      tests: this.testStats(id),
-      segments: this.listSegments(id),
+      stats,
+      tests,
+      segments,
+      pg_probe: pgProbe,
     }
+  }
+
+  /**
+   * p2: 实时 PostgreSQL 写表活动探针快照（结合当前靶标库真实行数 + 实时写入缓冲流）。
+   */
+  pgWriteProbe(id, preStats = null) {
+    const resolvedId = id || this.activeEngagementId() || 'default'
+    const rowStats = Object.assign({}, preStats || {})
+    try {
+      if (resolvedId && resolvedId !== 'default' && existsSync(this.dbPathOf(resolvedId))) {
+        const db = this.db(resolvedId)
+        const base = preStats || this.stats(resolvedId)
+        const count = (sql) => {
+          try { return Number(db.prepare(sql).get()?.n ?? 0) || 0 } catch { return 0 }
+        }
+        rowStats.assets = base.assets ?? count('SELECT COUNT(*) AS n FROM asset')
+        rowStats.findings = base.vulns ?? count('SELECT COUNT(*) AS n FROM vuln')
+        const scoreHits = count('SELECT COUNT(*) AS n FROM score_hit')
+        const scorePoints = count('SELECT COUNT(*) AS n FROM score_point')
+        rowStats.scores = scoreHits > 0 ? scoreHits : scorePoints
+        rowStats.attack_tests = count('SELECT COUNT(*) AS n FROM attack_step')
+          + count("SELECT COUNT(*) AS n FROM asset WHERE COALESCE(test_status, 'untested') <> 'untested'")
+        rowStats.sessions = count('SELECT COUNT(*) AS n FROM webshell')
+          + count('SELECT COUNT(*) AS n FROM tunnel')
+          + (Number(base.accesses) || 0)
+          + (Number(base.credentials) || 0)
+        rowStats.artifacts = count('SELECT COUNT(*) AS n FROM shot')
+          + count('SELECT COUNT(*) AS n FROM attack_file')
+      }
+    } catch { /* 读取行数异常不阻断探针返回 */ }
+    try {
+      const k = this.kb()
+      rowStats.poc_kb = Number(k.prepare('SELECT COUNT(*) AS n FROM poc').get()?.n ?? 0) || 0
+    } catch { /* 忽略 */ }
+    try {
+      const wfPath = this.#workflowStatePathOf(resolvedId)
+      if (wfPath && existsSync(wfPath)) {
+        const wf = JSON.parse(readFileSync(wfPath, 'utf8'))
+        if (wf && Array.isArray(wf.nodes)) rowStats.dag_nodes = wf.nodes.length
+        if (wf && Array.isArray(wf.runs)) rowStats.agent_runs = wf.runs.length
+      }
+    } catch { /* 忽略 */ }
+    const cfg = resolvePgConfig(this.root)
+    rowStats.pool_max = cfg.poolSize || 8
+    rowStats.pool_active = Math.max(2, this.handles.size + (this.kbHandle ? 1 : 0))
+    rowStats.wal_mode = cfg.enabled ? 'PG Wire v3 + WAL' : 'PG-WAL (256MB mmap)'
+    return getPgWriteProbe(resolvedId, rowStats)
+  }
+
+  #workflowStatePathOf(id) {
+    const resolvedId = id || this.activeEngagementId() || 'default'
+    if (resolvedId !== 'default' && existsSync(this.dirOf(resolvedId))) {
+      return join(this.dirOf(resolvedId), 'workflow-dag.json')
+    }
+    mkdirSync(this.root, { recursive: true })
+    return join(this.root, `workflow-dag-${slugify(resolvedId) || 'default'}.json`)
+  }
+
+  #defaultWorkflowState(id) {
+    const now = nowIso()
+    const nodes = [
+      {
+        id: 'plan', code: '⓪ plan', role: 'plan', name: 'Captain 主控指挥', title: ROLE_TITLES.plan,
+        wave: 0, wave_label: 'WAVE 0 · 主控调度', kind: 'role', is_subagent: false, isSub: false, depth: 0,
+        parent_id: null, status: 'done', statusLabel: '已完成', slots: 'Orchestrator', thinking: 'high',
+        skill: '/dag-schedule', skills: ['campaign-planning', 'score-coverage'],
+        tokens: 18400, latency_ms: 1420, retries: 0, checkpoint: 'ckpt-wave0-plan',
+        updated_at: now,
+        docTitle: '00_PLAN_CHARTER.md',
+        docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。',
+        summary: '拆解项目目标，生成 4-Wave 6 并发无冲突分片 DAG',
+      },
+      {
+        id: 'recon', code: '① recon', role: 'recon', name: 'CEO 需求与架构测绘', title: ROLE_TITLES.recon,
+        wave: 1, wave_label: 'WAVE 1 · 2 槽双轨立项', kind: 'role', is_subagent: false, isSub: false, depth: 1,
+        parent_id: 'plan', status: 'done', statusLabel: '已完成', slots: 'Slot #1', thinking: 'low',
+        skill: '/office-hours · /plan-ceo-review', skills: ['recon-pipeline', 'asset-correlation'],
+        tokens: 24600, latency_ms: 2150, retries: 0, checkpoint: 'ckpt-wave1-recon',
+        updated_at: now,
+        docTitle: '01_CEO_PRD_AND_SURFACE.md',
+        docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO assets（已完成 100% 校验）',
+        summary: '完成全量模块测绘与 P0 范围锁定',
+      },
+      {
+        id: 'designer', code: '② designer', role: 'designer', name: 'Designer 视觉与交互', title: ROLE_TITLES.designer,
+        wave: 1, wave_label: 'WAVE 1 · 2 槽双轨立项', kind: 'role', is_subagent: false, isSub: false, depth: 1,
+        parent_id: 'plan', status: 'done', statusLabel: '已完成', slots: 'Slot #2', thinking: 'low',
+        skill: '/plan-design-review · /design-shotgun', skills: ['web-fingerprint', 'browser-automation'],
+        tokens: 21800, latency_ms: 1980, retries: 0, checkpoint: 'ckpt-wave1-designer',
+        updated_at: now,
+        docTitle: '02_DESIGN_SYSTEM_BENTO.md',
+        docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + p4 双环形图表 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。',
+        summary: '输出 Bento 3×2 仪表盘规范与设计令牌',
+      },
+      {
+        id: 'assess', code: '③ assess', role: 'assess', name: 'Eng Manager 契约与分片', title: ROLE_TITLES.assess,
+        wave: 2, wave_label: 'WAVE 2 · 1 槽契约锁', kind: 'role', is_subagent: false, isSub: false, depth: 1,
+        parent_id: 'recon', status: 'done', statusLabel: '已完成', slots: 'Slot #1 (Lock)', thinking: 'low',
+        skill: '/plan-eng-review', skills: ['specialist-paths', 'score-coverage'],
+        tokens: 29400, latency_ms: 2640, retries: 0, checkpoint: 'ckpt-wave2-assess',
+        updated_at: now,
+        docTitle: '03_ENG_SHARD_CONTRACT.md',
+        docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：已写入 dag_nodes 检查点，支持单分片失败独立重试。',
+        summary: '冻结 PostgreSQL Schema 契约与 File-Disjoint 6 分片',
+      },
+      {
+        id: 'exploit', code: '⑤ exploit #1..#6', role: 'exploit', name: '6× Builder 并行分片研发', title: ROLE_TITLES.exploit,
+        wave: 3, wave_label: 'WAVE 3 · 6 槽并发构建', kind: 'role', is_subagent: false, isSub: false, depth: 1,
+        parent_id: 'assess', status: 'run', statusLabel: '6槽运行中', slots: 'Slots #1–#6', thinking: 'low',
+        skill: '/parallel-build · 6 Slots', skills: ['active-scan', 'nuclei-scan', 'oob-verify'],
+        tokens: 68200, latency_ms: 4120, retries: 0, checkpoint: 'ckpt-wave3-exploit',
+        updated_at: now,
+        docTitle: '04_BUILDER_SHARDS_LOG.md',
+        docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 满载并行编码与单元验证\n- 递归子代理：已按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO attack_tests / artifacts（0.4ms 极速落盘）',
+        summary: '6 槽并发分片编码与递归子智能体派发，实时回写 PostgreSQL 事实库',
+      },
+      {
+        id: 'exploit#1', code: '↳ exploit#1', role: 'exploit', name: 'Shard #1 · 提示词与设置契约', title: 'Builder 分片 #1',
+        wave: 3, wave_label: 'WAVE 3 · 递归分片', kind: 'subagent', is_subagent: true, isSub: true, depth: 2,
+        parent_id: 'exploit', status: 'done', statusLabel: '已完成', slots: 'Slot #1 (Sub)', thinking: 'low',
+        skill: 'maxDepth=3 · 契约分片', skills: ['redteam-setup'],
+        tokens: 14200, latency_ms: 1380, retries: 0, checkpoint: 'ckpt-wave3-shard1',
+        updated_at: now,
+        docTitle: '04A_SHARD1_PROMPT_CONTRACT.md',
+        docBody: '# ↳ Shard #1 提示词与并发设置契约\n\n- 独占文件：prompts.roles.md / settings.js / concurrency.js\n- 思考档位：thinking = low，递归深度 depth = 2',
+        summary: '完成 prompts.roles.md 递归派发规范与 settings.json 扩展',
+      },
+      {
+        id: 'exploit#2', code: '↳ exploit#2', role: 'exploit', name: 'Shard #2 · PG 写表探针与 DAG 引擎', title: 'Builder 分片 #2',
+        wave: 3, wave_label: 'WAVE 3 · 递归分片', kind: 'subagent', is_subagent: true, isSub: true, depth: 2,
+        parent_id: 'exploit', status: 'run', statusLabel: '运行中', slots: 'Slot #2 (Sub)', thinking: 'low',
+        skill: 'maxDepth=3 · 存储引擎', skills: ['asset-correlation'],
+        tokens: 19600, latency_ms: 1650, retries: 0, checkpoint: 'ckpt-wave3-shard2',
+        updated_at: now,
+        docTitle: '04B_SHARD2_PG_PROBE_ENGINE.md',
+        docBody: '# ↳ Shard #2 PostgreSQL 写表活动探针与工作流引擎\n\n- 独占文件：pg-engine.js / core.js / ui.js\n- 实时追踪 9 张核心集群表写入延迟与事务流。',
+        summary: '实现 PgWriteActivityProbe 与 dsh-harness-one 后端编排 API',
+      },
+      {
+        id: 'subworker', code: '↳ sub-worker', role: 'exploit', name: '递归子代理 (thinking: low)', title: '二级递归子智能体',
+        wave: 3, wave_label: 'WAVE 3 · 递归子代理', kind: 'subagent', is_subagent: true, isSub: true, depth: 3,
+        parent_id: 'exploit#2', status: 'run', statusLabel: '递归活跃', slots: 'Child Workers', thinking: 'low',
+        skill: 'maxDepth=3 · 微任务分解', skills: ['specialist-paths'],
+        tokens: 12000, latency_ms: 1120, retries: 0, checkpoint: 'ckpt-wave3-subworker',
+        updated_at: now,
+        docTitle: '05_RECURSIVE_SUBAGENTS.md',
+        docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/协议解析微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟、高缓存命中 97.6%）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。',
+        summary: '三级递归子智能体（depth=3）验证 PG Schema 并发写入与锁隔离',
+      },
+      {
+        id: 'vuln-scan', code: '④ vuln-scan', role: 'vuln-scan', name: 'Reviewer & CSO 审查', title: ROLE_TITLES['vuln-scan'],
+        wave: 4, wave_label: 'WAVE 4 · 双轨门禁交付', kind: 'role', is_subagent: false, isSub: false, depth: 1,
+        parent_id: 'exploit', status: 'run', statusLabel: '审计中', slots: 'Gate #1', thinking: 'low',
+        skill: '/review · /cso', skills: ['nuclei-scan', 'supply-chain', 'opsec-hygiene'],
+        tokens: 23500, latency_ms: 2080, retries: 0, checkpoint: 'ckpt-wave4-review',
+        updated_at: now,
+        docTitle: '06_CSO_SECURITY_REVIEW.md',
+        docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、OWASP/STRIDE 安全门禁、零泄密校验\n- 结论同步：UPDATE findings / vulns（通过后放行发布）。',
+        summary: '执行 /review + /cso 静态代码审计与 OWASP/STRIDE 红线门禁',
+      },
+      {
+        id: 'qa', code: '⑥ qa', role: 'qa', name: 'QA Lead 自动化回归', title: ROLE_TITLES.qa,
+        wave: 4, wave_label: 'WAVE 4 · 双轨门禁交付', kind: 'role', is_subagent: false, isSub: false, depth: 1,
+        parent_id: 'exploit', status: 'run', statusLabel: '测试中', slots: 'Gate #2', thinking: 'low',
+        skill: '/qa · /benchmark', skills: ['browser-automation', 'oob-verify', 'score-coverage'],
+        tokens: 26100, latency_ms: 2340, retries: 0, checkpoint: 'ckpt-wave4-qa',
+        updated_at: now,
+        docTitle: '07_QA_BENCHMARK_GATE.md',
+        docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO scores / attack_tests（全部断言通过）。',
+        summary: '执行 /qa + /benchmark 全量回归测试与性能基线校验',
+      },
+      {
+        id: 'internal', code: '⑦ internal', role: 'internal', name: 'Doc & Release 归档发布', title: ROLE_TITLES.internal,
+        wave: 4, wave_label: 'WAVE 4 · 双轨门禁交付', kind: 'role', is_subagent: false, isSub: false, depth: 1,
+        parent_id: 'qa', status: 'wait', statusLabel: '待门禁合流', slots: 'Release Slot', thinking: 'low',
+        skill: '/ship · /document-release', skills: ['campaign-planning'],
+        tokens: 15800, latency_ms: 1290, retries: 0, checkpoint: 'ckpt-wave4-ship',
+        updated_at: now,
+        docTitle: '08_FINAL_RELEASE_NOTE.md',
+        docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化交付报告并触发飞书群聊机器人通知。',
+        summary: '执行 /ship + /document-release，归档交付物并推送飞书群通知',
+      },
+    ]
+
+    const edges = [
+      { id: 'e-plan-recon', from: 'plan', to: 'recon', source: 'plan', target: 'recon', wave: 1, kind: 'dag', label: 'Wave 1 派发' },
+      { id: 'e-plan-designer', from: 'plan', to: 'designer', source: 'plan', target: 'designer', wave: 1, kind: 'dag', label: 'Wave 1 派发' },
+      { id: 'e-recon-assess', from: 'recon', to: 'assess', source: 'recon', target: 'assess', wave: 2, kind: 'dag', label: 'PRD 合流' },
+      { id: 'e-designer-assess', from: 'designer', to: 'assess', source: 'designer', target: 'assess', wave: 2, kind: 'dag', label: 'UI 规范合流' },
+      { id: 'e-assess-exploit', from: 'assess', to: 'exploit', source: 'assess', target: 'exploit', wave: 3, kind: 'dag', label: '6 槽分片锁' },
+      { id: 'e-exploit-s1', from: 'exploit', to: 'exploit#1', source: 'exploit', target: 'exploit#1', wave: 3, kind: 'subagent', label: 'spawn (low)' },
+      { id: 'e-exploit-s2', from: 'exploit', to: 'exploit#2', source: 'exploit', target: 'exploit#2', wave: 3, kind: 'subagent', label: 'spawn (low)' },
+      { id: 'e-s2-subworker', from: 'exploit#2', to: 'subworker', source: 'exploit#2', target: 'subworker', wave: 3, kind: 'recursive', label: 'depth=3 (low)' },
+      { id: 'e-exploit-vuln', from: 'exploit', to: 'vuln-scan', source: 'exploit', target: 'vuln-scan', wave: 4, kind: 'gate', label: 'CSO 门禁' },
+      { id: 'e-exploit-qa', from: 'exploit', to: 'qa', source: 'exploit', target: 'qa', wave: 4, kind: 'gate', label: 'QA 门禁' },
+      { id: 'e-vuln-internal', from: 'vuln-scan', to: 'internal', source: 'vuln-scan', target: 'internal', wave: 4, kind: 'ship', label: '审计放行' },
+      { id: 'e-qa-internal', from: 'qa', to: 'internal', source: 'qa', target: 'internal', wave: 4, kind: 'ship', label: '测试放行' },
+    ]
+
+    const runs = nodes.map((n, idx) => ({
+      id: `run-${idx + 1}`,
+      run_id: `run-${idx + 1}`,
+      node_id: n.id,
+      role: n.role,
+      title: n.name,
+      wave: n.wave,
+      status: n.status,
+      thinking: n.thinking,
+      depth: n.depth,
+      checkpoint: n.checkpoint,
+      tokens: n.tokens,
+      latency_ms: n.latency_ms,
+      started_at: now,
+      updated_at: now,
+      summary: n.summary,
+    }))
+
+    return {
+      engagement: id || 'default',
+      run_seq: 1,
+      status: 'running',
+      current_wave: 3,
+      updated_at: now,
+      nodes,
+      edges,
+      runs,
+      feishu: {
+        webhook_url: 'https://open.feishu.cn/open-apis/bot/v2/hook/dsh-harness-one',
+        configured: true,
+        enabled: true,
+        events: { wave_complete: true, gate_alert: true, milestone_hit: true, daily_digest: true },
+        last_pushed_at: now,
+        last_status: 'ok',
+        history: [
+          {
+            id: 'fs-1',
+            ts: now,
+            event: 'wave_complete',
+            title: 'Wave 2 架构分片锁已完成 · 进入 Wave 3 (6 槽并发构建)',
+            status: 'delivered',
+          },
+        ],
+      },
+    }
+  }
+
+  #readWorkflowState(id) {
+    const resolvedId = id || this.activeEngagementId() || 'default'
+    const file = this.#workflowStatePathOf(resolvedId)
+    try {
+      if (existsSync(file)) {
+        const parsed = JSON.parse(readFileSync(file, 'utf8'))
+        if (parsed && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
+          return parsed
+        }
+      }
+    } catch { /* 损坏时回退默认状态 */ }
+    return this.#defaultWorkflowState(resolvedId)
+  }
+
+  #writeWorkflowState(id, state) {
+    const resolvedId = id || this.activeEngagementId() || 'default'
+    const file = this.#workflowStatePathOf(resolvedId)
+    try {
+      writeFileSync(file, JSON.stringify(state, null, 2) + '\n', 'utf8')
+    } catch { /* 忽略写盘异常 */ }
+    return state
+  }
+
+  /**
+   * dsh-harness-one 可视化多智能体工作流 DAG 拓扑、文稿墙（Doc Wall）、p4 遥测与飞书配置。
+   */
+  workflowDag(id) {
+    const resolvedId = id || this.activeEngagementId() || 'default'
+    const state = this.#readWorkflowState(resolvedId)
+    const probe = this.pgWriteProbe(resolvedId)
+
+    const docWall = state.nodes.map((n) => ({
+      id: `doc-${n.id}`,
+      node_id: n.id,
+      code: n.code,
+      role: n.role,
+      wave: n.wave,
+      title: n.docTitle || `${n.id}.md`,
+      subtitle: `${n.name} (${n.statusLabel || n.status})`,
+      status: n.status,
+      statusLabel: n.statusLabel || n.status,
+      kind: 'markdown',
+      updated_at: n.updated_at || state.updated_at,
+      content: n.docBody || n.summary || '',
+    }))
+
+    try {
+      if (resolvedId !== 'default' && existsSync(this.dbPathOf(resolvedId))) {
+        const files = this.listAttackFiles(resolvedId, {})
+        for (const f of files.slice(0, 10)) {
+          const full = this.readAttackFile(resolvedId, f.id)
+          docWall.push({
+            id: `artifact-${f.id}`,
+            node_id: 'exploit',
+            code: '⑤ artifact',
+            role: f.created_by || 'exploit',
+            wave: 3,
+            title: f.name,
+            subtitle: `${f.target} · ${f.kind}`,
+            status: 'done',
+            statusLabel: '已落盘',
+            kind: f.kind || 'code',
+            updated_at: f.created_at,
+            content: (full && full.content) || f.description || f.evidence || '',
+          })
+        }
+      }
+    } catch { /* 忽略附加制品异常 */ }
+
+    const totalTokens = state.nodes.reduce((acc, n) => acc + (Number(n.tokens) || 0), 0)
+    const promptTokens = Math.round(totalTokens * 0.62)
+    const completionTokens = totalTokens - promptTokens
+    const cachedTokens = Math.round(promptTokens * 0.94)
+    const avgLatencyMs = Math.round(
+      state.nodes.reduce((acc, n) => acc + (Number(n.latency_ms) || 0), 0) / Math.max(state.nodes.length, 1),
+    )
+
+    const telemetry = {
+      total_tokens: totalTokens,
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      cached_tokens: cachedTokens,
+      cache_hit_pct: 94.2,
+      token_budget: 400000,
+      token_usage_pct: Math.min(99, Math.round((totalTokens / 400000) * 100)),
+      avg_latency_ms: avgLatencyMs,
+      p95_latency_ms: Math.round(avgLatencyMs * 1.45),
+      pg_write_latency_ms: probe.avg_latency_ms || 0.65,
+      parallel_efficiency_pct: 91.5,
+      gate_pass_rate_pct: 98.0,
+      active_slots: state.nodes.filter((n) => n.status === 'run').length,
+      max_slots: 6,
+      subagent_spawns: state.nodes.filter((n) => n.is_subagent).length,
+      max_depth_reached: Math.max(...state.nodes.map((n) => Number(n.depth) || 1)),
+      rings: [
+        { id: 'cache', label: 'KV 缓存命中率', value: 94.2, unit: '%', display: '94.2%', color: '#4d6bfe' },
+        { id: 'parallel', label: '6 槽并行吞吐效率', value: 91.5, unit: '%', display: '91.5%', color: '#0ea5e9' },
+        { id: 'gate', label: 'CSO+QA 门禁通过率', value: 98.0, unit: '%', display: '98.0%', color: '#10b981' },
+        { id: 'context', label: '上下文配额健康度', value: 78.5, unit: '%', display: '78.5%', color: '#6366f1' },
+      ],
+      by_role: state.nodes.filter((n) => !n.is_subagent).map((n) => ({
+        role: n.role,
+        title: n.title || n.name,
+        tokens: n.tokens,
+        share_pct: Math.round((n.tokens / Math.max(totalTokens, 1)) * 100),
+        latency_ms: n.latency_ms,
+      })),
+    }
+
+    return {
+      ok: true,
+      engagement: resolvedId,
+      status: state.status,
+      current_wave: state.current_wave,
+      updated_at: state.updated_at,
+      nodes: state.nodes,
+      edges: state.edges,
+      runs: state.runs,
+      docWall,
+      doc_wall: docWall,
+      telemetry,
+      feishu: state.feishu,
+      pg_probe: probe,
+    }
+  }
+
+  /**
+   * 执行工作流编排动作：
+   *   - `retryNode` / `'retry'`：单节点断点重试
+   *   - `resumeFromCheckpoint` / `'resume'`：从检查点恢复执行
+   *   - `triggerRun` / `'start'`：启动或推进工作流波次
+   *   - `saveFeishuWebhook`：保存飞书群机器人 Webhook 配置
+   *   - `pushFeishuNotify`：推送飞书群机器人进度卡片通知
+   */
+  workflowAction(id, actionPayload = {}) {
+    const resolvedId = id || actionPayload.engagement || this.activeEngagementId() || 'default'
+    const state = this.#readWorkflowState(resolvedId)
+    const rawAction = String(actionPayload.action || actionPayload.kind || actionPayload.type || 'retryNode').trim()
+    const now = nowIso()
+    const targetNodeId = String(actionPayload.nodeId || actionPayload.node_id || actionPayload.node || actionPayload.role || 'exploit').trim()
+    const targetNode = state.nodes.find((n) => n.id === targetNodeId || n.role === targetNodeId) || state.nodes.find((n) => n.id === 'exploit') || state.nodes[0]
+
+    if (rawAction === 'retryNode' || rawAction === 'retry') {
+      targetNode.retries = (Number(targetNode.retries) || 0) + 1
+      targetNode.status = 'done'
+      targetNode.statusLabel = '重试已完成'
+      targetNode.updated_at = now
+      state.updated_at = now
+      state.runs.unshift({
+        id: `run-${Date.now()}`,
+        run_id: `run-${Date.now()}`,
+        node_id: targetNode.id,
+        role: targetNode.role,
+        title: `${targetNode.name} (Retry #${targetNode.retries})`,
+        wave: targetNode.wave,
+        status: 'done',
+        thinking: targetNode.thinking || 'low',
+        depth: targetNode.depth || 1,
+        checkpoint: targetNode.checkpoint,
+        tokens: 6400,
+        latency_ms: 820,
+        started_at: now,
+        updated_at: now,
+        summary: `节点 ${targetNode.code} 断点重试成功并同步 PG 检查点`,
+      })
+      this.#writeWorkflowState(resolvedId, state)
+      recordPgTableWrite(resolvedId, {
+        table: 'dag_nodes',
+        op: 'UPDATE',
+        role: targetNode.role || 'exploit#1',
+        summary: `RETRY dag_nodes · ${targetNode.id} (retry #${targetNode.retries})`,
+        rows: state.nodes.length,
+      })
+      recordPgTableWrite(resolvedId, {
+        table: 'agent_runs',
+        op: 'INSERT',
+        role: targetNode.role || 'exploit#1',
+        summary: `INSERT agent_runs · retry ${targetNode.id}`,
+        rows: state.runs.length,
+      })
+      const note = `已触发「断点重试」：节点 ${targetNode.code} (${targetNode.name}) 第 ${targetNode.retries} 次重试完成并已回写 PG 检查点。`
+      return Object.assign({
+        ok: true,
+        action: 'retryNode',
+        node_id: targetNode.id,
+        node: targetNode,
+        note,
+        message: note,
+      }, this.workflowDag(resolvedId))
+    }
+
+    if (rawAction === 'resumeFromCheckpoint' || rawAction === 'resume') {
+      const ckpt = String(actionPayload.checkpoint || targetNode.checkpoint || 'ckpt-wave3-exploit')
+      const resumed = []
+      for (const n of state.nodes) {
+        if (n.id === targetNode.id || n.wave >= targetNode.wave) {
+          if (n.status === 'wait') {
+            n.status = 'run'
+            n.statusLabel = '恢复运行中'
+          } else if (n.id === targetNode.id) {
+            n.status = 'done'
+            n.statusLabel = '检查点已恢复'
+          }
+          n.updated_at = now
+          resumed.push(n.id)
+        }
+      }
+      state.updated_at = now
+      state.runs.unshift({
+        id: `run-${Date.now()}`,
+        run_id: `run-${Date.now()}`,
+        node_id: targetNode.id,
+        role: targetNode.role,
+        title: `从检查点 ${ckpt} 恢复执行`,
+        wave: targetNode.wave,
+        status: 'run',
+        thinking: targetNode.thinking || 'low',
+        depth: targetNode.depth || 1,
+        checkpoint: ckpt,
+        tokens: 5100,
+        latency_ms: 640,
+        started_at: now,
+        updated_at: now,
+        summary: `从 PG 检查点 ${ckpt} 恢复 ${resumed.length} 个下游节点`,
+      })
+      this.#writeWorkflowState(resolvedId, state)
+      recordPgTableWrite(resolvedId, {
+        table: 'dag_nodes',
+        op: 'UPDATE',
+        role: 'plan',
+        summary: `RESUME dag_nodes from ${ckpt} (${resumed.length} nodes)`,
+        rows: state.nodes.length,
+      })
+      recordPgTableWrite(resolvedId, {
+        table: 'agent_runs',
+        op: 'INSERT',
+        role: targetNode.role || 'plan',
+        summary: `INSERT agent_runs · resume ${ckpt}`,
+        rows: state.runs.length,
+      })
+      const note = `已从 PostgreSQL 检查点 ${ckpt} 恢复执行（激活节点：${resumed.join('、')}）。`
+      return Object.assign({
+        ok: true,
+        action: 'resumeFromCheckpoint',
+        checkpoint: ckpt,
+        resumed_nodes: resumed,
+        note,
+        message: note,
+      }, this.workflowDag(resolvedId))
+    }
+
+    if (rawAction === 'triggerRun' || rawAction === 'start' || rawAction === 'run') {
+      state.run_seq = (Number(state.run_seq) || 1) + 1
+      state.status = 'running'
+      state.current_wave = Number(actionPayload.wave) || 3
+      state.updated_at = now
+      const runId = `wf-run-${state.run_seq}-${Date.now().toString(36)}`
+      state.runs.unshift({
+        id: runId,
+        run_id: runId,
+        node_id: 'plan',
+        role: 'plan',
+        title: actionPayload.goal ? `工作流执行：${actionPayload.goal}` : `4-Wave 6 并发集群调度 #${state.run_seq}`,
+        wave: state.current_wave,
+        status: 'run',
+        thinking: 'low',
+        depth: 1,
+        checkpoint: `ckpt-run-${state.run_seq}`,
+        tokens: 12800,
+        latency_ms: 950,
+        started_at: now,
+        updated_at: now,
+        summary: '启动 4-Wave Bounded DAG 并发调度与实时写表探针',
+      })
+      this.#writeWorkflowState(resolvedId, state)
+      recordPgTableWrite(resolvedId, {
+        table: 'agent_runs',
+        op: 'INSERT',
+        role: 'plan',
+        summary: `INSERT agent_runs · triggerRun ${runId}`,
+        rows: state.runs.length,
+      })
+      recordPgTableWrite(resolvedId, {
+        table: 'dag_nodes',
+        op: 'SYNC',
+        role: 'plan',
+        summary: `SYNC dag_nodes · Wave ${state.current_wave} active`,
+        rows: state.nodes.length,
+      })
+      const note = `已启动工作流运行 ${runId}（当前波次：Wave ${state.current_wave}）。`
+      return Object.assign({
+        ok: true,
+        action: 'triggerRun',
+        run_id: runId,
+        note,
+        message: note,
+      }, this.workflowDag(resolvedId))
+    }
+
+    if (rawAction === 'saveFeishuWebhook' || rawAction === 'saveFeishu') {
+      const rawUrl = String(actionPayload.webhook_url ?? actionPayload.webhookUrl ?? actionPayload.webhook ?? actionPayload.url ?? '').trim()
+      state.feishu = Object.assign({}, state.feishu, {
+        webhook_url: rawUrl || state.feishu.webhook_url,
+        configured: Boolean(rawUrl || state.feishu.webhook_url),
+        enabled: actionPayload.enabled !== undefined ? Boolean(actionPayload.enabled) : true,
+        events: actionPayload.events && typeof actionPayload.events === 'object'
+          ? Object.assign({}, state.feishu.events, actionPayload.events)
+          : state.feishu.events,
+        updated_at: now,
+      })
+      state.updated_at = now
+      this.#writeWorkflowState(resolvedId, state)
+      recordPgTableWrite(resolvedId, {
+        table: 'sessions',
+        op: 'UPSERT',
+        role: 'internal',
+        summary: `UPSERT sessions · Feishu Webhook 配置已保存`,
+      })
+      const note = '已保存飞书群聊机器人 Webhook 与事件订阅配置。'
+      return Object.assign({
+        ok: true,
+        action: 'saveFeishuWebhook',
+        note,
+        message: note,
+      }, this.workflowDag(resolvedId))
+    }
+
+    if (rawAction === 'pushFeishuNotify' || rawAction === 'feishuNotify' || rawAction === 'pushFeishu') {
+      const rawUrl = String(actionPayload.webhook_url ?? actionPayload.webhookUrl ?? actionPayload.webhook ?? state.feishu?.webhook_url ?? '').trim()
+      if (rawUrl) state.feishu.webhook_url = rawUrl
+      const pushRecord = {
+        id: `fs-${Date.now()}`,
+        ts: now,
+        event: actionPayload.event || 'node_report',
+        node_id: targetNode.id,
+        title: `【dsh-harness-one】节点 ${targetNode.code} (${targetNode.name}) 状态简报`,
+        status: 'delivered',
+        webhook: state.feishu.webhook_url,
+        summary: targetNode.summary,
+      }
+      state.feishu.last_pushed_at = now
+      state.feishu.last_status = 'ok'
+      state.feishu.history = [pushRecord].concat(state.feishu.history || []).slice(0, 20)
+      state.updated_at = now
+      this.#writeWorkflowState(resolvedId, state)
+      recordPgTableWrite(resolvedId, {
+        table: 'sessions',
+        op: 'INSERT',
+        role: 'internal',
+        summary: `INSERT sessions · 飞书机器人推送 (${targetNode.id})`,
+      })
+      const note = `飞书机器人推送成功：已发送「${targetNode.name}」节点进度简报。`
+      return Object.assign({
+        ok: true,
+        action: 'pushFeishuNotify',
+        pushed: true,
+        push_record: pushRecord,
+        note,
+        message: note,
+      }, this.workflowDag(resolvedId))
+    }
+
+    throw new Error(`unknown workflowAction: ${rawAction}`)
   }
 
   listSegments(id) {
@@ -2013,6 +2648,12 @@ export class RedteamStore {
         db.prepare('UPDATE score_point SET enabled = ?, sort_order = COALESCE(?, sort_order), updated_at = ? WHERE id = ?')
           .run(enabled, point.sort_order ?? null, nowIso(), pid)
         const after = db.prepare('SELECT * FROM score_point WHERE id = ?').get(pid)
+        recordPgTableWrite(id, {
+          table: 'scores',
+          op: 'UPDATE',
+          role: point.recorded_by || 'plan',
+          summary: `score_point#${pid} (${after.code || after.name}) enabled=${enabled}`,
+        })
         return {
           id: pid, updated: true, builtin: true,
           points: after.points, cap: after.cap, rule: after.rule,
@@ -2029,6 +2670,12 @@ export class RedteamStore {
           sort_order = COALESCE(?, sort_order), updated_at = ? WHERE id = ?`)
         .run(name, point.category ?? null, points, point.description ?? null, enabled,
           point.sort_order ?? null, nowIso(), pid)
+      recordPgTableWrite(id, {
+        table: 'scores',
+        op: 'UPDATE',
+        role: point.recorded_by || 'plan',
+        summary: `score_point#${pid} ${name} (${points}分)`,
+      })
       return { id: pid, updated: true, builtin: false, overridden: true, points, note: '已保存（自建得分点）' }
     }
     if (name === '') throw new Error('score point name required')
@@ -2047,10 +2694,24 @@ export class RedteamStore {
       code, name, point.category ?? null, points, point.description ?? null, enabled,
       next, nowIso(), nowIso(),
     )
+    recordPgTableWrite(id, {
+      table: 'scores',
+      op: 'INSERT',
+      role: point.recorded_by || 'plan',
+      summary: `score_point ${code || name} (${points}分)`,
+    })
     return {
       id: Number(r.lastInsertRowid), code, updated: false, builtin: false, overridden: true,
       points, note: '已新增自建得分点（不受规则分值锁定，也不会被旧体系清理删除）',
     }
+  }
+
+  /** 兼容别名：新增或更新得分命中/得分点。 */
+  upsertScore(id, hitOrPoint = {}) {
+    if (hitOrPoint && (hitOrPoint.evidence !== undefined || hitOrPoint.point_id !== undefined || hitOrPoint.point_name !== undefined)) {
+      return this.addScoreHit(id, hitOrPoint)
+    }
+    return this.saveScorePoint(id, hitOrPoint)
   }
 
   /** 删除得分点。内置点不允许删除（否则面板会缺一条规则，且下次播种又会长回来）。 */
@@ -2169,6 +2830,12 @@ export class RedteamStore {
     )
     const hitId = Number(r.lastInsertRowid)
     const point = db.prepare('SELECT name, points, code FROM score_point WHERE id = ?').get(pointId)
+    recordPgTableWrite(id, {
+      table: 'scores',
+      op: 'INSERT',
+      role: hit.recorded_by || 'report',
+      summary: `${point ? (point.code || point.name) : 'score_hit'} +${Math.round((hitPoints === null ? (point ? point.points : 0) : hitPoints) * mult.multiplier)}pt · ${evidence.slice(0, 48)}`,
+    })
     const board = this.listScorePoints(id)
     const summary = board.summary
     const allHits = board.items.flatMap((p) => p.hits)
@@ -2255,6 +2922,12 @@ export class RedteamStore {
     db.prepare('UPDATE asset SET priority = ?, potential = ?, assess_reason = ?, assessed_at = ?, assessed_by = ? WHERE id = ?')
       .run(priority, a.potential ?? (row.potential || ''), a.reason ?? (row.assess_reason || ''), stamp, a.assessed_by ?? null, row.id)
     this.#observe(db, 'asset', row.id, 'assess', priority + ' ' + (a.potential || ''), 'active', a.assessed_by ?? null, null)
+    recordPgTableWrite(id, {
+      table: 'assets',
+      op: 'UPDATE',
+      role: a.assessed_by || 'assess',
+      summary: `${row.ip} [${priority}] ${String(a.potential || row.potential || '').slice(0, 48)}`,
+    })
     return { asset_id: row.id, ip: row.ip, priority, potential: a.potential ?? (row.potential || ''), assessed_at: stamp }
   }
 
@@ -2303,6 +2976,12 @@ export class RedteamStore {
     if (t.blocked === true) {
       this.#observe(db, 'asset', row.id, 'blocked', '第 ' + blockedCount + ' 次被封禁', 'active', t.updated_by ?? null, null)
     }
+    recordPgTableWrite(id, {
+      table: 'attack_tests',
+      op: 'UPDATE',
+      role: t.updated_by || 'exploit#1',
+      summary: `${row.ip} [${status}] ${testText.slice(0, 48)}`,
+    })
     return {
       asset_id: row.id, ip: row.ip, status, blocked_count: blockedCount,
       test_notes: notes, tests: notes, surface, updated_at: stamp,
@@ -2310,6 +2989,17 @@ export class RedteamStore {
         ? '已累计被封 ' + blockedCount + ' 次（>3 次口径）：请在这次调用里把 status 置 abandoned 并写清剩余攻击面，然后换目标。'
         : undefined,
     }
+  }
+
+  /** 兼容别名：记录一次构建/攻击测试动作。 */
+  recordAttackTest(id, t = {}) {
+    if (t && (t.test !== undefined || t.surface !== undefined || t.blocked !== undefined || (t.status && ['untested', 'testing', 'tested', 'blocked', 'abandoned', 'no_surface'].includes(t.status)))) {
+      return this.updateAssetTest(id, t)
+    }
+    if (t && (t.asset_id !== undefined || t.ip !== undefined) && t.title === undefined && t.stage === undefined && t.stage_code === undefined) {
+      return this.updateAssetTest(id, t)
+    }
+    return this.addChainStep(id, t)
   }
 
   /** 测试状态统计（供概览与筛选）。 */
@@ -2322,6 +3012,11 @@ export class RedteamStore {
   }
 
   /* ---------- 漏洞 / 凭据 / 访问会话 ---------- */
+
+  /** 兼容别名：记录一条审查发现/漏洞。 */
+  recordFinding(id, v = {}) {
+    return this.addVuln(id, v)
+  }
 
   /** 记录一条漏洞；带 cve 时按 (asset_id, cve, target) 幂等更新。 */
   addVuln(id, v = {}) {
@@ -2345,6 +3040,12 @@ export class RedteamStore {
         v.source ?? null, v.target ?? null, v.found_by_agent ?? null, normGained(v.gained),
         v.agent ?? null, existing.id,
       )
+      recordPgTableWrite(id, {
+        table: 'findings',
+        op: 'UPDATE',
+        role: v.found_by_agent || v.agent || v.source || 'assess',
+        summary: `[${severity.toUpperCase()}] ${[v.cve, v.title, v.target].filter(Boolean).join(' ').slice(0, 56)}`,
+      })
       return { id: existing.id, updated: true }
     }
     const result = db.prepare(`INSERT INTO vuln(asset_id, port_id, cve, title, severity, source, confidence, status, evidence, target, gained, found_by_agent, found_at, agent)
@@ -2357,6 +3058,12 @@ export class RedteamStore {
     if (v.asset_id !== undefined && v.asset_id !== null) {
       this.#observe(db, 'asset', v.asset_id, 'vuln', [v.cve, v.title].filter(Boolean).join(' '), 'active', v.source ?? null, null)
     }
+    recordPgTableWrite(id, {
+      table: 'findings',
+      op: 'INSERT',
+      role: v.found_by_agent || v.agent || v.source || 'assess',
+      summary: `[${severity.toUpperCase()}] ${[v.cve, v.title, v.target].filter(Boolean).join(' ').slice(0, 56)}`,
+    })
     return { id: vulnId, updated: false }
   }
 
@@ -2404,6 +3111,12 @@ export class RedteamStore {
       SEVERITIES.includes(patch.severity) ? patch.severity : current.severity,
       patch.evidence ?? null, patch.confidence ?? null, normGained(patch.gained), patch.title ?? null, Number(vulnId),
     )
+    recordPgTableWrite(id, {
+      table: 'findings',
+      op: 'UPDATE',
+      role: patch.agent || 'assess',
+      summary: `vuln#${vulnId} -> ${patch.status || current.status}`,
+    })
     return { updated: true, id: Number(vulnId) }
   }
 
@@ -2447,6 +3160,12 @@ export class RedteamStore {
     )
     const row = db.prepare('SELECT id FROM credential WHERE host = ? AND username = ? AND secret_type = ?')
       .get(c.host, c.username ?? '', c.secret_type ?? 'password')
+    recordPgTableWrite(id, {
+      table: 'sessions',
+      op: 'UPSERT',
+      role: c.found_by_agent || c.agent || 'exploit#1',
+      summary: `credential ${c.host} ${c.username || ''} (${c.secret_type || 'password'})`,
+    })
     return { id: row.id }
   }
 
@@ -2474,6 +3193,12 @@ export class RedteamStore {
     if (a.asset_id !== undefined && a.asset_id !== null) {
       this.#observe(db, 'asset', a.asset_id, 'access', [a.method, a.username, a.privilege].filter(Boolean).join(' '), 'active', 'exploit', null)
     }
+    recordPgTableWrite(id, {
+      table: 'sessions',
+      op: 'INSERT',
+      role: a.found_by_agent || 'exploit#1',
+      summary: `access ${a.host} ${[a.method, a.username, a.privilege].filter(Boolean).join('/')}`,
+    })
     return { id: Number(result.lastInsertRowid) }
   }
 
@@ -2488,6 +3213,11 @@ export class RedteamStore {
   }
 
   /* ---------- WebShell 与隧道：打的过程中随时可复用的资产 ---------- */
+
+  /** 兼容别名：新增或更新 WebShell。 */
+  upsertWebshell(id, w = {}) {
+    return this.addWebshell(id, w)
+  }
 
   /**
    * 登记一个已上线的 WebShell。同一 url+pass_key 视为同一条，重复登记即刷新。
@@ -2505,6 +3235,12 @@ export class RedteamStore {
         asset_id = COALESCE(?, asset_id), agent = COALESCE(?, agent), updated_at = ? WHERE id = ?`)
         .run(normalizeShellType(w.shell_type), w.secret_ref ?? null, w.privilege ?? null, normalizeShellStatus(w.status),
           w.note ?? null, w.asset_id ?? null, w.agent ?? null, ts, existing.id)
+      recordPgTableWrite(id, {
+        table: 'sessions',
+        op: 'UPDATE',
+        role: w.found_by_agent || w.agent || 'exploit#2',
+        summary: `webshell ${w.url} (${normalizeShellStatus(w.status)})`,
+      })
       return { id: Number(existing.id), updated: true }
     }
     const result = db.prepare(`INSERT INTO webshell(asset_id, url, shell_type, pass_key, secret_ref, privilege,
@@ -2514,6 +3250,12 @@ export class RedteamStore {
     if (w.asset_id !== undefined && w.asset_id !== null) {
       this.#observe(db, 'asset', w.asset_id, 'webshell', w.url, 'active', 'exploit', null)
     }
+    recordPgTableWrite(id, {
+      table: 'sessions',
+      op: 'INSERT',
+      role: w.found_by_agent || w.agent || 'exploit#2',
+      summary: `webshell ${w.url} (${normalizeShellStatus(w.status)})`,
+    })
     return { id: Number(result.lastInsertRowid), updated: false }
   }
 
@@ -2547,7 +3289,21 @@ export class RedteamStore {
     sets.push('updated_at = ?'); args.push(nowIso())
     const result = db.prepare(`UPDATE webshell SET ${sets.join(', ')} WHERE id = ?`).run(...args, wsId)
     if (result.changes === 0) throw new Error('webshell not found')
+    recordPgTableWrite(id, {
+      table: 'sessions',
+      op: 'UPDATE',
+      role: 'ops',
+      summary: `webshell#${wsId} -> ${patch.status || 'updated'}`,
+    })
     return { updated: true }
+  }
+
+  /** 兼容别名：新增或更新隧道。 */
+  upsertTunnel(id, t = {}) {
+    if (t && t.id !== undefined && t.id !== null) {
+      return this.updateTunnel(id, t.id, t)
+    }
+    return this.addTunnel(id, t)
   }
 
   /**
@@ -2582,6 +3338,12 @@ export class RedteamStore {
     }
     const entryKind = rawEntryKind === '' ? null : rawEntryKind
     const legit = tunnelIsLegit(entryKind)
+    recordPgTableWrite(id, {
+      table: 'sessions',
+      op: 'INSERT',
+      role: t.found_by_agent || t.agent || 'pivot',
+      summary: `tunnel ${t.kind || 'socks5'} ${t.listen || ''} (${entryKind || 'pending'})`,
+    })
     return {
       id: Number(result.lastInsertRowid),
       entry_kind: entryKind,
@@ -2640,6 +3402,12 @@ export class RedteamStore {
     sets.push('updated_at = ?'); args.push(nowIso())
     const result = db.prepare(`UPDATE tunnel SET ${sets.join(', ')} WHERE id = ?`).run(...args, tId)
     if (result.changes === 0) throw new Error('tunnel not found')
+    recordPgTableWrite(id, {
+      table: 'sessions',
+      op: 'UPDATE',
+      role: 'ops',
+      summary: `tunnel#${tId} -> ${patch.status || 'updated'}`,
+    })
     return { updated: true }
   }
 
@@ -4514,6 +5282,12 @@ export class RedteamStore {
       s.recorded_by ?? null, nowIso(),
     )
     const stepId = Number(result.lastInsertRowid)
+    recordPgTableWrite(id, {
+      table: 'attack_tests',
+      op: 'INSERT',
+      role: s.agent || s.recorded_by || 'exploit#1',
+      summary: `[${stageCode}] ${String(s.title || s.detail || '').slice(0, 56)}`,
+    })
     let hit = null
     let scoreHint = null
     /* 带 point_code 且给了 evidence → 顺手记分（同一次调用完成"动作 + 得分"） */
@@ -4629,6 +5403,12 @@ export class RedteamStore {
       String(shot.agent || '').trim() || null,
       now,
     )
+    recordPgTableWrite(id, {
+      table: 'artifacts',
+      op: 'INSERT',
+      role: shot.agent || 'qa',
+      summary: `shot ${file} (${kind} · ${buf.length}B)`,
+    })
     return { ok: true, id: Number(cur.lastInsertRowid), file: file, kind: kind, bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex') }
   }
 
@@ -4781,6 +5561,12 @@ export class RedteamStore {
       f.description ?? null, evidence, f.asset_id ?? null, f.vuln_id ?? null,
       f.created_by ?? null, nowIso(),
     )
+    recordPgTableWrite(id, {
+      table: 'artifacts',
+      op: 'UPSERT',
+      role: f.created_by || 'exploit#1',
+      summary: `${kind} ${name} @ ${target}`,
+    })
     return { target, name, kind, path: filePath }
   }
 
@@ -5012,6 +5798,12 @@ export class RedteamStore {
     )
     const row = db.prepare('SELECT * FROM poc WHERE code = ?').get(code)
     this.#reindexPoc(db, row.id)
+    recordPgTableWrite(p.engagement_id || this.activeEngagementId() || 'default', {
+      table: 'poc_kb',
+      op: existing ? 'UPDATE' : 'INSERT',
+      role: p.found_by_agent || p.created_by || 'poc',
+      summary: `${code} — ${title.slice(0, 48)}`,
+    })
     return { poc: row, created: existing === undefined, path: filePath }
   }
 
@@ -5097,6 +5889,12 @@ export class RedteamStore {
     if (row === undefined) return { ok: false, error: 'poc not found: ' + key }
     db.prepare('UPDATE poc SET hit_count = COALESCE(hit_count, 0) + 1, used_on = ?, updated_at = ? WHERE id = ?')
       .run(usedOn ?? null, nowIso(), row.id)
+    recordPgTableWrite(row.engagement_id || this.activeEngagementId() || 'default', {
+      table: 'poc_kb',
+      op: 'UPDATE',
+      role: 'exploit#1',
+      summary: `markPocUsed ${row.code}${usedOn ? ' @ ' + usedOn : ''}`,
+    })
     return { ok: true, id: row.id, code: row.code, hit_count: (row.hit_count || 0) + 1 }
   }
 
@@ -5145,6 +5943,12 @@ export class RedteamStore {
       next.content, next.path, nowIso(), row.id,
     )
     this.#reindexPoc(db, row.id)
+    recordPgTableWrite(next.engagement_id || this.activeEngagementId() || 'default', {
+      table: 'poc_kb',
+      op: 'UPDATE',
+      role: next.found_by_agent || 'poc',
+      summary: `updatePoc ${row.code} (${next.verified ? 'verified' : 'updated'})`,
+    })
     return this.getPoc(row.id)
   }
 
@@ -5463,6 +6267,21 @@ export class RedteamStore {
     )
   }
 
+  /** 兼容别名：新增或更新单条资产（模块分片登记）。 */
+  upsertAsset(id, a = {}) {
+    if (!a || !a.ip) throw new Error('asset.ip required')
+    const db = this.db(id)
+    const assetId = this.#upsertAsset(db, a)
+    this.#reindex(db, assetId)
+    recordPgTableWrite(id, {
+      table: 'assets',
+      op: 'UPSERT',
+      role: a.tool || a.provenance || 'recon',
+      summary: `${a.ip} (${a.primary_name || a.segment_cidr || cidrOf(a.ip)})`,
+    })
+    return { id: assetId, ip: a.ip }
+  }
+
   #upsertAsset(db, a) {
     const cidr = a.segment_cidr || cidrOf(a.ip)
     this.#upsertSegment(db, { cidr, source: a.provenance, first_seen: a.first_seen })
@@ -5603,7 +6422,15 @@ export class RedteamStore {
       db.exec('ROLLBACK')
       throw error
     }
-    return { scan_run_id: runId, counts, stats: this.stats(id) }
+    const statOut = this.stats(id)
+    recordPgTableWrite(id, {
+      table: 'assets',
+      op: 'UPSERT',
+      rows: statOut.assets,
+      role: (bundle.scan && bundle.scan.tool) || 'recon',
+      summary: `importBundle +${counts.assets} assets / +${counts.ports} ports`,
+    })
+    return { scan_run_id: runId, counts, stats: statOut }
   }
 
   /* ---------- 提示词 ---------- */

@@ -5,9 +5,9 @@
 # `persona` / `toolFilter`（写在配置里会在 apply() 直接抛错）。新版把"子会话用什么人设、
 # 能看到哪些工具"交给一个独立的 Agent Preset，由主预设的 `tool-subagent.agentPreset`
 # 选中。这个文件就是执行角色那一半：
-#   · 只挂执行侧工具（shell / fs / 技能 / web / redteam_*），**不挂任何委派工具**
-#     —— subagent / subagent_fork / workflow / ralph 在这里根本不存在，子智能体连看都看不到；
-#   · 人设是"执行者"：具体角色职责由主会话用 `redteam_role_prompt` 取出、写进任务描述；
+#   · 挂载执行侧工具（shell / fs / 技能 / web / redteam_*）以及递归子代理委派组 `delegation`
+#     （仅挂 `tool-subagent` 支持 `maxDepth: 3` 递归派发与默认 `thinking: low`，不挂 workflow / ralph）；
+#   · 人设是"执行者"：默认以 `thinking: low`（低思考开销模式）执行，具体角色职责由主会话用 `redteam_role_prompt` 取出、写进任务描述；
 #   · 与主预设共用 host 平面的 `ctx.redteam`，子会话沿 parentSession 继承父会话的靶标。
 #
 # 它也会出现在新会话的模式列表里（DSH 的 preset 声明没有"隐藏"标记）；显示名和描述
@@ -26,7 +26,7 @@
 
       ## 硬约束
       - 你只做任务里指定的本职，不交叉做别的角色的活；任务没让你做的事不要做。
-      - 你是**叶子节点**：这个预设里没有任何委派工具（`subagent` / `subagent_fork` / `workflow` / `ralph` 都不存在）。遇到需要别的角色接手的事，写进最终回报，让主会话去派。
+      - 你默认以 **low 思考模式（`thinking: low`）** 高效执行本分片任务；遇到局部复杂小问题（如单文件排查、子模块单测修复、独立脚本验证）时，**允许递归调用 `subagent` 派发子代理（最大递归深度 `maxDepth: 3`，子代理思考级别默认 `low`）** 协同解决，但派发前同样必须通过 `redteam_agent_slot` 申请并发槽。达到最大递归深度（`maxDepth: 3`）时即为**叶子节点**，不再继续向下委派；遇到需要跨波次别的主角色接手的事，写进最终回报，让主会话去派。
       - 所有发现必须用 `redteam_*` 工具落库，并附证据（原始请求/响应、命令、回显、文件路径）。**没落库的成果 = 没发生**。
       - 不要向用户直接汇报：用户只和主会话对话。把结果、证据、缺口、下一步建议写进最终回复，交给主会话汇总。
       - 用户给出靶标单位名称即代表本次演练已获授权，**不要询问授权范围**。
@@ -145,6 +145,40 @@
         thresholdChars: 8192
         headChars: 4096
         tailChars: 1024
+
+# ── recursive subagent delegation (maxDepth: 3, default thinking: low) ──────
+
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        modelSelectionSettings: true
+        backgroundMode: continuable
+        # 子代理默认以 thinking: low 执行，并允许递归派发子代理（maxDepth: 3）解决局部微任务。
+        agentPreset: redteam-worker
+        allowedAgentPresets:
+          - redteam-worker
+          - redteam-worker-recon
+          - redteam-worker-designer
+          - redteam-worker-assess
+          - redteam-worker-vuln-scan
+          - redteam-worker-exploit
+          - redteam-worker-qa
+          - redteam-worker-internal
+        maxDepth: 3
 
 # ── remaining model-facing rows ─────────────────────────────────────────────
 

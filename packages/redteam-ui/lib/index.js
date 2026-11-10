@@ -16,10 +16,16 @@ import { fileURLToPath } from 'node:url'
 import { resolve, join } from 'node:path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { dispatch, dispatchAsync, probePgConnection, resolvePgConfig } from '../../redteam-store/lib/core.js'
+import { dispatch, dispatchAsync, probePgConnection, resolvePgConfig, getPgWriteProbe } from '../../redteam-store/lib/core.js'
 /* 技能可用性判定与 redteam_preflight 共用同一份实现（环境变量 / 本机路径 / 占位符） */
 import { checkSkill, summarizeSkills } from '../../redteam-store/lib/skill-availability.js'
-import { maxAgentsOf, maxAgentsSourceOf, saveMaxAgents, savePgUrl, DEFAULT_MAX_AGENTS, MAX_AGENTS_LIMIT } from '../../redteam-store/lib/settings.js'
+import {
+  maxAgentsOf, maxAgentsSourceOf, saveMaxAgents, savePgUrl,
+  DEFAULT_MAX_AGENTS, MAX_AGENTS_LIMIT,
+  thinkingEffortOf, saveThinkingEffort, DEFAULT_THINKING_EFFORT, VALID_THINKING_EFFORTS,
+  maxDepthOf, saveMaxDepth, DEFAULT_MAX_DEPTH, MAX_DEPTH_LIMIT,
+  clampMaxAgents, normalizeThinkingEffort, clampMaxDepth, writeSettings,
+} from '../../redteam-store/lib/settings.js'
 
 /** 本包自带技能目录（随包分发；dev 安装的 UI 包没有 skills/，此时恒为 false）。 */
 const PLUGIN_SKILLS_DIR = (() => {
@@ -610,21 +616,99 @@ async function readSkillOp(ctx, request, scope) {
  * @returns JSON 结果，或 undefined 表示不是这个 op。
  */
 async function handleAgentsOp(ctx, request) {
-  if (!['agentsStatus', 'setAgentsMax', 'setPgUrl', 'probePg'].includes(request.op)) return undefined
+  const AGENT_OPS = [
+    'agentsStatus', 'setAgentsMax', 'setClusterConfig', 'setPgUrl', 'probePg',
+    'pgWriteProbe', 'workflowDag', 'workflowAction', 'dagCheckpoint', 'feishuNotify',
+  ]
+  if (!AGENT_OPS.includes(request.op)) return undefined
   /* 并发上限与工具侧的闸门读同一份设置（settings.json → REDTEAM_MAX_AGENTS → 默认 6），
      改完立即生效、不需要重启 —— 派活时 redteam_agent_slot 每次现读。 */
-  const root = (() => { try { return ctx.redteam.root } catch { return undefined } })()
-  if (request.op === 'setAgentsMax') {
-    const next = saveMaxAgents(root, request.max)
+  const store = ctx.redteam
+  const root = (() => { try { return store && store.root } catch { return undefined } })()
+  const activeEngagement = request.engagement
+    || (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null)
+    || 'default'
+
+  if (request.op === 'pgWriteProbe') {
+    const probe = store && typeof store.pgWriteProbe === 'function'
+      ? store.pgWriteProbe(activeEngagement)
+      : getPgWriteProbe(activeEngagement)
+    return Object.assign({ ok: true }, probe)
+  }
+
+  if (request.op === 'workflowDag') {
+    if (!store || typeof store.workflowDag !== 'function') {
+      return { ok: false, error: 'store.workflowDag unavailable' }
+    }
+    return Object.assign({ ok: true }, store.workflowDag(activeEngagement))
+  }
+
+  if (request.op === 'workflowAction' || request.op === 'dagCheckpoint' || request.op === 'feishuNotify') {
+    if (!store || typeof store.workflowAction !== 'function') {
+      return { ok: false, error: 'store.workflowAction unavailable' }
+    }
+    const payload = request.op === 'feishuNotify'
+      ? Object.assign({ action: 'pushFeishuNotify' }, request)
+      : request
+    return Object.assign({ ok: true }, store.workflowAction(activeEngagement, payload))
+  }
+
+  if (request.op === 'setClusterConfig') {
+    const src = request.config && typeof request.config === 'object' ? Object.assign({}, request, request.config) : request
+    const patch = {}
+    if (src.maxAgents !== undefined || src.max !== undefined || src.max_agents !== undefined) {
+      patch.maxAgents = clampMaxAgents(src.maxAgents ?? src.max ?? src.max_agents)
+    }
+    if (src.thinkingEffort !== undefined || src.thinking_effort !== undefined || src.effort !== undefined) {
+      patch.thinkingEffort = normalizeThinkingEffort(src.thinkingEffort ?? src.thinking_effort ?? src.effort)
+    }
+    if (src.maxDepth !== undefined || src.max_depth !== undefined || src.depth !== undefined) {
+      patch.maxDepth = clampMaxDepth(src.maxDepth ?? src.max_depth ?? src.depth)
+    }
+    if (Object.keys(patch).length > 0) {
+      writeSettings(root, patch)
+    }
+    const max = maxAgentsOf(root, process.env)
+    const thinkingEffort = thinkingEffortOf(root, process.env)
+    const maxDepth = maxDepthOf(root, process.env)
     return {
-      ok: true, max: next, source: 'settings', limit: MAX_AGENTS_LIMIT,
+      ok: true,
+      max,
+      maxAgents: max,
+      thinkingEffort,
+      thinking_effort: thinkingEffort,
+      maxDepth,
+      max_depth: maxDepth,
+      source: 'settings',
+      limit: MAX_AGENTS_LIMIT,
+      max_depth_limit: MAX_DEPTH_LIMIT,
+      valid_thinking_efforts: VALID_THINKING_EFFORTS,
+      note: `集群并发策略已更新：最大并发 ${max} · 默认思考强度 ${thinkingEffort} · 递归深度上限 ${maxDepth}（立即生效）。`,
+    }
+  }
+
+  if (request.op === 'setAgentsMax') {
+    const next = saveMaxAgents(root, request.max ?? request.maxAgents)
+    if (request.thinkingEffort !== undefined || request.thinking_effort !== undefined) {
+      saveThinkingEffort(root, request.thinkingEffort ?? request.thinking_effort)
+    }
+    if (request.maxDepth !== undefined || request.max_depth !== undefined) {
+      saveMaxDepth(root, request.maxDepth ?? request.max_depth)
+    }
+    const thinkingEffort = thinkingEffortOf(root, process.env)
+    const maxDepth = maxDepthOf(root, process.env)
+    return {
+      ok: true, max: next, maxAgents: next,
+      thinkingEffort, thinking_effort: thinkingEffort,
+      maxDepth, max_depth: maxDepth,
+      source: 'settings', limit: MAX_AGENTS_LIMIT,
       note: '已保存为 ' + next + ' 个并发执行智能体，**立即生效**（派活时按新值放行，不用重启 dsh web）。',
     }
   }
   if (request.op === 'setPgUrl') {
     const saved = savePgUrl(root, request.url)
-    try { if (ctx.redteam && typeof ctx.redteam.close === 'function') ctx.redteam.close() } catch { /* 忽略 */ }
-    const dbEngine = ctx.redteam && typeof ctx.redteam.dbEngineInfo === 'function' ? ctx.redteam.dbEngineInfo() : resolvePgConfig(root)
+    try { if (store && typeof store.close === 'function') store.close() } catch { /* 忽略 */ }
+    const dbEngine = store && typeof store.dbEngineInfo === 'function' ? store.dbEngineInfo() : resolvePgConfig(root)
     return {
       ok: true, url: saved, db_engine: dbEngine,
       note: saved ? '已保存 PostgreSQL 连接串并重连引擎池。' : '已清除自定义 PostgreSQL 连接串，回退高并发 WAL 引擎。',
@@ -636,11 +720,26 @@ async function handleAgentsOp(ctx, request) {
     return Object.assign({ db_engine: cfg }, probe)
   }
   const max = maxAgentsOf(root, process.env)
-  const dbEngine = ctx.redteam && typeof ctx.redteam.dbEngineInfo === 'function' ? ctx.redteam.dbEngineInfo() : resolvePgConfig(root)
+  const thinkingEffort = thinkingEffortOf(root, process.env)
+  const maxDepth = maxDepthOf(root, process.env)
+  const dbEngine = store && typeof store.dbEngineInfo === 'function' ? store.dbEngineInfo() : resolvePgConfig(root)
+  const pgProbe = store && typeof store.pgWriteProbe === 'function'
+    ? store.pgWriteProbe(activeEngagement)
+    : getPgWriteProbe(activeEngagement)
   const subagents = ctx.get('subagents')
   const sessions = ctx.get('sessions')
   if (subagents === undefined || subagents === null || sessions === undefined || sessions === null || typeof sessions.list !== 'function') {
-    return { ok: false, error: 'subagents / sessions 注册表不可用：读不到并发占用。', max, db_engine: dbEngine }
+    return {
+      ok: false,
+      error: 'subagents / sessions 注册表不可用：读不到并发占用。',
+      max,
+      thinking_effort: thinkingEffort,
+      thinkingEffort,
+      max_depth: maxDepth,
+      maxDepth,
+      db_engine: dbEngine,
+      pg_probe: pgProbe,
+    }
   }
   const children = []
   try {
@@ -657,7 +756,17 @@ async function handleAgentsOp(ctx, request) {
       } catch { /* 单个会话读不到就跳过 */ }
     }
   } catch (error) {
-    return { ok: false, error: '列子会话失败：' + (error && error.message ? error.message : String(error)), max, db_engine: dbEngine }
+    return {
+      ok: false,
+      error: '列子会话失败：' + (error && error.message ? error.message : String(error)),
+      max,
+      thinking_effort: thinkingEffort,
+      thinkingEffort,
+      max_depth: maxDepth,
+      maxDepth,
+      db_engine: dbEngine,
+      pg_probe: pgProbe,
+    }
   }
   const running = children.filter((c) => c.activity === 'running')
   return {
@@ -666,7 +775,16 @@ async function handleAgentsOp(ctx, request) {
     source: maxAgentsSourceOf(root, process.env),
     limit: MAX_AGENTS_LIMIT,
     default_max: DEFAULT_MAX_AGENTS,
+    thinking_effort: thinkingEffort,
+    thinkingEffort,
+    default_thinking_effort: DEFAULT_THINKING_EFFORT,
+    valid_thinking_efforts: VALID_THINKING_EFFORTS,
+    max_depth: maxDepth,
+    maxDepth,
+    default_max_depth: DEFAULT_MAX_DEPTH,
+    max_depth_limit: MAX_DEPTH_LIMIT,
     db_engine: dbEngine,
+    pg_probe: pgProbe,
     note: '同一会话（项目/靶标）同时最多 ' + max + ' 个执行智能体；按 4-Wave Bounded DAG 并发调度。',
   }
 }

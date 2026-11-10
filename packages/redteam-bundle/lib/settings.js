@@ -19,6 +19,14 @@ export const DEFAULT_MAX_AGENTS = 6
 /** 硬上限：支持最多 12 个并发子智能体并行作业。 */
 export const MAX_AGENTS_LIMIT = 12
 
+/** 子代理默认思考强度（默认 low，兼顾高并发响应速度与 token 效率）。 */
+export const DEFAULT_THINKING_EFFORT = 'low'
+export const VALID_THINKING_EFFORTS = ['low', 'medium', 'high']
+
+/** 子代理递归派发最大深度（默认 3，允许子代理继续拆解并递归派发微任务）。 */
+export const DEFAULT_MAX_DEPTH = 3
+export const MAX_DEPTH_LIMIT = 5
+
 /** 设置文件路径（跟事实库同一个根，随事实库一起备份/迁移）。 */
 export function settingsPathOf(root) {
   return join(String(root || '.'), 'settings.json')
@@ -48,6 +56,17 @@ export function clampMaxAgents(value) {
   return Math.min(Math.max(n, 1), MAX_AGENTS_LIMIT)
 }
 
+export function normalizeThinkingEffort(value) {
+  const s = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  return VALID_THINKING_EFFORTS.includes(s) ? s : DEFAULT_THINKING_EFFORT
+}
+
+export function clampMaxDepth(value) {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return DEFAULT_MAX_DEPTH
+  return Math.min(Math.max(n, 1), MAX_DEPTH_LIMIT)
+}
+
 /**
  * 当前生效的并发上限。
  * @param root - 事实库根目录（`ctx.redteam.root`）。
@@ -69,6 +88,39 @@ export function saveMaxAgents(root, value) {
   return applied
 }
 
+/** 当前生效的子代理默认思考强度（默认 low）。 */
+export function thinkingEffortOf(root, env = process.env) {
+  const s = readSettings(root)
+  if (typeof s.thinkingEffort === 'string' && VALID_THINKING_EFFORTS.includes(s.thinkingEffort.trim().toLowerCase())) {
+    return s.thinkingEffort.trim().toLowerCase()
+  }
+  if (env && typeof env.REDTEAM_THINKING_EFFORT === 'string') {
+    return normalizeThinkingEffort(env.REDTEAM_THINKING_EFFORT)
+  }
+  return DEFAULT_THINKING_EFFORT
+}
+
+export function saveThinkingEffort(root, value) {
+  const applied = normalizeThinkingEffort(value)
+  writeSettings(root, { thinkingEffort: applied })
+  return applied
+}
+
+/** 当前生效的子代理递归最大深度（默认 3）。 */
+export function maxDepthOf(root, env = process.env) {
+  const fromFile = Number(readSettings(root).maxDepth)
+  if (Number.isFinite(fromFile) && fromFile >= 1) return clampMaxDepth(fromFile)
+  const fromEnv = Number(env && env.REDTEAM_MAX_DEPTH)
+  if (Number.isFinite(fromEnv) && fromEnv >= 1) return clampMaxDepth(fromEnv)
+  return DEFAULT_MAX_DEPTH
+}
+
+export function saveMaxDepth(root, value) {
+  const applied = clampMaxDepth(value)
+  writeSettings(root, { maxDepth: applied })
+  return applied
+}
+
 /** 当前设置是从哪来的（面板上要如实说明，避免"我改了没生效"的错觉）。 */
 export function maxAgentsSourceOf(root, env = process.env) {
   const fromFile = Number(readSettings(root).maxAgents)
@@ -85,7 +137,7 @@ export function pgUrlOf(root, env = process.env) {
   const s = readSettings(root)
   if (typeof s.pgUrl === 'string' && s.pgUrl.trim()) return s.pgUrl.trim()
   if (env && typeof env.REDTEAM_PG_URL === 'string' && env.REDTEAM_PG_URL.trim()) return env.REDTEAM_PG_URL.trim()
-  if (env && typeof env.DSH_PG_URL === 'string' && env.DSH_PG_URL.trim()) return env.DSH_PG_URL.trim()
+  if (env && typeof env.DSH_PG_URL === 'string' && env.DSH_PG_URL.trim()) return env.REDTEAM_PG_URL ? env.REDTEAM_PG_URL.trim() : env.DSH_PG_URL.trim()
   if (env && typeof env.DATABASE_URL === 'string' && /^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL.trim())) {
     return env.DATABASE_URL.trim()
   }
