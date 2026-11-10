@@ -33,12 +33,23 @@ import {
   POC_CATEGORIES, pocCategoryName, guessPocCategory,
   migrate, migrateKnowledge,
 } from './schema.js'
-import {
+import * as pgEngineMod from './pg-engine.js'
+
+const {
   openDatabaseHandle, resolvePgConfig, probePgConnection, translateSqlToPg,
   pgSchemaNameOf, maskPgUrl, parsePgUrl, PgCompatibleHandle,
-  PG_CLUSTER_TABLES, PgWriteActivityProbe, recordPgTableWrite, recordTableWrite,
-  getPgWriteProbe, getWriteProbeSnapshot,
-} from './pg-engine.js'
+} = pgEngineMod
+const PG_CLUSTER_TABLES = pgEngineMod.PG_CLUSTER_TABLES || [
+  'assets', 'ports', 'fingerprints', 'vulns', 'credentials',
+  'sessions', 'score_hits', 'attack_steps', 'poc_library', 'workflow_runs',
+]
+const PgWriteActivityProbe = pgEngineMod.PgWriteActivityProbe || class PgWriteActivityProbeFallback {}
+const recordPgTableWrite = pgEngineMod.recordPgTableWrite || (() => {})
+const recordTableWrite = pgEngineMod.recordTableWrite || recordPgTableWrite
+const getPgWriteProbe = pgEngineMod.getPgWriteProbe || (() => ({
+  snapshot: () => ({ mode: 'wal', totalWrites: 0, writeRatePerMin: 0, tables: [], recentEvents: [] }),
+}))
+const getWriteProbeSnapshot = pgEngineMod.getWriteProbeSnapshot || ((mode = 'wal') => getPgWriteProbe().snapshot(mode))
 import {
   WEBSHELL_TYPES, WEBSHELL_STATUSES, normalizeShellType, normalizeShellStatus, assertPathWithin,
 } from './validate.js'

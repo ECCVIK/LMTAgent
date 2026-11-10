@@ -305,7 +305,15 @@ window.__ModuleLoader__.load({
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(req),
-    }).then((res) => res.json())
+    }).then((res) => {
+      if (res && typeof res.text === 'function') {
+        return res.text().then((txt) => {
+          if (!txt || !txt.trim()) return { ok: false, emptyResponse: true, error: '后端服务正在就绪，请稍候点击「刷新」重试' }
+          try { return JSON.parse(txt) } catch { return { ok: false, emptyResponse: true, error: '后端响应格式异常（HTTP ' + (res.status || 0) + '）' } }
+        })
+      }
+      return res && typeof res.json === 'function' ? res.json() : { ok: false, error: '未知响应' }
+    })
 
     /* ── 证据截图：懒加载 + 缓存 + 点击放大 ────────────────────────────────
        图片走 base64（`shotData` op）而不是静态路由：这条桥已经做了同源校验，
@@ -4706,7 +4714,12 @@ window.__ModuleLoader__.load({
         const dom = readHostDomTelemetry()
         const initialSid = sessionId || dom.sessionId || undefined
         api({ op: 'bootstrap', session: initialSid }).then((r) => {
-          if (!r || r.ok === false) { setErr((r && r.error) || '无法连接工作区存储'); return }
+          if (!r || r.ok === false) {
+            if (r && r.emptyResponse) return
+            setErr((r && r.error) || '无法连接工作区存储')
+            return
+          }
+          setErr(null)
           const list = r.engagements || []
           const hs = Array.isArray(r.host_sessions) ? r.host_sessions : []
           setEngagements(list)
@@ -4750,6 +4763,7 @@ window.__ModuleLoader__.load({
 
       /** 刷新：重新拉取名册/快照，并让当前页签重新取数。 */
       const refreshAll = () => {
+        setErr(null)
         setRefreshKey((k) => k + 1)
         api({ op: 'bootstrap', session: sid || undefined }).then((b) => {
           setEngagements((b && b.engagements) || [])
