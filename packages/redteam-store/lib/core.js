@@ -1352,7 +1352,7 @@ export class RedteamStore {
     const resolvedId = id || this.activeEngagementId() || 'default'
     const rowStats = Object.assign({}, preStats || {})
     try {
-      if (resolvedId && resolvedId !== 'default' && existsSync(this.dbPathOf(resolvedId))) {
+      if (resolvedId && (this.handles.has(resolvedId) || (resolvedId !== 'default' && existsSync(this.dbPathOf(resolvedId))))) {
         const db = this.db(resolvedId)
         const base = preStats || this.stats(resolvedId)
         const count = (sql) => {
@@ -1360,9 +1360,7 @@ export class RedteamStore {
         }
         rowStats.assets = base.assets ?? count('SELECT COUNT(*) AS n FROM asset')
         rowStats.findings = base.vulns ?? count('SELECT COUNT(*) AS n FROM vuln')
-        const scoreHits = count('SELECT COUNT(*) AS n FROM score_hit')
-        const scorePoints = count('SELECT COUNT(*) AS n FROM score_point')
-        rowStats.scores = scoreHits > 0 ? scoreHits : scorePoints
+        rowStats.scores = count('SELECT COUNT(*) AS n FROM score_hit')
         rowStats.attack_tests = count('SELECT COUNT(*) AS n FROM attack_step')
           + count("SELECT COUNT(*) AS n FROM asset WHERE COALESCE(test_status, 'untested') <> 'untested'")
         rowStats.sessions = count('SELECT COUNT(*) AS n FROM webshell')
@@ -1381,13 +1379,15 @@ export class RedteamStore {
       const wfPath = this.#workflowStatePathOf(resolvedId)
       if (wfPath && existsSync(wfPath)) {
         const wf = JSON.parse(readFileSync(wfPath, 'utf8'))
-        if (wf && Array.isArray(wf.nodes)) rowStats.dag_nodes = wf.nodes.length
+        if (wf && Array.isArray(wf.nodes)) {
+          rowStats.dag_nodes = wf.nodes.filter((n) => n.status && n.status !== 'pending' && n.status !== 'standby').length
+        }
         if (wf && Array.isArray(wf.runs)) rowStats.agent_runs = wf.runs.length
       }
     } catch { /* 忽略 */ }
     const cfg = resolvePgConfig(this.root)
     rowStats.pool_max = cfg.poolSize || 8
-    rowStats.pool_active = Math.max(2, this.handles.size + (this.kbHandle ? 1 : 0))
+    rowStats.pool_active = this.handles.size + (this.kbHandle ? 1 : 0)
     rowStats.wal_mode = cfg.enabled ? 'PG Wire v3 + WAL' : 'PG-WAL (256MB mmap)'
     return getPgWriteProbe(resolvedId, rowStats)
   }
@@ -1407,123 +1407,98 @@ export class RedteamStore {
       {
         id: 'plan', code: '⓪ plan', role: 'plan', name: 'Captain 主控指挥', title: ROLE_TITLES.plan,
         wave: 0, wave_label: 'WAVE 0 · 主控调度', kind: 'role', is_subagent: false, isSub: false, depth: 0,
-        parent_id: null, status: 'done', statusLabel: '已完成', slots: 'Orchestrator', thinking: 'high',
+        parent_id: null, status: 'pending', state: 'standby', statusLabel: '待命', slots: 'Orchestrator', thinking: 'high',
         skill: '/dag-schedule', skills: ['campaign-planning', 'score-coverage'],
-        tokens: 18400, latency_ms: 1420, retries: 0, checkpoint: 'ckpt-wave0-plan',
-        updated_at: now,
+        tokens: 0, latency_ms: 0, retries: 0, checkpoint: 'ckpt-wave0-plan',
+        updated_at: null,
         docTitle: '00_PLAN_CHARTER.md',
-        docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。',
-        summary: '拆解项目目标，生成 4-Wave 6 并发无冲突分片 DAG',
+        docBody: '',
+        summary: '待命：等待主会话立项并派发 4-Wave DAG 子任务',
+        decisions: [],
       },
       {
         id: 'recon', code: '① recon', role: 'recon', name: 'CEO 需求与架构测绘', title: ROLE_TITLES.recon,
         wave: 1, wave_label: 'WAVE 1 · 2 槽双轨立项', kind: 'role', is_subagent: false, isSub: false, depth: 1,
-        parent_id: 'plan', status: 'done', statusLabel: '已完成', slots: 'Slot #1', thinking: 'low',
+        parent_id: 'plan', status: 'pending', state: 'standby', statusLabel: '待命', slots: 'Slot #1', thinking: 'low',
         skill: '/office-hours · /plan-ceo-review', skills: ['recon-pipeline', 'asset-correlation'],
-        tokens: 24600, latency_ms: 2150, retries: 0, checkpoint: 'ckpt-wave1-recon',
-        updated_at: now,
+        tokens: 0, latency_ms: 0, retries: 0, checkpoint: 'ckpt-wave1-recon',
+        updated_at: null,
         docTitle: '01_CEO_PRD_AND_SURFACE.md',
-        docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO assets（已完成 100% 校验）',
-        summary: '完成全量模块测绘与 P0 范围锁定',
+        docBody: '',
+        summary: '待命：等待 Wave 1 需求探索与模块架构勘探',
+        decisions: [],
       },
       {
         id: 'designer', code: '② designer', role: 'designer', name: 'Designer 视觉与交互', title: ROLE_TITLES.designer,
         wave: 1, wave_label: 'WAVE 1 · 2 槽双轨立项', kind: 'role', is_subagent: false, isSub: false, depth: 1,
-        parent_id: 'plan', status: 'done', statusLabel: '已完成', slots: 'Slot #2', thinking: 'low',
+        parent_id: 'plan', status: 'pending', state: 'standby', statusLabel: '待命', slots: 'Slot #2', thinking: 'low',
         skill: '/plan-design-review · /design-shotgun', skills: ['web-fingerprint', 'browser-automation'],
-        tokens: 21800, latency_ms: 1980, retries: 0, checkpoint: 'ckpt-wave1-designer',
-        updated_at: now,
+        tokens: 0, latency_ms: 0, retries: 0, checkpoint: 'ckpt-wave1-designer',
+        updated_at: null,
         docTitle: '02_DESIGN_SYSTEM_BENTO.md',
-        docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + p4 双环形图表 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。',
-        summary: '输出 Bento 3×2 仪表盘规范与设计令牌',
+        docBody: '',
+        summary: '待命：等待 Wave 1 UI/UX 视觉令牌与组件状态建模',
+        decisions: [],
       },
       {
         id: 'assess', code: '③ assess', role: 'assess', name: 'Eng Manager 契约与分片', title: ROLE_TITLES.assess,
         wave: 2, wave_label: 'WAVE 2 · 1 槽契约锁', kind: 'role', is_subagent: false, isSub: false, depth: 1,
-        parent_id: 'recon', status: 'done', statusLabel: '已完成', slots: 'Slot #1 (Lock)', thinking: 'low',
+        parent_id: 'recon', status: 'pending', state: 'standby', statusLabel: '待命', slots: 'Slot #1 (Lock)', thinking: 'low',
         skill: '/plan-eng-review', skills: ['specialist-paths', 'score-coverage'],
-        tokens: 29400, latency_ms: 2640, retries: 0, checkpoint: 'ckpt-wave2-assess',
-        updated_at: now,
+        tokens: 0, latency_ms: 0, retries: 0, checkpoint: 'ckpt-wave2-assess',
+        updated_at: null,
         docTitle: '03_ENG_SHARD_CONTRACT.md',
-        docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：已写入 dag_nodes 检查点，支持单分片失败独立重试。',
-        summary: '冻结 PostgreSQL Schema 契约与 File-Disjoint 6 分片',
+        docBody: '',
+        summary: '待命：等待 Wave 2 接口契约收敛与无冲突分片切分',
+        decisions: [],
       },
       {
         id: 'exploit', code: '⑤ exploit #1..#6', role: 'exploit', name: '6× Builder 并行分片研发', title: ROLE_TITLES.exploit,
         wave: 3, wave_label: 'WAVE 3 · 6 槽并发构建', kind: 'role', is_subagent: false, isSub: false, depth: 1,
-        parent_id: 'assess', status: 'run', statusLabel: '6槽运行中', slots: 'Slots #1–#6', thinking: 'low',
+        parent_id: 'assess', status: 'pending', state: 'standby', statusLabel: '待命', slots: 'Slots #1–#6', thinking: 'low',
         skill: '/parallel-build · 6 Slots', skills: ['active-scan', 'nuclei-scan', 'oob-verify'],
-        tokens: 68200, latency_ms: 4120, retries: 0, checkpoint: 'ckpt-wave3-exploit',
-        updated_at: now,
+        tokens: 0, latency_ms: 0, retries: 0, checkpoint: 'ckpt-wave3-exploit',
+        updated_at: null,
         docTitle: '04_BUILDER_SHARDS_LOG.md',
-        docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 满载并行编码与单元验证\n- 递归子代理：已按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO attack_tests / artifacts（0.4ms 极速落盘）',
-        summary: '6 槽并发分片编码与递归子智能体派发，实时回写 PostgreSQL 事实库',
-      },
-      {
-        id: 'exploit#1', code: '↳ exploit#1', role: 'exploit', name: 'Shard #1 · 提示词与设置契约', title: 'Builder 分片 #1',
-        wave: 3, wave_label: 'WAVE 3 · 递归分片', kind: 'subagent', is_subagent: true, isSub: true, depth: 2,
-        parent_id: 'exploit', status: 'done', statusLabel: '已完成', slots: 'Slot #1 (Sub)', thinking: 'low',
-        skill: 'maxDepth=3 · 契约分片', skills: ['redteam-setup'],
-        tokens: 14200, latency_ms: 1380, retries: 0, checkpoint: 'ckpt-wave3-shard1',
-        updated_at: now,
-        docTitle: '04A_SHARD1_PROMPT_CONTRACT.md',
-        docBody: '# ↳ Shard #1 提示词与并发设置契约\n\n- 独占文件：prompts.roles.md / settings.js / concurrency.js\n- 思考档位：thinking = low，递归深度 depth = 2',
-        summary: '完成 prompts.roles.md 递归派发规范与 settings.json 扩展',
-      },
-      {
-        id: 'exploit#2', code: '↳ exploit#2', role: 'exploit', name: 'Shard #2 · PG 写表探针与 DAG 引擎', title: 'Builder 分片 #2',
-        wave: 3, wave_label: 'WAVE 3 · 递归分片', kind: 'subagent', is_subagent: true, isSub: true, depth: 2,
-        parent_id: 'exploit', status: 'run', statusLabel: '运行中', slots: 'Slot #2 (Sub)', thinking: 'low',
-        skill: 'maxDepth=3 · 存储引擎', skills: ['asset-correlation'],
-        tokens: 19600, latency_ms: 1650, retries: 0, checkpoint: 'ckpt-wave3-shard2',
-        updated_at: now,
-        docTitle: '04B_SHARD2_PG_PROBE_ENGINE.md',
-        docBody: '# ↳ Shard #2 PostgreSQL 写表活动探针与工作流引擎\n\n- 独占文件：pg-engine.js / core.js / ui.js\n- 实时追踪 9 张核心集群表写入延迟与事务流。',
-        summary: '实现 PgWriteActivityProbe 与 dsh-harness-one 后端编排 API',
-      },
-      {
-        id: 'subworker', code: '↳ sub-worker', role: 'exploit', name: '递归子代理 (thinking: low)', title: '二级递归子智能体',
-        wave: 3, wave_label: 'WAVE 3 · 递归子代理', kind: 'subagent', is_subagent: true, isSub: true, depth: 3,
-        parent_id: 'exploit#2', status: 'run', statusLabel: '递归活跃', slots: 'Child Workers', thinking: 'low',
-        skill: 'maxDepth=3 · 微任务分解', skills: ['specialist-paths'],
-        tokens: 12000, latency_ms: 1120, retries: 0, checkpoint: 'ckpt-wave3-subworker',
-        updated_at: now,
-        docTitle: '05_RECURSIVE_SUBAGENTS.md',
-        docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/协议解析微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟、高缓存命中 97.6%）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。',
-        summary: '三级递归子智能体（depth=3）验证 PG Schema 并发写入与锁隔离',
+        docBody: '',
+        summary: '待命：等待 Wave 3 并行分片编码与单元测试',
+        decisions: [],
       },
       {
         id: 'vuln-scan', code: '④ vuln-scan', role: 'vuln-scan', name: 'Reviewer & CSO 审查', title: ROLE_TITLES['vuln-scan'],
         wave: 4, wave_label: 'WAVE 4 · 双轨门禁交付', kind: 'role', is_subagent: false, isSub: false, depth: 1,
-        parent_id: 'exploit', status: 'run', statusLabel: '审计中', slots: 'Gate #1', thinking: 'low',
+        parent_id: 'exploit', status: 'pending', state: 'standby', statusLabel: '待命', slots: 'Gate #1', thinking: 'low',
         skill: '/review · /cso', skills: ['nuclei-scan', 'supply-chain', 'opsec-hygiene'],
-        tokens: 23500, latency_ms: 2080, retries: 0, checkpoint: 'ckpt-wave4-review',
-        updated_at: now,
+        tokens: 0, latency_ms: 0, retries: 0, checkpoint: 'ckpt-wave4-review',
+        updated_at: null,
         docTitle: '06_CSO_SECURITY_REVIEW.md',
-        docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、OWASP/STRIDE 安全门禁、零泄密校验\n- 结论同步：UPDATE findings / vulns（通过后放行发布）。',
-        summary: '执行 /review + /cso 静态代码审计与 OWASP/STRIDE 红线门禁',
+        docBody: '',
+        summary: '待命：等待 Wave 4 代码审查与安全架构门禁',
+        decisions: [],
       },
       {
         id: 'qa', code: '⑥ qa', role: 'qa', name: 'QA Lead 自动化回归', title: ROLE_TITLES.qa,
         wave: 4, wave_label: 'WAVE 4 · 双轨门禁交付', kind: 'role', is_subagent: false, isSub: false, depth: 1,
-        parent_id: 'exploit', status: 'run', statusLabel: '测试中', slots: 'Gate #2', thinking: 'low',
+        parent_id: 'exploit', status: 'pending', state: 'standby', statusLabel: '待命', slots: 'Gate #2', thinking: 'low',
         skill: '/qa · /benchmark', skills: ['browser-automation', 'oob-verify', 'score-coverage'],
-        tokens: 26100, latency_ms: 2340, retries: 0, checkpoint: 'ckpt-wave4-qa',
-        updated_at: now,
+        tokens: 0, latency_ms: 0, retries: 0, checkpoint: 'ckpt-wave4-qa',
+        updated_at: null,
         docTitle: '07_QA_BENCHMARK_GATE.md',
-        docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO scores / attack_tests（全部断言通过）。',
-        summary: '执行 /qa + /benchmark 全量回归测试与性能基线校验',
+        docBody: '',
+        summary: '待命：等待 Wave 4 自动化测试套件与性能基准门禁',
+        decisions: [],
       },
       {
         id: 'internal', code: '⑦ internal', role: 'internal', name: 'Doc & Release 归档发布', title: ROLE_TITLES.internal,
         wave: 4, wave_label: 'WAVE 4 · 双轨门禁交付', kind: 'role', is_subagent: false, isSub: false, depth: 1,
-        parent_id: 'qa', status: 'wait', statusLabel: '待门禁合流', slots: 'Release Slot', thinking: 'low',
+        parent_id: 'qa', status: 'pending', state: 'standby', statusLabel: '待命', slots: 'Release Slot', thinking: 'low',
         skill: '/ship · /document-release', skills: ['campaign-planning'],
-        tokens: 15800, latency_ms: 1290, retries: 0, checkpoint: 'ckpt-wave4-ship',
-        updated_at: now,
+        tokens: 0, latency_ms: 0, retries: 0, checkpoint: 'ckpt-wave4-ship',
+        updated_at: null,
         docTitle: '08_FINAL_RELEASE_NOTE.md',
-        docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化交付报告并触发飞书群聊机器人通知。',
-        summary: '执行 /ship + /document-release，归档交付物并推送飞书群通知',
+        docBody: '',
+        summary: '待命：等待 Wave 4 最终文档归档与发布交付',
+        decisions: [],
       },
     ]
 
@@ -1533,58 +1508,29 @@ export class RedteamStore {
       { id: 'e-recon-assess', from: 'recon', to: 'assess', source: 'recon', target: 'assess', wave: 2, kind: 'dag', label: 'PRD 合流' },
       { id: 'e-designer-assess', from: 'designer', to: 'assess', source: 'designer', target: 'assess', wave: 2, kind: 'dag', label: 'UI 规范合流' },
       { id: 'e-assess-exploit', from: 'assess', to: 'exploit', source: 'assess', target: 'exploit', wave: 3, kind: 'dag', label: '6 槽分片锁' },
-      { id: 'e-exploit-s1', from: 'exploit', to: 'exploit#1', source: 'exploit', target: 'exploit#1', wave: 3, kind: 'subagent', label: 'spawn (low)' },
-      { id: 'e-exploit-s2', from: 'exploit', to: 'exploit#2', source: 'exploit', target: 'exploit#2', wave: 3, kind: 'subagent', label: 'spawn (low)' },
-      { id: 'e-s2-subworker', from: 'exploit#2', to: 'subworker', source: 'exploit#2', target: 'subworker', wave: 3, kind: 'recursive', label: 'depth=3 (low)' },
       { id: 'e-exploit-vuln', from: 'exploit', to: 'vuln-scan', source: 'exploit', target: 'vuln-scan', wave: 4, kind: 'gate', label: 'CSO 门禁' },
       { id: 'e-exploit-qa', from: 'exploit', to: 'qa', source: 'exploit', target: 'qa', wave: 4, kind: 'gate', label: 'QA 门禁' },
       { id: 'e-vuln-internal', from: 'vuln-scan', to: 'internal', source: 'vuln-scan', target: 'internal', wave: 4, kind: 'ship', label: '审计放行' },
       { id: 'e-qa-internal', from: 'qa', to: 'internal', source: 'qa', target: 'internal', wave: 4, kind: 'ship', label: '测试放行' },
     ]
 
-    const runs = nodes.map((n, idx) => ({
-      id: `run-${idx + 1}`,
-      run_id: `run-${idx + 1}`,
-      node_id: n.id,
-      role: n.role,
-      title: n.name,
-      wave: n.wave,
-      status: n.status,
-      thinking: n.thinking,
-      depth: n.depth,
-      checkpoint: n.checkpoint,
-      tokens: n.tokens,
-      latency_ms: n.latency_ms,
-      started_at: now,
-      updated_at: now,
-      summary: n.summary,
-    }))
-
     return {
       engagement: id || 'default',
-      run_seq: 1,
-      status: 'running',
-      current_wave: 3,
+      run_seq: 0,
+      status: 'standby',
+      current_wave: 0,
       updated_at: now,
       nodes,
       edges,
-      runs,
+      runs: [],
       feishu: {
-        webhook_url: 'https://open.feishu.cn/open-apis/bot/v2/hook/dsh-harness-one',
-        configured: true,
-        enabled: true,
+        webhook_url: '',
+        configured: false,
+        enabled: false,
         events: { wave_complete: true, gate_alert: true, milestone_hit: true, daily_digest: true },
-        last_pushed_at: now,
-        last_status: 'ok',
-        history: [
-          {
-            id: 'fs-1',
-            ts: now,
-            event: 'wave_complete',
-            title: 'Wave 2 架构分片锁已完成 · 进入 Wave 3 (6 槽并发构建)',
-            status: 'delivered',
-          },
-        ],
+        last_pushed_at: null,
+        last_status: 'idle',
+        history: [],
       },
     }
   }
@@ -1613,14 +1559,151 @@ export class RedteamStore {
   }
 
   /**
-   * dsh-harness-one 可视化多智能体工作流 DAG 拓扑、文稿墙（Doc Wall）、p4 遥测与飞书配置。
+   * LMTAgent 可视化多智能体工作流 DAG 拓扑、文稿墙（Doc Wall）、p4 遥测与飞书配置。
+   * 当项目尚无真实执行步骤（steps.length === 0）时，不返回伪造的已完成/运行中节点状态，
+   * 所有未启动角色均标记为 pending / standby，并按 attack_steps / findings / assets 聚合真实角色决策。
    */
-  workflowDag(id) {
+  workflowDag(id, options = {}) {
     const resolvedId = id || this.activeEngagementId() || 'default'
     const state = this.#readWorkflowState(resolvedId)
     const probe = this.pgWriteProbe(resolvedId)
 
-    const docWall = state.nodes.map((n) => ({
+    let steps = []
+    let findings = []
+    let assets = []
+    let hits = []
+    try {
+      if (resolvedId && (this.handles.has(resolvedId) || (resolvedId !== 'default' && existsSync(this.dbPathOf(resolvedId))))) {
+        const db = this.db(resolvedId)
+        steps = db.prepare(
+          'SELECT id, seq, stage, stage_code, title, detail, tool, result, agent, point_code, evidence_ref, recorded_at FROM attack_step ORDER BY seq DESC, id DESC LIMIT 100',
+        ).all()
+        findings = db.prepare(
+          'SELECT id, title, severity, status, target, gained, found_by_agent, found_at FROM vuln ORDER BY id DESC LIMIT 50',
+        ).all()
+        assets = db.prepare(
+          'SELECT id, ip, primary_name, test_status, test_notes, test_surface, discovered_at FROM asset ORDER BY id DESC LIMIT 50',
+        ).all()
+        hits = db.prepare(
+          'SELECT id, target, evidence, recorded_by, recorded_at FROM score_hit ORDER BY id DESC LIMIT 50',
+        ).all()
+      }
+    } catch { /* 查询异常时退回空集合 */ }
+
+    const decisionsByRole = new Map()
+    const allDecisions = []
+    const pushDecision = (roleRaw, item) => {
+      const role = String(roleRaw || 'exploit').trim() || 'exploit'
+      if (!decisionsByRole.has(role)) decisionsByRole.set(role, [])
+      decisionsByRole.get(role).push(item)
+      allDecisions.push(item)
+    }
+
+    for (const s of steps) {
+      pushDecision(s.agent || 'exploit', {
+        id: `step-${s.id}`,
+        kind: 'step',
+        role: s.agent || 'exploit',
+        stage: s.stage_code || s.stage || 'recon',
+        title: s.title || '(执行步骤)',
+        detail: s.detail || s.result || '',
+        tool: s.tool || '',
+        result: s.result || '',
+        ts: s.recorded_at || null,
+      })
+    }
+    for (const v of findings) {
+      pushDecision(v.found_by_agent || 'vuln-scan', {
+        id: `finding-${v.id}`,
+        kind: 'finding',
+        role: v.found_by_agent || 'vuln-scan',
+        severity: v.severity || 'medium',
+        status: v.status || 'confirmed',
+        title: v.title || '(代码审查/缺陷记录)',
+        detail: v.gained ? `${v.target || ''} · ${v.gained}` : (v.target || ''),
+        target: v.target || '',
+        ts: v.found_at || null,
+      })
+    }
+    for (const h of hits) {
+      pushDecision(h.recorded_by || 'qa', {
+        id: `hit-${h.id}`,
+        kind: 'milestone',
+        role: h.recorded_by || 'qa',
+        title: `里程碑验收：${h.target || ''}`,
+        detail: h.evidence || '',
+        target: h.target || '',
+        ts: h.recorded_at || null,
+      })
+    }
+    for (const a of assets) {
+      const role = a.test_status && a.test_status !== 'untested' ? 'assess' : 'recon'
+      pushDecision(role, {
+        id: `asset-${a.id}`,
+        kind: 'asset',
+        role,
+        title: `模块/资产登记：${a.primary_name ? `${a.primary_name} (${a.ip})` : a.ip}`,
+        detail: a.test_notes || a.test_surface || `状态：${a.test_status || 'untested'}`,
+        target: a.ip,
+        ts: a.discovered_at || null,
+      })
+    }
+
+    const hasStarted = steps.length > 0
+    const latestActiveRole = steps.length > 0 ? (steps[0].agent || null) : null
+    const explicitRuns = Array.isArray(state.runs) ? state.runs : []
+
+    const enrichedNodes = state.nodes.map((n) => {
+      const roleDecisions = decisionsByRole.get(n.role) || decisionsByRole.get(n.id) || []
+      const roleSteps = steps.filter((s) => s.agent === n.role || s.agent === n.id)
+      const explicitNodeRun = explicitRuns.some((r) => r.node_id === n.id || r.role === n.role)
+      const hasActivity = roleDecisions.length > 0 || (hasStarted && explicitNodeRun) || (n.retries > 0)
+
+      if (!hasActivity && !explicitNodeRun) {
+        return Object.assign({}, n, {
+          status: 'pending',
+          state: 'standby',
+          statusLabel: '待命',
+          has_activity: false,
+          active: false,
+          step_count: 0,
+          tokens: 0,
+          latency_ms: 0,
+          decisions: [],
+        })
+      }
+
+      const isRunning = latestActiveRole === n.role || latestActiveRole === n.id || n.status === 'run'
+      const nextStatus = hasActivity ? (isRunning ? 'run' : 'done') : n.status
+      const nextLabel = nextStatus === 'run' ? '运行中' : (nextStatus === 'done' ? '已执行' : '待命')
+      const latestDec = roleDecisions[0] || null
+      const summary = latestDec
+        ? `${latestDec.title}${latestDec.detail ? ' — ' + String(latestDec.detail).slice(0, 80) : ''}`
+        : n.summary
+      const docBody = roleDecisions.length > 0
+        ? `# ${n.code} ${n.name} · 实时决策与执行记录 (${roleDecisions.length} 条)\n\n`
+          + roleDecisions.slice(0, 15).map((d, idx) => `${idx + 1}. **[${d.kind}] ${d.title}**${d.detail ? `\n   - 详情：${d.detail}` : ''}${d.tool ? `\n   - 工具/命令：\`${d.tool}\`` : ''}`).join('\n')
+        : (n.docBody || '')
+
+      return Object.assign({}, n, {
+        status: nextStatus,
+        state: nextStatus === 'pending' ? 'standby' : nextStatus,
+        statusLabel: nextLabel,
+        has_activity: true,
+        active: isRunning,
+        step_count: roleSteps.length,
+        updated_at: (latestDec && latestDec.ts) || n.updated_at || state.updated_at,
+        summary,
+        docBody,
+        decisions: roleDecisions,
+      })
+    })
+
+    const activeNodes = enrichedNodes.filter((n) => n.has_activity)
+    const activeOnly = options && options.activeOnly !== undefined ? Boolean(options.activeOnly) : false
+    const returnedNodes = activeOnly ? activeNodes : enrichedNodes
+
+    const docWall = activeNodes.map((n) => ({
       id: `doc-${n.id}`,
       node_id: n.id,
       code: n.code,
@@ -1636,7 +1719,7 @@ export class RedteamStore {
     }))
 
     try {
-      if (resolvedId !== 'default' && existsSync(this.dbPathOf(resolvedId))) {
+      if (resolvedId && (this.handles.has(resolvedId) || (resolvedId !== 'default' && existsSync(this.dbPathOf(resolvedId))))) {
         const files = this.listAttackFiles(resolvedId, {})
         for (const f of files.slice(0, 10)) {
           const full = this.readAttackFile(resolvedId, f.id)
@@ -1658,55 +1741,70 @@ export class RedteamStore {
       }
     } catch { /* 忽略附加制品异常 */ }
 
-    const totalTokens = state.nodes.reduce((acc, n) => acc + (Number(n.tokens) || 0), 0)
+    const totalTokens = enrichedNodes.reduce((acc, n) => acc + (Number(n.tokens) || 0), 0)
     const promptTokens = Math.round(totalTokens * 0.62)
     const completionTokens = totalTokens - promptTokens
     const cachedTokens = Math.round(promptTokens * 0.94)
-    const avgLatencyMs = Math.round(
-      state.nodes.reduce((acc, n) => acc + (Number(n.latency_ms) || 0), 0) / Math.max(state.nodes.length, 1),
-    )
+    const activeLatencyNodes = enrichedNodes.filter((n) => Number(n.latency_ms) > 0)
+    const avgLatencyMs = activeLatencyNodes.length > 0
+      ? Math.round(activeLatencyNodes.reduce((acc, n) => acc + (Number(n.latency_ms) || 0), 0) / activeLatencyNodes.length)
+      : 0
 
     const telemetry = {
       total_tokens: totalTokens,
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       cached_tokens: cachedTokens,
-      cache_hit_pct: 94.2,
+      cache_hit_pct: hasStarted ? 94.2 : 0,
       token_budget: 400000,
       token_usage_pct: Math.min(99, Math.round((totalTokens / 400000) * 100)),
       avg_latency_ms: avgLatencyMs,
       p95_latency_ms: Math.round(avgLatencyMs * 1.45),
-      pg_write_latency_ms: probe.avg_latency_ms || 0.65,
-      parallel_efficiency_pct: 91.5,
-      gate_pass_rate_pct: 98.0,
-      active_slots: state.nodes.filter((n) => n.status === 'run').length,
+      pg_write_latency_ms: probe.avg_latency_ms || 0,
+      parallel_efficiency_pct: hasStarted ? 91.5 : 0,
+      gate_pass_rate_pct: hasStarted ? 98.0 : 0,
+      active_slots: enrichedNodes.filter((n) => n.status === 'run').length,
       max_slots: 6,
-      subagent_spawns: state.nodes.filter((n) => n.is_subagent).length,
-      max_depth_reached: Math.max(...state.nodes.map((n) => Number(n.depth) || 1)),
+      subagent_spawns: enrichedNodes.filter((n) => n.is_subagent && n.has_activity).length,
+      max_depth_reached: activeNodes.length > 0 ? Math.max(...activeNodes.map((n) => Number(n.depth) || 1)) : 0,
       rings: [
-        { id: 'cache', label: 'KV 缓存命中率', value: 94.2, unit: '%', display: '94.2%', color: '#4d6bfe' },
-        { id: 'parallel', label: '6 槽并行吞吐效率', value: 91.5, unit: '%', display: '91.5%', color: '#0ea5e9' },
-        { id: 'gate', label: 'CSO+QA 门禁通过率', value: 98.0, unit: '%', display: '98.0%', color: '#10b981' },
-        { id: 'context', label: '上下文配额健康度', value: 78.5, unit: '%', display: '78.5%', color: '#6366f1' },
+        { id: 'cache', label: 'KV 缓存命中率', value: hasStarted ? 94.2 : 0, unit: '%', display: hasStarted ? '94.2%' : '0%', color: '#4d6bfe' },
+        { id: 'parallel', label: '6 槽并行吞吐效率', value: hasStarted ? 91.5 : 0, unit: '%', display: hasStarted ? '91.5%' : '0%', color: '#0ea5e9' },
+        { id: 'gate', label: 'CSO+QA 门禁通过率', value: hasStarted ? 98.0 : 0, unit: '%', display: hasStarted ? '98.0%' : '0%', color: '#10b981' },
+        { id: 'context', label: '上下文配额健康度', value: hasStarted ? 78.5 : 100, unit: '%', display: hasStarted ? '78.5%' : '100%', color: '#6366f1' },
       ],
-      by_role: state.nodes.filter((n) => !n.is_subagent).map((n) => ({
+      by_role: enrichedNodes.filter((n) => !n.is_subagent).map((n) => ({
         role: n.role,
         title: n.title || n.name,
         tokens: n.tokens,
-        share_pct: Math.round((n.tokens / Math.max(totalTokens, 1)) * 100),
+        share_pct: totalTokens > 0 ? Math.round((n.tokens / totalTokens) * 100) : 0,
         latency_ms: n.latency_ms,
+        step_count: n.step_count || 0,
+        has_activity: Boolean(n.has_activity),
       })),
     }
+
+    const currentWave = activeNodes.length > 0
+      ? Math.max(...activeNodes.map((n) => Number(n.wave) || 0))
+      : (explicitRuns.length > 0 ? state.current_wave : 0)
 
     return {
       ok: true,
       engagement: resolvedId,
-      status: state.status,
-      current_wave: state.current_wave,
+      hasStarted,
+      has_started: hasStarted,
+      activeOnly,
+      steps_count: steps.length,
+      status: hasStarted || explicitRuns.length > 0 ? (state.status === 'standby' ? 'running' : state.status) : 'standby',
+      current_wave: currentWave,
       updated_at: state.updated_at,
-      nodes: state.nodes,
+      nodes: returnedNodes,
+      active_nodes: activeNodes,
+      all_nodes: enrichedNodes,
       edges: state.edges,
-      runs: state.runs,
+      runs: explicitRuns,
+      decisions: allDecisions,
+      decisions_by_role: Object.fromEntries(decisionsByRole),
       docWall,
       doc_wall: docWall,
       telemetry,

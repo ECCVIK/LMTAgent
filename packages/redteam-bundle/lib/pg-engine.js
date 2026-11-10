@@ -924,61 +924,26 @@ export class PgWriteActivityProbe {
         name: meta.label,
         label: meta.label,
         title: meta.title,
-        writes: 1,
-        rows: meta.table === 'dag_nodes' ? 14 : (meta.table === 'agent_runs' ? 8 : 0),
-        last_op: 'SYNC',
-        last_writer: meta.defaultRole,
-        last_latency_ms: meta.baseLatency,
-        last_summary: `Schema ${schema}.${meta.table} 初始化就绪`,
-        updated_at: now,
+        writes: 0,
+        rows: 0,
+        last_op: 'IDLE',
+        last_writer: null,
+        last_latency_ms: 0,
+        last_summary: `Schema ${schema}.${meta.table} 待写入`,
+        updated_at: null,
       })
     }
-    const seedEvents = [
-      {
-        id: this.seq++,
-        ts: now,
-        table: 'dag_nodes',
-        label: 'dag_nodes (DAG 拓扑节点表)',
-        op: 'SYNC',
-        summary: '4-Wave 8-Role + 递归子智能体 DAG 节点拓扑已挂载',
-        role: 'plan',
-        latency_ms: 0.45,
-        schema,
-      },
-      {
-        id: this.seq++,
-        ts: now,
-        table: 'scores',
-        label: 'scores (里程碑交付表)',
-        op: 'DDL',
-        summary: '25 条里程碑验收规则与计分约束已同步',
-        role: 'qa',
-        latency_ms: 0.54,
-        schema,
-      },
-      {
-        id: this.seq++,
-        ts: now,
-        table: 'assets',
-        label: 'assets (模块分片表)',
-        op: 'DDL',
-        summary: `Schema ${schema} 模块分片表与 GIN 索引就绪`,
-        role: 'recon',
-        latency_ms: 0.62,
-        schema,
-      },
-    ]
     const state = {
       engagement: key,
       schema,
       created_at: now,
       updated_at: now,
-      total_writes: PG_CLUSTER_TABLES.length,
-      latency_sum_ms: PG_CLUSTER_TABLES.reduce((acc, x) => acc + x.baseLatency, 0),
-      latency_samples: PG_CLUSTER_TABLES.length,
+      total_writes: 0,
+      latency_sum_ms: 0,
+      latency_samples: 0,
       tables,
-      recent_events: seedEvents,
-      write_timestamps: [Date.now()],
+      recent_events: [],
+      write_timestamps: [],
     }
     this.engagements.set(key, state)
     return state
@@ -1073,8 +1038,8 @@ export class PgWriteActivityProbe {
       ),
       artifacts: stats.artifacts ?? ((Number(stats.shots) || 0) + (Number(stats.attackFiles) || 0)),
       poc_kb: stats.poc_kb ?? stats.pocs,
-      dag_nodes: stats.dag_nodes ?? 14,
-      agent_runs: stats.agent_runs ?? stats.runs ?? 8,
+      dag_nodes: stats.dag_nodes ?? 0,
+      agent_runs: stats.agent_runs ?? stats.runs ?? 0,
     }
 
     const tables = []
@@ -1107,9 +1072,11 @@ export class PgWriteActivityProbe {
     const totalWrites = tables.reduce((acc, t) => acc + (Number(t.writes) || 0), 0)
     const avgLatencyMs = state.latency_samples > 0
       ? Math.round((state.latency_sum_ms / state.latency_samples) * 100) / 100
-      : 0.68
+      : 0
     const poolMax = Number(stats.pool_max) || DEFAULT_PG_POOL_SIZE
-    const poolActive = Math.min(poolMax, Math.max(2, Number(stats.pool_active) || 3))
+    const poolActive = totalWrites > 0
+      ? Math.min(poolMax, Math.max(1, Number(stats.pool_active) || 1))
+      : 0
     const recentEvents = state.recent_events.slice(0, 25).map((e) => Object.assign({}, e, {
       verb: e.verb || (e.op === 'UPSERT' ? 'INSERT' : e.op),
       sql: e.sql || `${e.op === 'UPSERT' ? 'INSERT' : e.op} INTO ${e.table} (${e.summary})`,
@@ -1126,14 +1093,16 @@ export class PgWriteActivityProbe {
       pool_active: poolActive,
       pool_max: poolMax,
       total_writes: totalWrites,
-      writes_per_min: Math.max(recentCount, Math.min(totalWrites, 6)),
+      totalWrites,
+      writes_per_min: totalWrites > 0 ? recentCount : 0,
       avg_latency_ms: avgLatencyMs,
       latency_ms: avgLatencyMs,
-      active_writer: (latestEvent && latestEvent.role) ? `${latestEvent.role} (thinking: low)` : 'exploit#1..#6 (thinking: low)',
+      active_writer: (latestEvent && latestEvent.role) ? `${latestEvent.role} (thinking: low)` : null,
       updated_at: state.updated_at,
       tables,
       by_table: byTable,
       recent_events: recentEvents,
+      recentWrites: recentEvents,
       events: recentEvents,
     }
   }

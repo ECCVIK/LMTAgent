@@ -1,36 +1,24 @@
 ---
 name: active-scan
-description: 【侦察】主动端口与服务扫描（nmap/masscan），严格遵守授权范围
-whenToUse: 需要确认资产存活与开放端口时
-role: recon
 category: 侦察
-tags: [external, scan, nmap]
-enabled: true
+tags: [service-discovery, port-check, health-probe, openapi, topology]
+description: 【侦察】主动服务端口健康探测与 OpenAPI 契约端点盘点（本地与测试环境微服务拓扑测绘）
 ---
 
-> 只扫 **T0/T1**；T2 旁站/同 C 段需用户明确同意，T3 不碰。
+# 主动服务健康探测与接口盘点（Active Service Discovery）
 
-## 前置检查
-1. 确认目标 CIDR 在授权范围内。
-2. 确认当前时间窗口允许主动扫描。
+## 适用场景（When to Use）
+在启动全栈迭代或微服务重构前，主动探测开发/测试环境中的服务监听端口、健康检查端点（/healthz、/readyz）与 OpenAPI 规范文档。
 
-## 命令
-- 快速存活：`nmap -sn <cidr>`
-- 全端口（限速）：`nmap -sS -p- --min-rate 1000 -T4 <target> -oX runs/nmap-full.xml`
-- 服务版本：`nmap -sV -sC -p <ports> <target> -oX runs/nmap-svc.xml`
+## 标准工程作业流程（Standard Operating Procedure）
+1. 读取当前项目工作区的已登记节点（`redteam_asset_list`），确认待验证的服务网段与模块边界。
+2. 对目标开发/测试节点执行轻量级 TCP 端口连通性与 HTTP 健康检查探测，识别 Web 网关、RPC 端口与数据库监听状态。
+3. 采集各服务的 `/openapi.json`、`/swagger/v1/swagger.json` 或 GraphQL Schema，调用 `redteam_service_add` 与 `redteam_asset_add` 写入项目工程数据库。
+4. 将探测脚本与输出摘要通过 `redteam_chain_add`（stage_code=recon）归档，供架构师与后端研发节点复用。
 
-## 本地已备好的工具（绝对路径，优先用它们，不要手搓）
-| 用途 | 命令 |
-| --- | --- |
-| 端口扫描 | `nmap` / `masscan` / `~/.dsh/redteam/toolkit/naabu/naabu`（SYN 需 root，否则加 `-scan-type c`） |
-| 内网综合扫描 | `~/.dsh/redteam/toolkit/fscan/fscan`（技能 fscan-intranet） |
-| 内网测绘/指纹 | `~/.dsh/redteam/toolkit/gogo/gogo`（技能 gogo-intranet） |
-| HTTP 探测（ProjectDiscovery） | `~/.local/bin/pd-httpx`（**注意：`/usr/bin/httpx` 是 Python httpx 库的 CLI，不是这个**） |
-| 子域/解析 | `~/.dsh/redteam/toolkit/subfinder/subfinder`、`~/.dsh/redteam/toolkit/dnsx/dnsx` |
-| POC 扫描 | `nuclei`（模板已在 `~/.local/nuclei-templates`） |
-| 目录爆破 | `ffuf`、`~/.dsh/redteam/toolkit/dirsearch/dirsearch` |
-| 隧道 | `~/.dsh/redteam/toolkit/suo5/suo5-linux-amd64`、`toolkit/chisel/chisel`、`toolkit/frp/{frpc,frps}` |
-| 完整清单 | `~/.dsh/redteam/toolkit/清单.md`、`技能工具清单.md` |
-
-## 落库要求
-provenance = `active`，tool = `nmap`/`masscan`，记录 scan_run。
+## 参考命令与代码模板（Reference Snippet）
+```
+# 探测服务端点健康状态与 OpenAPI 规范
+curl -sS -m 5 http://127.0.0.1:8080/healthz
+curl -sS -m 5 http://127.0.0.1:8080/openapi.json | jq ".info, (.paths | keys)"
+```

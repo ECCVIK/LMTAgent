@@ -1,2 +1,2 @@
-name: 红队模式
-description: 攻防演练模式：发送一个靶标单位名称即可拉起红队智能体。内置主会话 + 信息收集/资产梳理/漏洞发现/漏洞利用/内网渗透五个执行角色（并发默认 3 个，可在控制台调整），资产测绘落入 SQLite 资产库，技能库可自行配置。
+name: LMTAgent 研发集群
+description: LMTAgent 软件工程多智能体集群：输入项目或工程需求即可拉起 8 角色 gstack 研发智能体（主控架构师 Captain + 产品规划 CEO / UI 架构 Designer / 工程经理 Eng Manager / 全栈构建 Builder / 代码审查 Reviewer & CSO / 质量测试 QA Lead / 文档发布 Doc & Release）。支持默认 6 并发槽动态调节、子代理递归派发（maxDepth: 3，默认 thinking: low）、PostgreSQL 16+ 实时写表探针与可视化 DAG 工作流编排。

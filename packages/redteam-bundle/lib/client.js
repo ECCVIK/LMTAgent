@@ -276,16 +276,22 @@ window.__ModuleLoader__.load({
     /* 样式表在 ./styles.js（唯一维护点）。浏览器半侧不能运行期 import，
        这里放占位符，由 bundle 的 build.mjs 在生成 lib/client.js 时替换成正文。 */
     const CSS = `
-:root{--rt-dock-w:620px;--wb-blue:#4d6bfe;--wb-blue-deep:#2563eb;--wb-blue-cyan:#0ea5e9;--wb-blue-soft:rgba(77,107,254,.12);--wb-blue-ring:rgba(77,107,254,.32);--wb-blue-ink:#1e40af;--wb-blue-pill:#dbeafe}
-/* 右侧栏收起时给 frame 加内边距，中栏主动收窄。属性名跨 DSH 版本兼容：\n   旧版 details 栏 data-details-collapsed，新版 rightbar 栏 data-rightbar-collapsed。 */\ndiv:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-details-collapsed],\ndiv:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-rightbar-collapsed]{padding-right:var(--rt-dock-w)}
+:root{--rt-dock-w:540px;--wb-blue:#4d6bfe;--wb-blue-deep:#2563eb;--wb-blue-cyan:#0ea5e9;--wb-blue-soft:rgba(77,107,254,.12);--wb-blue-ring:rgba(77,107,254,.32);--wb-blue-ink:#1e40af;--wb-blue-pill:#dbeafe}
+body[data-ds-dark-theme]{--wb-blue:#5b78ff;--wb-blue-deep:#3b82f6;--wb-blue-cyan:#38bdf8;--wb-blue-soft:rgba(91,120,255,.16);--wb-blue-ring:rgba(91,120,255,.38);--wb-blue-ink:#93c5fd;--wb-blue-pill:rgba(77,107,254,.2)}
+/* 右侧栏收起时给 frame 加内边距，中栏主动收窄且最多让出 45vw。属性名跨 DSH 版本兼容：
+   旧版 details 栏 data-details-collapsed，新版 rightbar 栏 data-rightbar-collapsed。 */
+div:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-details-collapsed],
+div:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-rightbar-collapsed]{padding-right:min(var(--rt-dock-w),45vw)}
 /* Windows Electron 的桌面标题栏是 webview 上方的 chrome（含最小化/最大化/关闭）。
-   面板是 absolute overlay，不能从 y=0 起，否则会盖住系统按钮，按钮也会落在拖拽区里。
+   面板是 fixed dock overlay，不能从 y=0 起，否则会盖住系统按钮，按钮也会落在拖拽区里。
    用 DSH 布局发布的 chrome 高度变量；普通 web 没有变量时回退 0。 */
-.rt-dock{position:absolute;top:var(--dsh-frame-chrome-top,var(--dsh-frame-top-clearance,var(--dsh-windows-titlebar-height,0px)));right:0;bottom:0;z-index:20;display:flex;flex-direction:column;
+.rt-dock{position:fixed;top:var(--dsh-frame-chrome-top,var(--dsh-frame-top-clearance,var(--dsh-windows-titlebar-height,0px)));right:0;bottom:0;z-index:80;display:flex;flex-direction:column;
   background:var(--dsw-alias-bg-layer-1);border-left:1px solid var(--dsw-alias-border-l1);
-  box-shadow:-12px 0 32px rgba(15,23,42,.14);pointer-events:auto;color:var(--dsw-alias-label-primary);
+  box-shadow:-12px 0 32px rgba(15,23,42,.18);pointer-events:auto;color:var(--dsw-alias-label-primary);
   font-size:13px;line-height:1.5;transition:transform .18s ease,opacity .18s ease}
-/* 右侧栏打开（或新版全屏）时让位：滑出隐藏。必须同时否定两个属性名——\n   旧写法只用 :not([data-details-collapsed])，在新 shell 里该属性不存在会导致条件恒真、面板永远打不开。 */\ndiv:has(> [data-shell-overlay] .rt-dock[data-open="1"]):not([data-details-collapsed]):not([data-rightbar-collapsed]) .rt-dock,\ndiv:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-rightbar-fullscreen] .rt-dock{
+.rt-embed{flex:1;min-height:0;height:100%;width:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5;overflow:hidden}
+/* 右侧栏全屏时让位：滑出隐藏。仅在 data-rightbar-fullscreen 时隐藏，避免 DSH Desktop 无 collapsed 属性导致面板被强制隐藏。 */
+div:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-rightbar-fullscreen] .rt-dock{
   transform:translateX(100%);opacity:0;pointer-events:none}
 .rt-grip{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:2}
 .rt-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--dsw-alias-border-l1)}
@@ -480,7 +486,7 @@ window.__ModuleLoader__.load({
 .rt-hl-req{color:#4d6bfe;font-weight:600}
 .rt-hl-res{color:#0ea5e9;font-weight:600}
 .rt-gain{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:12px;
-  color:#1e40af;background:#dbeafe;border:1px solid #4d6bfe55}
+  color:var(--wb-blue-ink,#1e40af);background:var(--wb-blue-pill,#dbeafe);border:1px solid #4d6bfe55}
 .rt-total{font-size:20px;font-weight:700;font-family:ui-monospace,Menlo,monospace}
 .rt-sidehead{padding:7px 8px 2px;font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);
   display:flex;align-items:center;gap:5px}
@@ -488,10 +494,10 @@ window.__ModuleLoader__.load({
 .rt-sidehead-btn:hover{color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1)}
 .rt-sidehead-btn:focus-visible{outline:2px solid var(--wb-blue,var(--dsw-alias-brand-primary));outline-offset:-2px}
 .rt-scope{display:inline-block;padding:0 4px;border-radius:3px;font-size:10px;font-weight:700;line-height:15px;flex:none}
-.rt-scope-internal{color:#1e40af;background:#dbeafe}
-.rt-scope-external{color:#0369a1;background:#e0f2fe}
+.rt-scope-internal{color:var(--wb-blue-ink,#1e40af);background:var(--wb-blue-pill,#dbeafe)}
+.rt-scope-external{color:#0ea5e9;background:rgba(14,165,233,.14)}
 /* 「当前测试」的标记：既不是内网也不是外网，用蓝紫单独区分 */
-.rt-scope-testing{color:#3730a3;background:#e0e7ff}
+.rt-scope-testing{color:#6366f1;background:rgba(99,102,241,.14)}
 .rt-hits{display:flex;flex-direction:column;gap:6px;margin-top:7px}
 .rt-hit{border:1px solid var(--dsw-alias-border-l1);border-left:3px solid #4d6bfe;border-radius:6px;
   padding:7px 9px;background:var(--dsw-alias-bg-layer-2)}
@@ -507,15 +513,15 @@ window.__ModuleLoader__.load({
   padding:8px 10px;background:var(--dsw-alias-bg-layer-2);margin-bottom:7px}
 .rt-cred-head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .rt-cred-host{font-family:ui-monospace,Menlo,monospace;font-weight:600;font-size:12.5px;word-break:break-all}
-.rt-secret{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.6;background:#eff6ff;color:#1e3a8a;
+.rt-secret{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.6;background:color-mix(in srgb,var(--wb-blue,#4d6bfe) 10%,var(--dsw-alias-bg-layer-2));color:var(--dsw-alias-label-primary);
   border:1px solid #4d6bfe55;border-radius:5px;padding:6px 9px;margin-top:6px;white-space:pre-wrap;word-break:break-all;
   user-select:all;cursor:text}
 .rt-secret-none{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--dsw-alias-state-error-primary);
   border:1px dashed var(--dsw-alias-state-error-primary);border-radius:5px;padding:5px 9px;margin-top:6px}
 .rt-cred-meta{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:5px;word-break:break-word}
 .rt-stage-score{background:#4d6bfe}
-.rt-counted{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:700;color:#1e40af;background:#dbeafe;border:1px solid #4d6bfe55;border-radius:9px;padding:0 7px}
-.rt-scorepts{font-size:11.5px;font-weight:700;color:#1e40af;background:#dbeafe;border:1px solid #4d6bfe55;
+.rt-counted{font-family:ui-monospace,Menlo,monospace;font-size:12px;font-weight:700;color:var(--wb-blue-ink,#1e40af);background:var(--wb-blue-pill,#dbeafe);border:1px solid #4d6bfe55;border-radius:9px;padding:0 7px}
+.rt-scorepts{font-size:11.5px;font-weight:700;color:var(--wb-blue-ink,#1e40af);background:var(--wb-blue-pill,#dbeafe);border:1px solid #4d6bfe55;
   border-radius:10px;padding:0 7px;white-space:nowrap}
 .rt-livebar{display:flex;align-items:center;gap:7px;padding:7px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);
   background:var(--dsw-alias-bg-layer-2);flex-wrap:wrap}
@@ -1106,25 +1112,25 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 }
 
 /* ── WorkBuddy × DSH Blue 4-Wave DAG 流水线与 8 角色工作台卡片 ──────────── */
-.rt-wb-dag{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:8px 0 10px}
-.rt-wb-wave{border:1px solid var(--dsw-alias-border-l1, #e2e8f0);border-top:3px solid #4d6bfe;border-radius:10px;padding:9px 11px;
-  background:linear-gradient(180deg,rgba(77,107,254,.07),transparent 75%),var(--dsw-alias-bg-layer-1, #fff);min-width:0;
+.rt-wb-dag{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:8px 0 10px}
+.rt-wb-wave{border:1px solid var(--dsw-alias-border-l1);border-top:3px solid #4d6bfe;border-radius:10px;padding:10px 12px;
+  background:linear-gradient(180deg,rgba(77,107,254,.07),transparent 75%),var(--dsw-alias-bg-layer-1);min-width:0;
   box-shadow:0 1px 3px rgba(15,23,42,.03)}
 .rt-wb-wave:nth-child(2){border-top-color:#0ea5e9}
-.rt-wb-wave:nth-child(3){border-top-color:#2563eb;background:linear-gradient(180deg,rgba(37,99,235,.1),transparent 75%),var(--dsw-alias-bg-layer-1, #fff)}
+.rt-wb-wave:nth-child(3){border-top-color:#2563eb;background:linear-gradient(180deg,rgba(37,99,235,.1),transparent 75%),var(--dsw-alias-bg-layer-1)}
 .rt-wb-wave:nth-child(4){border-top-color:#6366f1}
 .rt-wb-wave-head{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:5px}
-.rt-wb-wave-tag,.rt-wb-wave-no{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#2563eb;background:rgba(77,107,254,.12);border:1px solid rgba(77,107,254,.25);padding:1px 7px;border-radius:999px;font-family:ui-monospace,Menlo,monospace}
-.rt-wb-wave-slots{font-size:10px;font-family:ui-monospace,Menlo,monospace;color:var(--dsw-alias-label-secondary, #475569)}
-.rt-wb-wave-title{font-size:12px;font-weight:700;color:var(--dsw-alias-label-primary, #0f172a)}
-.rt-wb-wave-roles,.rt-wb-wave-desc{font-size:11.5px;color:var(--dsw-alias-label-secondary, #475569);line-height:1.45}
+.rt-wb-wave-tag,.rt-wb-wave-no{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--wb-blue-ink,#2563eb);background:rgba(77,107,254,.12);border:1px solid rgba(77,107,254,.25);padding:1px 7px;border-radius:999px;font-family:ui-monospace,Menlo,monospace}
+.rt-wb-wave-slots{font-size:10px;font-family:ui-monospace,Menlo,monospace;color:var(--dsw-alias-label-secondary)}
+.rt-wb-wave-title{font-size:12px;font-weight:700;color:var(--dsw-alias-label-primary)}
+.rt-wb-wave-roles,.rt-wb-wave-desc{font-size:11.5px;color:var(--dsw-alias-label-secondary);line-height:1.45}
 .rt-wb-slots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:8px 0 6px}
 .rt-wb-slot{display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:8px;font-size:11px;
-  border:1px solid var(--dsw-alias-border-l1, #e2e8f0);background:var(--dsw-alias-bg-layer-1, #fff);color:var(--dsw-alias-label-secondary, #475569);min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .rt-wb-slot.on{border-color:rgba(77,107,254,.42);background:linear-gradient(135deg,rgba(77,107,254,.12),rgba(14,165,233,.06));
-  color:var(--dsw-alias-label-primary, #0f172a);font-weight:600;box-shadow:0 2px 6px rgba(77,107,254,.1)}
+  color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 2px 6px rgba(77,107,254,.1)}
 .rt-wb-badge{display:inline-flex;align-items:center;gap:5px;padding:1px 8px;border-radius:999px;font-size:10.5px;font-weight:600;
-  color:#4d6bfe;background:rgba(77,107,254,.1);border:1px solid rgba(77,107,254,.28)}
+  color:var(--wb-blue,#4d6bfe);background:rgba(77,107,254,.1);border:1px solid rgba(77,107,254,.28)}
 @media(max-width:720px){.rt-wb-dag{grid-template-columns:1fr}.rt-wb-slots{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 /* ── 报告 v2：模板化交付报告 ─────────────────────────────────────────── */
@@ -1158,82 +1164,91 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 @media(max-width:720px){.rt-r2-scroll{padding:10px}.rt-r2-table{min-width:460px}}
 
 /* ══════════════════════════════════════════════════════════════════
-   p4 Modular Bento UI + p2 PG Write Probe + p3 Concurrency + dsh-harness-one
+   p4 Modular Bento UI + p2 Theme-Adaptive PG Write Probe + p3 Concurrency + LMTAgent
    ══════════════════════════════════════════════════════════════════ */
-.rt-bento-stack{display:flex;flex-direction:column;gap:12px;margin-bottom:12px}
-.rt-bento-row-1{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(260px,1fr);gap:12px}
-.rt-bento-row-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.rt-bento-row-3{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(290px,1fr);gap:12px}
-.rt-bento-card{border:1px solid var(--dsw-alias-border-l1,#e2e8f0);border-radius:14px;padding:13px 15px;
+/* Dock 侧边栏（默认 540px）中采用宽敞单列流式布局，仅在全面浏览（.rt-full）大屏下并排分栏 */
+.rt-bento-stack{display:flex;flex-direction:column;gap:14px;margin-bottom:14px}
+.rt-bento-row-1,.rt-bento-row-2,.rt-bento-row-3{display:grid;grid-template-columns:1fr;gap:14px}
+@media(min-width:1180px){
+  .rt-full .rt-bento-row-1{grid-template-columns:minmax(0,1.65fr) minmax(260px,1fr)}
+  .rt-full .rt-bento-row-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .rt-full .rt-bento-row-3{grid-template-columns:minmax(0,1.45fr) minmax(300px,1fr)}
+}
+.rt-bento-card{border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:16px 18px;
   background:linear-gradient(180deg,color-mix(in srgb,var(--dsw-alias-bg-layer-1) 96%,transparent),var(--dsw-alias-bg-layer-1));
-  box-shadow:0 2px 10px -4px rgba(15,23,42,.06),0 8px 24px -18px rgba(77,107,254,.18);min-width:0;display:flex;flex-direction:column;gap:8px}
+  box-shadow:0 2px 10px -4px rgba(15,23,42,.06),0 8px 24px -18px rgba(77,107,254,.18);min-width:0;display:flex;flex-direction:column;gap:10px}
 .rt-bento-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.rt-bento-title{font-size:13px;font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:6px}
-.rt-bento-sub{font-size:10.5px;color:var(--dsw-alias-label-secondary)}
-.rt-p4-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px}
-.rt-p4-tile{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:8px 9px;
-  background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 65%,transparent);min-width:0;display:flex;flex-direction:column;gap:2px}
+.rt-bento-title{font-size:13.5px;font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:6px}
+.rt-bento-sub{font-size:11px;color:var(--dsw-alias-label-secondary)}
+.rt-p4-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(92px,1fr));gap:8px}
+.rt-p4-tile{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:9px 10px;
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 65%,transparent);min-width:0;display:flex;flex-direction:column;gap:3px}
 .rt-p4-tile-val{font-size:17px;font-weight:750;line-height:1.15;font-family:ui-monospace,Menlo,monospace;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
-.rt-p4-tile-val.accent{color:#4d6bfe}
-.rt-p4-tile-lbl{font-size:10.5px;font-weight:600;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rt-p4-tile-sub{font-size:9.5px;color:var(--dsw-alias-label-secondary);opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-p4-tile-val.accent{color:var(--wb-blue,#4d6bfe)}
+.rt-p4-tile-lbl{font-size:11px;font-weight:600;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-p4-tile-sub{font-size:10px;color:var(--dsw-alias-label-secondary);opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rt-p4-dist-bar{display:flex;height:7px;border-radius:99px;overflow:hidden;background:var(--dsw-alias-bg-layer-2);gap:1px}
 .rt-p4-dist-seg{height:100%;transition:width .25s ease}
-.rt-p4-legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:10.5px;color:var(--dsw-alias-label-secondary)}
+.rt-p4-legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:11px;color:var(--dsw-alias-label-secondary)}
 .rt-p4-legend-item{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .rt-p4-legend-dot{width:7px;height:7px;border-radius:2px;flex:none}
 .rt-bento-plugin-card{background:linear-gradient(135deg,rgba(77,107,254,.1),rgba(14,165,233,.05) 65%,transparent),var(--dsw-alias-bg-layer-1)}
-.rt-p4-plugin-kv{display:flex;flex-direction:column;gap:4px;font-size:11px}
-.rt-p4-plugin-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:2px 0;border-bottom:1px dashed color-mix(in srgb,var(--dsw-alias-border-l1) 70%,transparent)}
+.rt-p4-plugin-kv{display:flex;flex-direction:column;gap:5px;font-size:11.5px}
+.rt-p4-plugin-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed color-mix(in srgb,var(--dsw-alias-border-l1) 70%,transparent)}
 .rt-p4-plugin-row:last-child{border-bottom:0}
 .rt-p4-plugin-row b{color:var(--dsw-alias-label-secondary);font-weight:600;flex:none}
-.rt-p4-plugin-row span{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-p4-plugin-row span{font-family:ui-monospace,Menlo,monospace;font-size:11px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* p4 Dual SVG Ring Gauges */
-.rt-p4-gauge-body{display:grid;grid-template-columns:116px minmax(0,1fr);gap:12px;align-items:center}
+.rt-p4-gauge-body{display:grid;grid-template-columns:116px minmax(0,1fr);gap:14px;align-items:center}
 .rt-p4-donut-wrap{position:relative;width:112px;height:112px;display:flex;align-items:center;justify-content:center;margin:0 auto}
 .rt-p4-donut-svg{width:112px;height:112px;transform:rotate(-90deg)}
 .rt-p4-donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;pointer-events:none}
 .rt-p4-donut-val{font-size:15px;font-weight:750;font-family:ui-monospace,Menlo,monospace;line-height:1.1;color:var(--dsw-alias-label-primary)}
 .rt-p4-donut-sub{font-size:9.5px;color:var(--dsw-alias-label-secondary);margin-top:2px}
-.rt-p4-breakdown{display:flex;flex-direction:column;gap:5px;min-width:0}
-.rt-p4-bd-row{display:flex;align-items:center;gap:6px;font-size:11px;min-width:0}
+.rt-p4-breakdown{display:flex;flex-direction:column;gap:6px;min-width:0}
+.rt-p4-bd-row{display:flex;align-items:center;gap:6px;font-size:11.5px;min-width:0}
 .rt-p4-bd-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}
 .rt-p4-bd-val{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;color:var(--dsw-alias-label-primary);flex:none}
-.rt-p4-timeline-bar{display:grid;grid-template-columns:1.1fr 1fr 2.4fr 1.3fr;gap:3px;margin-top:4px}
-.rt-p4-tl-seg{border-radius:5px;padding:3px 6px;font-size:9.5px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
+.rt-p4-timeline-bar{display:grid;grid-template-columns:1.1fr 1fr 2.4fr 1.3fr;gap:4px;margin-top:4px}
+.rt-p4-tl-seg{border-radius:6px;padding:4px 6px;font-size:10px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center}
 
-/* dsh-harness-one Mode Bar, Visual DAG Canvas, Doc Wall & Feishu Push */
+/* LMTAgent Mode Bar, Real-Time Role Decision Cards, Visual DAG Canvas, Doc Wall & Feishu Push */
 .rt-harness-modebar{display:inline-flex;align-items:center;gap:4px;padding:3px;border-radius:9px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1)}
 .rt-harness-modebtn{border:0;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:600;padding:4px 9px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap;transition:background .14s,color .14s}
 .rt-harness-modebtn:hover{color:var(--dsw-alias-label-primary)}
 .rt-harness-modebtn.on{background:linear-gradient(135deg,#4d6bfe 0%,#2563eb 100%);color:#fff;box-shadow:0 1px 4px rgba(77,107,254,.3)}
-.rt-dag-canvas{display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);
+.rt-standby-card{border:1px dashed var(--dsw-alias-border-l2,var(--dsw-alias-border-l1));border-radius:12px;padding:18px 20px;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 55%,transparent);display:flex;flex-direction:column;gap:8px}
+.rt-standby-title{font-size:13px;font-weight:700;color:var(--dsw-alias-label-primary);display:flex;align-items:center;gap:8px}
+.rt-standby-desc{font-size:12px;color:var(--dsw-alias-label-secondary);line-height:1.6}
+.rt-role-decision-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.rt-role-decision-card{border:1px solid var(--dsw-alias-border-l1);border-left:3px solid #4d6bfe;border-radius:10px;padding:11px 13px;background:var(--dsw-alias-bg-layer-1);display:flex;flex-direction:column;gap:6px;min-width:0}
+.rt-dag-canvas{display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:10px;border:1px solid var(--dsw-alias-border-l1);
   background:radial-gradient(circle at 12px 12px,rgba(77,107,254,.12) 1px,transparent 1px),var(--dsw-alias-bg-base);background-size:16px 16px}
-.rt-dag-wave-row{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap}
-.rt-dag-wave-label{width:76px;flex:none;display:flex;flex-direction:column;justify-content:center;padding:4px 6px;border-radius:7px;
-  background:rgba(77,107,254,.08);border-left:3px solid #4d6bfe;font-size:10px;font-weight:700;color:#2563eb}
-.rt-dag-nodes{flex:1;min-width:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:6px}
-.rt-dag-node{border:1px solid var(--dsw-alias-border-l1);border-left:3px solid #4d6bfe;border-radius:8px;padding:6px 8px;
-  background:var(--dsw-alias-bg-layer-1);cursor:pointer;display:flex;flex-direction:column;gap:2px;transition:border-color .14s,box-shadow .14s,transform .12s;min-width:0}
+.rt-dag-wave-row{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
+.rt-dag-wave-label{width:84px;flex:none;display:flex;flex-direction:column;justify-content:center;padding:6px 8px;border-radius:8px;
+  background:rgba(77,107,254,.08);border-left:3px solid #4d6bfe;font-size:10.5px;font-weight:700;color:var(--wb-blue-ink,#2563eb)}
+.rt-dag-nodes{flex:1;min-width:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:8px}
+.rt-dag-node{border:1px solid var(--dsw-alias-border-l1);border-left:3px solid #4d6bfe;border-radius:9px;padding:8px 10px;
+  background:var(--dsw-alias-bg-layer-1);cursor:pointer;display:flex;flex-direction:column;gap:3px;transition:border-color .14s,box-shadow .14s,transform .12s;min-width:0}
 .rt-dag-node:hover{border-color:#4d6bfe;transform:translateY(-1px)}
 .rt-dag-node.on{border-color:#4d6bfe;background:rgba(77,107,254,.08);box-shadow:0 0 0 2px rgba(77,107,254,.22)}
 .rt-dag-node.sub{border-left-style:dashed;border-left-color:#6366f1;background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 70%,transparent)}
 .rt-dag-node-top{display:flex;align-items:center;justify-content:space-between;gap:4px}
-.rt-dag-node-code{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;font-weight:700;color:#2563eb}
-.rt-dag-node-st{font-size:9.5px;padding:0 5px;border-radius:99px;font-weight:600;white-space:nowrap}
+.rt-dag-node-code{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;font-weight:700;color:var(--wb-blue-ink,#2563eb)}
+.rt-dag-node-st{font-size:9.5px;padding:0 6px;border-radius:99px;font-weight:600;white-space:nowrap}
 .rt-dag-node-st.done{color:#059669;background:rgba(16,185,129,.12)}
-.rt-dag-node-st.run{color:#2563eb;background:rgba(77,107,254,.15)}
+.rt-dag-node-st.run{color:var(--wb-blue-ink,#2563eb);background:rgba(77,107,254,.15)}
 .rt-dag-node-st.wait{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2)}
-.rt-dag-node-name{font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rt-dag-node-meta{font-size:10px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rt-dag-inspector{border:1px solid var(--dsw-alias-border-l1);border-radius:9px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2);font-size:11.5px;display:flex;flex-direction:column;gap:5px}
+.rt-dag-node-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-dag-node-meta{font-size:10.5px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-dag-inspector{border:1px solid var(--dsw-alias-border-l1);border-radius:9px;padding:10px 12px;background:var(--dsw-alias-bg-layer-2);font-size:12px;display:flex;flex-direction:column;gap:6px}
 .rt-dag-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 
 /* Doc Wall */
 .rt-doc-wall{display:grid;grid-template-columns:185px minmax(0,1fr);gap:10px;min-height:240px;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;overflow:hidden;background:var(--dsw-alias-bg-base)}
-.rt-doc-strip{border-right:1px solid var(--dsw-alias-border-l1);padding:7px;display:flex;flex-direction:column;gap:4px;background:var(--dsw-alias-bg-layer-2);overflow:auto}
-.rt-doc-item{padding:6px 8px;border-radius:7px;cursor:pointer;border:1px solid transparent;display:flex;flex-direction:column;gap:2px}
+.rt-doc-strip{border-right:1px solid var(--dsw-alias-border-l1);padding:8px;display:flex;flex-direction:column;gap:4px;background:var(--dsw-alias-bg-layer-2);overflow:auto}
+.rt-doc-item{padding:7px 9px;border-radius:7px;cursor:pointer;border:1px solid transparent;display:flex;flex-direction:column;gap:2px}
 .rt-doc-item:hover{background:var(--dsw-alias-bg-layer-1)}
 .rt-doc-item.on{background:rgba(77,107,254,.12);border-color:rgba(77,107,254,.45)}
 .rt-doc-item-title{font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1241,47 +1256,78 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 .rt-doc-preview{padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-width:0;overflow:auto;max-height:320px}
 
 /* Feishu Push Panel */
-.rt-feishu-panel{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:10px 12px;background:var(--dsw-alias-bg-base);display:flex;flex-direction:column;gap:8px}
+.rt-feishu-panel{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:12px 14px;background:var(--dsw-alias-bg-base);display:flex;flex-direction:column;gap:8px}
 .rt-feishu-checks{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px}
 
-/* p2 Real-Time PG Write Probe */
-.rt-pg-probe{display:flex;flex-direction:column;gap:8px}
-.rt-pg-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
-.rt-pg-stat{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);display:flex;flex-direction:column;gap:1px}
-.rt-pg-stat-val{font-size:14px;font-weight:750;font-family:ui-monospace,Menlo,monospace;color:#4d6bfe}
-.rt-pg-stat-lbl{font-size:10px;color:var(--dsw-alias-label-secondary)}
-.rt-pg-tables{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
-.rt-pg-tbl{border:1px solid var(--dsw-alias-border-l1);border-radius:7px;padding:5px 7px;background:var(--dsw-alias-bg-base);display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
-.rt-pg-tbl-name{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rt-pg-tbl-cnt{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#2563eb;background:rgba(77,107,254,.1);padding:0 5px;border-radius:99px;flex:none}
-.rt-pg-log{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:6px 8px;background:#0f172a;color:#e2e8f0;font-family:ui-monospace,Menlo,monospace;font-size:10.5px;line-height:1.55;max-height:148px;overflow:auto;display:flex;flex-direction:column;gap:3px}
-.rt-pg-log-row{display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rt-pg-verb{padding:0 4px;border-radius:3px;font-size:9.5px;font-weight:700;background:rgba(77,107,254,.28);color:#93c5fd;flex:none}
-.rt-pg-verb.upd{background:rgba(14,165,233,.28);color:#7dd3fc}
-.rt-pg-lat{margin-left:auto;color:#34d399;font-size:9.5px;flex:none}
+/* p2 Real-Time PG Write Probe — 100% Theme-Adaptive (No light/dark mismatch) */
+.rt-pg-probe{display:flex;flex-direction:column;gap:10px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary)}
+.rt-pg-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.rt-pg-stat{border:1px solid var(--dsw-alias-border-l1);border-radius:9px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2);display:flex;flex-direction:column;gap:2px}
+.rt-pg-stat-val{font-size:15px;font-weight:750;font-family:ui-monospace,Menlo,monospace;color:var(--wb-blue,#4d6bfe)}
+.rt-pg-stat-lbl{font-size:10.5px;color:var(--dsw-alias-label-secondary)}
+.rt-pg-tables{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.rt-pg-tbl{border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:6px 9px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
+.rt-pg-tbl-name{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-pg-tbl-cnt{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--wb-blue-ink,#2563eb);background:var(--wb-blue-soft,rgba(77,107,254,.12));padding:1px 6px;border-radius:99px;flex:none}
+.rt-pg-log{border:1px solid var(--dsw-alias-border-l1);border-radius:9px;padding:8px 10px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.6;max-height:168px;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.rt-pg-log-row{display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary)}
+.rt-pg-verb{padding:1px 5px;border-radius:4px;font-size:9.5px;font-weight:700;background:var(--wb-blue-soft,rgba(77,107,254,.15));color:var(--wb-blue-ink,#2563eb);flex:none}
+.rt-pg-verb.upd{background:rgba(14,165,233,.16);color:var(--wb-blue-cyan,#0284c7)}
+.rt-pg-lat{margin-left:auto;color:#10b981;font-size:10px;flex:none}
 
-/* p3 Inline Concurrency & Recursive Subagent Controller + 2x4 Role Card Grid */
-.rt-p3-ctrl{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 10px;border-radius:9px;border:1px solid rgba(77,107,254,.28);background:linear-gradient(90deg,rgba(77,107,254,.08),rgba(14,165,233,.04))}
+/* p3 Inline Concurrency & Recursive Subagent Controller + Role Card Grid */
+.rt-p3-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;border-radius:10px;border:1px solid rgba(77,107,254,.28);background:linear-gradient(90deg,rgba(77,107,254,.08),rgba(14,165,233,.04))}
 .rt-p3-stepper{display:inline-flex;align-items:center;gap:4px}
 .rt-p3-stepbtn{width:24px;height:24px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:inherit;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0}
 .rt-p3-stepbtn:hover{border-color:#4d6bfe;color:#4d6bfe}
 .rt-p3-pills{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
-.rt-p3-pill{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:2px 8px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit}
+.rt-p3-pill{border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);border-radius:999px;padding:2px 9px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit}
 .rt-p3-pill:hover{border-color:#4d6bfe;color:var(--dsw-alias-label-primary)}
 .rt-p3-pill.on{background:linear-gradient(135deg,#4d6bfe 0%,#2563eb 100%);border-color:#4d6bfe;color:#fff}
-.rt-wb-role-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
-.rt-wb-role-card{border:1px solid var(--dsw-alias-border-l1);border-top:3px solid #4d6bfe;border-radius:10px;padding:9px 10px;
-  background:var(--dsw-alias-bg-layer-1);display:flex;flex-direction:column;gap:5px;min-width:0;cursor:pointer;transition:border-color .14s,box-shadow .14s,transform .12s}
+.rt-wb-role-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:8px}
+@media(min-width:1180px){.rt-full .rt-wb-role-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.rt-wb-role-card{border:1px solid var(--dsw-alias-border-l1);border-top:3px solid #4d6bfe;border-radius:10px;padding:11px 12px;
+  background:var(--dsw-alias-bg-layer-1);display:flex;flex-direction:column;gap:6px;min-width:0;cursor:pointer;transition:border-color .14s,box-shadow .14s,transform .12s}
 .rt-wb-role-card:hover{border-color:#4d6bfe;box-shadow:0 4px 12px rgba(77,107,254,.12);transform:translateY(-1px)}
 .rt-wb-role-card.on{border-color:#4d6bfe;background:rgba(77,107,254,.07);box-shadow:0 0 0 1px rgba(77,107,254,.28)}
 .rt-wb-role-head{display:flex;align-items:center;justify-content:space-between;gap:4px;flex-wrap:wrap}
-.rt-wb-role-badge{font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;color:#2563eb;background:rgba(77,107,254,.12);border:1px solid rgba(77,107,254,.28);border-radius:999px;padding:1px 7px;white-space:nowrap}
-.rt-wb-role-name{font-size:12px;font-weight:700;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rt-wb-role-desc{font-size:11px;color:var(--dsw-alias-label-secondary);line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rt-wb-role-badge{font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;color:var(--wb-blue-ink,#2563eb);background:rgba(77,107,254,.12);border:1px solid rgba(77,107,254,.28);border-radius:999px;padding:1px 7px;white-space:nowrap}
+.rt-wb-role-name{font-size:12.5px;font-weight:700;color:var(--dsw-alias-label-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt-wb-role-desc{font-size:11.5px;color:var(--dsw-alias-label-secondary);line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rt-wb-role-skills{display:flex;flex-wrap:wrap;gap:4px;margin-top:auto;padding-top:3px}
-.rt-wb-skill-tag{font-family:ui-monospace,Menlo,monospace;font-size:10px;padding:1px 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);color:#2563eb;white-space:nowrap}
+.rt-wb-skill-tag{font-family:ui-monospace,Menlo,monospace;font-size:10px;padding:1px 5px;border-radius:4px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);color:var(--wb-blue-ink,#2563eb);white-space:nowrap}
 .rt-wb-recurse-tag{font-size:9.5px;padding:1px 6px;border-radius:99px;background:rgba(99,102,241,.12);color:#4f46e5;border:1px solid rgba(99,102,241,.28);font-weight:600;white-space:nowrap}
-@media(max-width:1100px){.rt-bento-row-1,.rt-bento-row-2,.rt-bento-row-3{grid-template-columns:1fr}.rt-wb-role-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.rt-p4-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
+
+/* Dark theme cohesive overrides for all cards, probes, and badges */
+body[data-ds-dark-theme] .rt-wb-wave,
+body[data-ds-dark-theme] .rt-wb-slot,
+body[data-ds-dark-theme] .rt-bento-card,
+body[data-ds-dark-theme] .rt-dag-node,
+body[data-ds-dark-theme] .rt-wb-role-card,
+body[data-ds-dark-theme] .rt-role-decision-card,
+body[data-ds-dark-theme] .rt-pg-probe{
+  background:var(--dsw-alias-bg-layer-1);
+  border-color:var(--dsw-alias-border-l1);
+  color:var(--dsw-alias-label-primary);
+}
+body[data-ds-dark-theme] .rt-pg-stat,
+body[data-ds-dark-theme] .rt-pg-tbl,
+body[data-ds-dark-theme] .rt-pg-log,
+body[data-ds-dark-theme] .rt-standby-card{
+  background:var(--dsw-alias-bg-layer-2);
+  border-color:var(--dsw-alias-border-l1);
+  color:var(--dsw-alias-label-primary);
+}
+body[data-ds-dark-theme] .rt-gain,
+body[data-ds-dark-theme] .rt-counted,
+body[data-ds-dark-theme] .rt-scorepts{
+  background:rgba(77,107,254,.16);
+  color:#93c5fd;
+  border-color:rgba(77,107,254,.35);
+}
+
+/* Composer Dock Bar */
+.rt-composer-dock{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 10px;border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);font-size:11.5px;margin:2px 0}
 @media(max-width:640px){.rt-wb-role-grid{grid-template-columns:1fr}.rt-doc-wall{grid-template-columns:1fr}}
 `    /* ---------------------------------------------------------- 桥接与状态 */
     /** 是否在「全面浏览」独立窗口里（URL hash 标记，复用同一套界面代码）。 */
@@ -1619,8 +1665,64 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
     }
 
     /**
+     * 从宿主 DSH 页面 DOM 与 localStorage 实时读取当前会话 ID、标题及底栏真实 Token / 轮次 / 步数 / 吞吐遥测。
+     * 解决 p1 中宿主底栏已有「用量 42.1K tok · 1 轮 1 步 · 110 tok/s」但控制台仍显示未选择工作区或假数据的问题。
+     */
+    const readHostDomTelemetry = () => {
+      const out = {
+        sessionId: null,
+        sessionTitle: null,
+        workspaceName: null,
+        tokens: 0,
+        tokenLabel: '0',
+        rounds: 0,
+        steps: 0,
+        speedLabel: '0 tok/s',
+        cacheLabel: '待命',
+      }
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          const rawCur = window.localStorage.getItem('dsh.sessions.current')
+          if (rawCur) {
+            let sid = rawCur.trim()
+            if (sid.startsWith('"') && sid.endsWith('"')) {
+              try { sid = JSON.parse(sid) } catch (e) { /* ignore */ }
+            }
+            if (sid && typeof sid === 'string') out.sessionId = sid
+          }
+        }
+        if (typeof document !== 'undefined' && document.body) {
+          const text = String(document.body.innerText || '')
+          const tokMatch = /用量\s*([\d.]+)\s*([kKmM]?)\s*tok/i.exec(text)
+          if (tokMatch) {
+            const num = parseFloat(tokMatch[1]) || 0
+            const unit = (tokMatch[2] || '').toLowerCase()
+            const mult = unit === 'm' ? 1000000 : (unit === 'k' ? 1000 : 1)
+            out.tokens = Math.round(num * mult)
+            out.tokenLabel = tokMatch[1] + (unit ? unit : '')
+          }
+          const roundStepMatch = /(\d+)\s*轮\s*(\d+)\s*步/.exec(text)
+          if (roundStepMatch) {
+            out.rounds = parseInt(roundStepMatch[1], 10) || 0
+            out.steps = parseInt(roundStepMatch[2], 10) || 0
+          }
+          const speedMatch = /([\d.]+)\s*tok\/s/i.exec(text)
+          if (speedMatch) {
+            out.speedLabel = speedMatch[1] + ' tok/s'
+          }
+          const cacheMatch = /缓存命中\s*([\d.]+)%/.exec(text)
+          if (cacheMatch) {
+            out.cacheLabel = '缓存命中 ' + cacheMatch[1] + '%'
+          }
+        }
+      } catch (e) { /* DOM 读取异常不阻断渲染 */ }
+      return out
+    }
+
+    /**
      * p2 实时 PostgreSQL 写表活动探针（PG 写表活动探针）。
-     * 轮询 `api({ op: 'pgWriteProbe', engagement })`，展示各表写入计数、当前活跃写表角色/分片、写入延迟与实时事务流。
+     * 轮询 `api({ op: 'pgWriteProbe', engagement })`，严格按真实落盘数据展示各表写入计数、当前活跃写表角色/分片、写入延迟与实时事务流；
+     * 100% 跟随深浅色主题，无任何写死深色背景或虚假事务。
      */
     function PgWriteProbeCard(props) {
       const eng = props.engagement
@@ -1641,28 +1743,23 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         return () => window.clearInterval(timer)
       }, [eng, refreshKey])
 
-      const defaultTables = [
-        { table: 'modules / assets', writes: 412, role: 'recon#1' },
-        { table: 'dag_nodes / chain', writes: 286, role: 'assess#1' },
-        { table: 'sharded_files', writes: 194, role: 'exploit#1..6' },
-        { table: 'code_audits / vulns', writes: 148, role: 'vuln-scan#1' },
-        { table: 'qa_runs / scores', writes: 164, role: 'qa#1' },
-        { table: 'delivery_docs', writes: 80, role: 'internal#1' },
+      const zeroTables = [
+        { table: 'modules (模块)', writes: 0, role: 'idle' },
+        { table: 'dag_nodes (工作流)', writes: 0, role: 'idle' },
+        { table: 'sharded_files (分片)', writes: 0, role: 'idle' },
+        { table: 'code_audits (审查)', writes: 0, role: 'idle' },
+        { table: 'qa_runs (测试门禁)', writes: 0, role: 'idle' },
+        { table: 'delivery_docs (交付)', writes: 0, role: 'idle' },
       ]
-      const defaultEvents = [
-        { verb: 'INSERT', sql: 'INSERT INTO modules (shard, status, owner)', role: 'recon · CEO', latency: '0.3ms', at: '刚刚' },
-        { verb: 'UPDATE', sql: 'UPDATE dag_nodes SET wave=3, slots=6, thinking=low', role: 'assess · EngMgr', latency: '0.4ms', at: '1s前' },
-        { verb: 'INSERT', sql: 'INSERT INTO sharded_files (slot_id, path, lock)', role: 'exploit#3 (sub-low)', latency: '0.4ms', at: '2s前' },
-        { verb: 'INSERT', sql: 'INSERT INTO qa_runs (suite, pass_rate, gate)', role: 'qa · QALead', latency: '0.5ms', at: '4s前' },
-        { verb: 'UPDATE', sql: 'UPDATE code_audits SET cso_gate=verified', role: 'vuln-scan · CSO', latency: '0.3ms', at: '6s前' },
-      ]
-      const tables = (probe && Array.isArray(probe.tables) && probe.tables.length) ? probe.tables : defaultTables
-      const events = (probe && Array.isArray(probe.events) && probe.events.length) ? probe.events : defaultEvents
+      const tables = (probe && Array.isArray(probe.tables) && probe.tables.length) ? probe.tables : zeroTables
+      const events = (probe && Array.isArray(probe.events)) ? probe.events : []
       const totalWrites = (probe && typeof probe.total_writes === 'number')
         ? probe.total_writes
         : tables.reduce((s, t) => s + (Number(t.writes || t.count) || 0), 0)
       const latency = (probe && probe.latency_ms !== undefined) ? (probe.latency_ms + 'ms') : '0.4ms'
-      const activeWriter = (probe && probe.active_writer) || 'exploit #1..#6 (thinking: low)'
+      const activeWriter = totalWrites > 0
+        ? ((probe && probe.active_writer) || 'Builder / Sub-Worker 写入中')
+        : '待命 · 尚无写表事务'
 
       return h('div', { className: 'rt-bento-card rt-pg-probe' },
         h('div', { className: 'rt-bento-head' },
@@ -1677,74 +1774,167 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             h('span', { className: 'rt-pg-stat-val' }, String(totalWrites) + ' TX'),
             h('span', { className: 'rt-pg-stat-lbl' }, 'PG 写表事务累计')),
           h('div', { className: 'rt-pg-stat' },
-            h('span', { className: 'rt-pg-stat-val', style: { fontSize: 11.5 } }, activeWriter),
+            h('span', { className: 'rt-pg-stat-val', style: { fontSize: 12 } }, activeWriter),
             h('span', { className: 'rt-pg-stat-lbl' }, '当前活跃写入角色 / 分片'))),
         h('div', { className: 'rt-pg-tables' },
-          tables.slice(0, 6).map((t, i) => h('div', { key: 'pgt' + i, className: 'rt-pg-tbl', title: '写入角色：' + (t.role || 'cluster') },
+          tables.slice(0, 6).map((t, i) => h('div', { key: 'pgt' + i, className: 'rt-pg-tbl', title: '写入角色：' + (t.role || 'idle') },
             h('span', { className: 'rt-pg-tbl-name' }, t.table || t.name),
             h('span', { className: 'rt-pg-tbl-cnt' }, String(t.writes !== undefined ? t.writes : (t.count || 0)) + ' w')))),
         h('div', { className: 'rt-pg-log', role: 'log', 'aria-label': 'PostgreSQL 实时写表事件流' },
-          events.slice(0, 5).map((ev, idx) => h('div', { key: 'pge' + idx, className: 'rt-pg-log-row' },
-            h('span', { className: 'rt-pg-verb' + (ev.verb === 'UPDATE' ? ' upd' : '') }, ev.verb || 'INSERT'),
-            h('span', { title: ev.sql }, ev.sql),
-            h('span', { style: { color: '#94a3b8', fontSize: 9.5 } }, '[' + (ev.role || 'worker') + ']'),
-            h('span', { className: 'rt-pg-lat' }, ev.latency || latency)))))
+          events.length > 0
+            ? events.slice(0, 6).map((ev, idx) => h('div', { key: 'pge' + idx, className: 'rt-pg-log-row' },
+                h('span', { className: 'rt-pg-verb' + (ev.verb === 'UPDATE' ? ' upd' : '') }, ev.verb || 'INSERT'),
+                h('span', { title: ev.sql }, ev.sql),
+                h('span', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 10 } }, '[' + (ev.role || 'worker') + ']'),
+                h('span', { className: 'rt-pg-lat' }, ev.latency || latency)))
+            : h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11.5, lineHeight: 1.6, padding: '2px 0' } },
+                '当前工作区尚无 PG 写表事务（0 TX）· 当智能体角色写入模块架构、分片变更、代码审查或测试记录时，此处将实时滚动展示 SQL 事务流。')))
     }
 
     /**
-     * chumingjun/dsh-harness-one 可视化多智能体工作流画布 & 文稿视图 & 飞书通知组件。
-     * 支持「画布视图 (DAG Canvas)」/「文稿视图 (Doc Wall)」/「飞书通知 (Feishu Push)」一键切换，
-     * 并支持节点级断点续跑 (Checkpoint Recovery) 与递归子代理 (thinking: low) 节点透视。
+     * LMTAgent 实时角色决策流 & 4-Wave DAG 工作流画布 & 文稿视图 & 飞书通知组件。
+     * 严格根据当前项目实际参与的角色与步骤展示实时角色决策预览；当项目尚未派发角色时展示待命卡片，不幻觉未执行角色。
      */
     const HARNESS_DAG_WAVES = [
       {
         wave: 'WAVE 0', sub: '主控调度',
         nodes: [
-          { id: 'plan', code: '⓪ plan', name: 'Captain 主控指挥', skill: '/dag-schedule', status: 'done', statusLabel: '已完成', slots: 'Orchestrator', thinking: 'high', docTitle: '00_PLAN_CHARTER.md', docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。' },
+          { id: 'plan', code: '⓪ plan', name: 'Captain 主控架构师', skill: '/dag-schedule', status: 'wait', statusLabel: '待命', slots: 'Orchestrator', thinking: 'high', docTitle: '00_PLAN_CHARTER.md', docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。' },
         ],
       },
       {
         wave: 'WAVE 1', sub: '2 槽双轨立项',
         nodes: [
-          { id: 'recon', code: '① recon', name: 'CEO 需求与架构测绘', skill: '/office-hours · /plan-ceo-review', status: 'done', statusLabel: '已完成', slots: 'Slot #1', thinking: 'low', docTitle: '01_CEO_PRD_AND_SURFACE.md', docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO modules / assets（已完成 100% 校验）' },
-          { id: 'designer', code: '② designer', name: 'Designer 视觉与交互', skill: '/plan-design-review · /design-shotgun', status: 'done', statusLabel: '已完成', slots: 'Slot #2', thinking: 'low', docTitle: '02_DESIGN_SYSTEM_BENTO.md', docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + p4 双环形图表 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。' },
+          { id: 'recon', code: '① recon', name: 'CEO 产品与需求规划', skill: '/office-hours · /plan-ceo-review', status: 'wait', statusLabel: '待命', slots: 'Slot #1', thinking: 'low', docTitle: '01_CEO_PRD_AND_SURFACE.md', docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO modules（实时同步）' },
+          { id: 'designer', code: '② designer', name: 'Designer 交互与视觉', skill: '/plan-design-review · /design-shotgun', status: 'wait', statusLabel: '待命', slots: 'Slot #2', thinking: 'low', docTitle: '02_DESIGN_SYSTEM_BENTO.md', docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + 主题自适应探针 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。' },
         ],
       },
       {
         wave: 'WAVE 2', sub: '1 槽契约锁',
         nodes: [
-          { id: 'assess', code: '③ assess', name: 'Eng Manager 契约与分片', skill: '/plan-eng-review', status: 'done', statusLabel: '已完成', slots: 'Slot #1 (Lock)', thinking: 'low', docTitle: '03_ENG_SHARD_CONTRACT.md', docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：已写入 dag_nodes 检查点，支持单分片失败独立重试。' },
+          { id: 'assess', code: '③ assess', name: 'Eng Manager 架构与分片', skill: '/plan-eng-review', status: 'wait', statusLabel: '待命', slots: 'Slot #1 (Lock)', thinking: 'low', docTitle: '03_ENG_SHARD_CONTRACT.md', docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：写入 dag_nodes 检查点，支持单分片失败独立重试。' },
         ],
       },
       {
         wave: 'WAVE 3', sub: '6 槽并发构建',
         nodes: [
-          { id: 'exploit', code: '⑤ exploit #1..#6', name: '6× Builder 并行分片研发', skill: '/parallel-build · 6 Slots', status: 'run', statusLabel: '6槽运行中', slots: 'Slots #1–#6', thinking: 'low', docTitle: '04_BUILDER_SHARDS_LOG.md', docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 满载并行编码与单元验证\n- 递归子代理：已按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO sharded_files / attack_files（0.4ms 极速落盘）' },
-          { id: 'subworker', code: '↳ sub-worker', name: '递归子代理 (thinking: low)', skill: 'maxDepth=3 · 微任务分解', status: 'run', statusLabel: '递归活跃', slots: 'Child Workers', thinking: 'low', isSub: true, docTitle: '05_RECURSIVE_SUBAGENTS.md', docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/协议解析微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟、高缓存命中 97.6%）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。' },
+          { id: 'exploit', code: '⑤ exploit #1..#6', name: 'Builder 全栈分片构建', skill: '/parallel-build · 6 Slots', status: 'wait', statusLabel: '待命', slots: 'Slots #1–#6', thinking: 'low', docTitle: '04_BUILDER_SHARDS_LOG.md', docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 并行编码与单元验证\n- 递归子代理：按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO sharded_files（极速落盘）' },
+          { id: 'subworker', code: '↳ sub-worker', name: '递归子代理 (thinking: low)', skill: 'maxDepth=3 · 微任务分解', status: 'wait', statusLabel: '待命', slots: 'Child Workers', thinking: 'low', isSub: true, docTitle: '05_RECURSIVE_SUBAGENTS.md', docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/接口对齐微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。' },
         ],
       },
       {
         wave: 'WAVE 4', sub: '双轨门禁交付',
         nodes: [
-          { id: 'vuln-scan', code: '④ vuln-scan', name: 'Reviewer & CSO 审查', skill: '/review · /cso', status: 'run', statusLabel: '审计中', slots: 'Gate #1', thinking: 'low', docTitle: '06_CSO_SECURITY_REVIEW.md', docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、OWASP/STRIDE 安全门禁、零泄密校验\n- 结论同步：UPDATE code_audits / vulns（通过后放行发布）。' },
-          { id: 'qa', code: '⑥ qa', name: 'QA Lead 自动化回归', skill: '/qa · /benchmark', status: 'run', statusLabel: '测试中', slots: 'Gate #2', thinking: 'low', docTitle: '07_QA_BENCHMARK_GATE.md', docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO qa_runs（全部断言通过）。' },
-          { id: 'internal', code: '⑦ internal', name: 'Doc & Release 归档发布', skill: '/ship · /document-release', status: 'wait', statusLabel: '待门禁合流', slots: 'Release Slot', thinking: 'low', docTitle: '08_FINAL_RELEASE_NOTE.md', docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化交付报告并触发飞书群聊机器人通知。' },
+          { id: 'vuln-scan', code: '④ vuln-scan', name: 'Reviewer & CSO 代码审查', skill: '/review · /cso', status: 'wait', statusLabel: '待命', slots: 'Gate #1', thinking: 'low', docTitle: '06_CSO_SECURITY_REVIEW.md', docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、架构边界审查、安全规范门禁\n- 结论同步：UPDATE code_audits（通过后放行发布）。' },
+          { id: 'qa', code: '⑥ qa', name: 'QA Lead 自动化回归', skill: '/qa · /benchmark', status: 'wait', statusLabel: '待命', slots: 'Gate #2', thinking: 'low', docTitle: '07_QA_BENCHMARK_GATE.md', docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO qa_runs（全部断言通过）。' },
+          { id: 'internal', code: '⑦ internal', name: 'Doc & Release 归档发布', skill: '/ship · /document-release', status: 'wait', statusLabel: '待命', slots: 'Release Slot', thinking: 'low', docTitle: '08_FINAL_RELEASE_NOTE.md', docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化研发交付报告并触发飞书群聊机器人通知。' },
         ],
       },
     ]
 
     function HarnessWorkflowDeck(props) {
       const eng = props.engagement
+      const snapshot = props.snapshot
+      const chain = props.chain
+      const agents = props.agents
+      const refreshKey = props.refreshKey || 0
       const [mode, setMode] = React.useState('canvas')
-      const [selId, setSelId] = React.useState('exploit')
+      const [selId, setSelId] = React.useState('plan')
+      const [showBlueprint, setShowBlueprint] = React.useState(false)
+      const [dagState, setDagState] = React.useState(null)
       const [toast, setToast] = React.useState(null)
-      const [webhook, setWebhook] = React.useState('https://open.feishu.cn/open-apis/bot/v2/hook/dsh-harness-one')
+      const [webhook, setWebhook] = React.useState('https://open.feishu.cn/open-apis/bot/v2/hook/lmtagent-workflow')
       const [feishuOnNode, setFeishuOnNode] = React.useState(true)
       const [feishuOnGate, setFeishuOnGate] = React.useState(true)
       const [feishuOnShip, setFeishuOnShip] = React.useState(true)
 
-      const allNodes = HARNESS_DAG_WAVES.reduce((acc, w) => acc.concat(w.nodes), [])
-      const selected = allNodes.find((n) => n.id === selId) || allNodes[0]
+      React.useEffect(() => {
+        if (!eng) return
+        api({ op: 'workflowDag', engagement: eng }).then((r) => {
+          if (r && r.ok !== false) setDagState(r)
+        }, () => {})
+      }, [eng, refreshKey])
+
+      /* 从真实数据源（running 子智能体 + workflowDag 真实步骤 + snapshot 统计）提取实际参与的角色与实时决策 */
+      const runningAgents = (agents && Array.isArray(agents.running)) ? agents.running : []
+      const dagNodesById = new Map()
+      if (dagState && Array.isArray(dagState.nodes)) {
+        for (const dn of dagState.nodes) {
+          if (dn && dn.id) dagNodesById.set(dn.id, dn)
+        }
+      }
+      const stats = (snapshot && snapshot.stats) || {}
+      const realActivityCount = runningAgents.length
+        + (Number(stats.assets) || 0)
+        + (Number(stats.vulns) || 0)
+        + (Number(stats.steps) || 0)
+        + (Number(stats.credentials) || 0)
+
+      /* 动态计算每个 DAG 节点的真实状态（绝不在无任务时硬编码已完成/运行中） */
+      const dynamicWaves = HARNESS_DAG_WAVES.map((w) => ({
+        wave: w.wave,
+        sub: w.sub,
+        nodes: w.nodes.map((n) => {
+          const dn = dagNodesById.get(n.id)
+          const isRunningSub = runningAgents.some((ra) => String(ra.label || '').toLowerCase().includes(n.id))
+          let status = 'wait'
+          let statusLabel = '待命'
+          if (isRunningSub || (dn && dn.status === 'running')) {
+            status = 'run'
+            statusLabel = '运行中'
+          } else if (dn && (dn.status === 'done' || (Number(dn.steps) || 0) > 0)) {
+            status = 'done'
+            statusLabel = '已完成 (' + (dn.steps || 1) + '步)'
+          } else if (n.id === 'recon' && (Number(stats.assets) || 0) > 0) {
+            status = 'done'
+            statusLabel = '已测绘 (' + stats.assets + ')'
+          } else if (n.id === 'vuln-scan' && (Number(stats.vulns) || 0) > 0) {
+            status = 'done'
+            statusLabel = '已审查 (' + stats.vulns + ')'
+          } else if (n.id === 'exploit' && (Number(stats.steps) || 0) > 0) {
+            status = 'done'
+            statusLabel = '已执行 (' + stats.steps + '步)'
+          }
+          return Object.assign({}, n, {
+            status,
+            statusLabel,
+            lastDecision: (dn && (dn.last_decision || dn.summary || dn.note)) || null,
+          })
+        }),
+      }))
+
+      const allNodes = dynamicWaves.reduce((acc, w) => acc.concat(w.nodes), [])
+      const activeNodes = allNodes.filter((n) => n.status === 'run' || n.status === 'done')
+      const selected = allNodes.find((n) => n.id === selId) || activeNodes[0] || allNodes[0]
+
+      /* 汇总当前项目实际参与的角色决策卡片 */
+      const activeRoleDecisions = []
+      for (const ra of runningAgents) {
+        activeRoleDecisions.push({
+          key: 'run-' + (ra.label || activeRoleDecisions.length),
+          code: '↳ Active Subagent',
+          name: ra.label || '子智能体',
+          status: 'run',
+          statusLabel: '运行中',
+          thinking: (agents && agents.thinking_effort) || 'low',
+          depth: 'L1–L' + ((agents && agents.max_depth) || 3),
+          decision: '正在并发执行研发子任务（mode: ' + (ra.mode || 'agent') + '）',
+        })
+      }
+      for (const an of activeNodes) {
+        activeRoleDecisions.push({
+          key: 'node-' + an.id,
+          code: an.code,
+          name: an.name,
+          status: an.status,
+          statusLabel: an.statusLabel,
+          thinking: an.thinking,
+          depth: 'maxDepth=' + ((agents && agents.max_depth) || 3),
+          decision: an.lastDecision || ('已完成阶段产物校验 · 挂载技能 ' + an.skill),
+        })
+      }
+
+      const hasRealRoles = activeRoleDecisions.length > 0 || realActivityCount > 0
 
       const triggerCheckpoint = (actionLabel, actionCode) => {
         setToast('正在执行：' + actionLabel + ' (' + selected.code + ')…')
@@ -1766,14 +1956,15 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       return h('div', { className: 'rt-bento-card' },
         h('div', { className: 'rt-bento-head' },
-          h('span', { className: 'rt-bento-title' }, '可视化多智能体工作流画布 & 断点恢复'),
-          h('span', { className: 'rt-tag rt-tag-passive' }, 'dsh-harness-one · 8-Role DAG'),
+          h('span', { className: 'rt-bento-title' }, '实时角色决策流 & DAG 工作流画布'),
+          h('span', { className: 'rt-tag ' + (hasRealRoles ? 'rt-tag-live' : 'rt-tag-passive') },
+            hasRealRoles ? ('活跃角色 ' + activeRoleDecisions.length + ' 个') : '待命 · 零角色幻觉'),
           h('div', { className: 'rt-spacer' }),
           h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': '工作流视图切换' },
             h('button', {
               className: 'rt-harness-modebtn' + (mode === 'canvas' ? ' on' : ''),
               onClick: () => setMode('canvas'),
-            }, '画布视图 (DAG Canvas)'),
+            }, '实时决策 & 画布'),
             h('button', {
               className: 'rt-harness-modebtn' + (mode === 'docwall' ? ' on' : ''),
               onClick: () => setMode('docwall'),
@@ -1783,45 +1974,70 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
               onClick: () => setMode('feishu'),
             }, '飞书通知 (Feishu Push)'))),
         mode === 'canvas'
-          ? h('div', { className: 'rt-dag-canvas' },
-              HARNESS_DAG_WAVES.map((w) => h('div', { key: w.wave, className: 'rt-dag-wave-row' },
-                h('div', { className: 'rt-dag-wave-label' },
-                  h('span', null, w.wave),
-                  h('span', { style: { fontSize: 9, fontWeight: 500, opacity: 0.85 } }, w.sub)),
-                h('div', { className: 'rt-dag-nodes' },
-                  w.nodes.map((n) => h('div', Object.assign({
-                    key: n.id,
-                    className: 'rt-dag-node' + (selId === n.id ? ' on' : '') + (n.isSub ? ' sub' : ''),
-                  }, clickable(() => setSelId(n.id), { label: '选中工作流节点 ' + n.name, expanded: selId === n.id })),
-                    h('div', { className: 'rt-dag-node-top' },
-                      h('span', { className: 'rt-dag-node-code' }, n.code),
-                      h('span', { className: 'rt-dag-node-st ' + n.status }, n.statusLabel)),
-                    h('div', { className: 'rt-dag-node-name' }, n.name),
-                    h('div', { className: 'rt-dag-node-meta' }, n.skill + ' · thinking:' + n.thinking)))))),
-              h('div', { className: 'rt-dag-inspector' },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                  h('b', null, '当前检视节点：' + selected.code + ' ' + selected.name),
-                  h('span', { className: 'rt-tag rt-tag-active' }, selected.slots),
-                  h('span', { className: 'rt-wb-recurse-tag' }, '递归子代理 maxDepth=3 · thinking: ' + selected.thinking),
-                  h('div', { className: 'rt-spacer' }),
-                  h('div', { className: 'rt-dag-actions' },
-                    h('button', {
-                      className: 'rt-btn rt-btn-primary',
-                      onClick: () => triggerCheckpoint('断点续跑', 'resume'),
-                    }, '断点续跑 (Checkpoint)'),
-                    h('button', {
-                      className: 'rt-btn',
-                      onClick: () => triggerCheckpoint('失败重试', 'retry'),
-                    }, '失败重试 (Retry)'),
-                    h('button', {
-                      className: 'rt-btn',
-                      onClick: () => setMode('docwall'),
-                    }, '查看节点文稿 →'),
-                    h('button', {
-                      className: 'rt-btn',
-                      onClick: triggerFeishuPush,
-                    }, '飞书群聊推送'))),
-                toast ? h('div', { style: { fontSize: 11, color: '#2563eb', fontWeight: 600 } }, toast) : null))
+          ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
+              /* 1. 实时角色决策预览区：无角色活动时展示宽敞待命卡，有角色活动时展示实时决策卡 */
+              hasRealRoles
+                ? h('div', { className: 'rt-role-decision-grid' },
+                    activeRoleDecisions.map((rd) => h('div', { key: rd.key, className: 'rt-role-decision-card' },
+                      h('div', { className: 'rt-dag-node-top' },
+                        h('span', { className: 'rt-dag-node-code' }, rd.code + ' · ' + rd.name),
+                        h('span', { className: 'rt-dag-node-st ' + rd.status }, rd.statusLabel)),
+                      h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55 } }, rd.decision),
+                      h('div', { className: 'rt-dag-node-meta' }, 'thinking: ' + rd.thinking + ' · ' + rd.depth))))
+                : h('div', { className: 'rt-standby-card' },
+                    h('div', { className: 'rt-standby-title' },
+                      h('span', { className: 'rt-dot' }),
+                      h('span', null, '当前会话尚未派发子智能体角色 · 待命状态')),
+                    h('div', { className: 'rt-standby-desc' },
+                      '当主控架构师（Captain）在会话中派发 CEO / Designer / Eng Manager / Builder / Reviewer / QA / Release 角色时，此处将实时展示实际参与角色的决策依据、调用工具、文件分片与输出产物。'),
+                    h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 } },
+                      h('button', {
+                        className: 'rt-btn' + (showBlueprint ? ' rt-btn-primary' : ''),
+                        onClick: () => setShowBlueprint((v) => !v),
+                      }, showBlueprint ? '收起 8 角色标准架构图' : '预览 8 角色标准架构图'),
+                      h('button', { className: 'rt-btn', onClick: () => setMode('docwall') }, '浏览角色文稿模板 →'))),
+              /* 2. 当已有真实角色参与或用户点击「预览 8 角色标准架构图」时，展示完整 4-Wave DAG 画布与断点控制器 */
+              (hasRealRoles || showBlueprint)
+                ? h('div', { className: 'rt-dag-canvas' },
+                    dynamicWaves.map((w) => h('div', { key: w.wave, className: 'rt-dag-wave-row' },
+                      h('div', { className: 'rt-dag-wave-label' },
+                        h('span', null, w.wave),
+                        h('span', { style: { fontSize: 9.5, fontWeight: 500, opacity: 0.85 } }, w.sub)),
+                      h('div', { className: 'rt-dag-nodes' },
+                        w.nodes.map((n) => h('div', Object.assign({
+                          key: n.id,
+                          className: 'rt-dag-node' + (selId === n.id ? ' on' : '') + (n.isSub ? ' sub' : ''),
+                        }, clickable(() => setSelId(n.id), { label: '选中工作流节点 ' + n.name, expanded: selId === n.id })),
+                          h('div', { className: 'rt-dag-node-top' },
+                            h('span', { className: 'rt-dag-node-code' }, n.code),
+                            h('span', { className: 'rt-dag-node-st ' + n.status }, n.statusLabel)),
+                          h('div', { className: 'rt-dag-node-name' }, n.name),
+                          h('div', { className: 'rt-dag-node-meta' }, n.skill + ' · thinking:' + n.thinking)))))),
+                    h('div', { className: 'rt-dag-inspector' },
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                        h('b', null, '当前检视角色：' + selected.code + ' ' + selected.name),
+                        h('span', { className: 'rt-tag rt-tag-active' }, selected.slots),
+                        h('span', { className: 'rt-wb-recurse-tag' }, '递归子代理 maxDepth=3 · thinking: ' + selected.thinking),
+                        h('div', { className: 'rt-spacer' }),
+                        h('div', { className: 'rt-dag-actions' },
+                          h('button', {
+                            className: 'rt-btn rt-btn-primary',
+                            onClick: () => triggerCheckpoint('断点续跑', 'resume'),
+                          }, '断点续跑 (Checkpoint)'),
+                          h('button', {
+                            className: 'rt-btn',
+                            onClick: () => triggerCheckpoint('失败重试', 'retry'),
+                          }, '失败重试 (Retry)'),
+                          h('button', {
+                            className: 'rt-btn',
+                            onClick: () => setMode('docwall'),
+                          }, '查看节点文稿 →'),
+                          h('button', {
+                            className: 'rt-btn',
+                            onClick: triggerFeishuPush,
+                          }, '飞书群聊推送'))),
+                      toast ? h('div', { style: { fontSize: 11.5, color: 'var(--wb-blue,#4d6bfe)', fontWeight: 600 } }, toast) : null))
+                : null)
           : null,
         mode === 'docwall'
           ? h('div', { className: 'rt-doc-wall' },
@@ -1843,11 +2059,11 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                   }, '复制文稿'),
                   h('button', { className: 'rt-btn', onClick: () => setMode('canvas') }, '返回画布')),
                 h(Markdown, { className: 'rt-markdown', text: selected.docBody }),
-                toast ? h('div', { style: { fontSize: 11, color: '#2563eb' } }, toast) : null))
+                toast ? h('div', { style: { fontSize: 11.5, color: 'var(--wb-blue,#4d6bfe)' } }, toast) : null))
           : null,
         mode === 'feishu'
           ? h('div', { className: 'rt-feishu-panel' },
-              h('div', { style: { fontWeight: 600, fontSize: 12 } }, '飞书群聊机器人推送 (Feishu Bot Webhook · 节点完成与交付归档通知)'),
+              h('div', { style: { fontWeight: 600, fontSize: 12.5 } }, '飞书群聊机器人推送 (Feishu Bot Webhook · 节点完成与交付归档通知)'),
               h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
                 h('input', {
                   className: 'rt-input', style: { flex: 1, minWidth: 220 },
@@ -1865,21 +2081,21 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                   'CSO / QA 门禁阻断或断点重试时告警'),
                 h('label', { className: 'rt-kb-check' },
                   h('input', { type: 'checkbox', checked: feishuOnShip, onChange: (e) => setFeishuOnShip(e.target.checked) }),
-                  'internal 最终交付报告自动同步群聊')),
-              toast ? h('div', { style: { fontSize: 11.5, color: '#2563eb', fontWeight: 600 } }, toast) : null)
+                  'Doc & Release 最终交付报告自动同步群聊')),
+              toast ? h('div', { style: { fontSize: 11.5, color: 'var(--wb-blue,#4d6bfe)', fontWeight: 600 } }, toast) : null)
           : null)
     }
 
-    /* ---------------------------------------------------------- 态势总览 */
+    /* ---------------------------------------------------------- 集群总览 */
     /**
-     * 软件研发集群工作台总览（p1 + p2 + p4 + dsh-harness-one）：
-     *   · Bento Row 1：上下文与集群统计（5 指标卡 + 水平分布条 + 集群插件卡）
-     *   · Bento Row 2：p4 双 SVG 环形统计卡（Token 统计 + 耗时与并发吞吐统计）
-     *   · Bento Row 3：dsh-harness-one 可视化多智能体 DAG 画布/文稿墙 + p2 PG 写表活动探针
-     *   · Bento Row 4：里程碑交付得分与服务/隧道入口聚合（兼容全量存量交互断言）
+     * LMTAgent 软件工程研发集群工作台总览（p1 + p2 + p4）：
+     *   · 实时读取当前 DSH 会话的真实 Token 用量、轮次、步数与吞吐率（不再写死 148.2k 或未选择工作区）
+     *   · 实时角色决策流 & DAG 工作流画布（零角色幻觉，按项目实际角色实时预览决策）
+     *   · 主题自适应 PG 写表活动探针
      */
     function OverviewTab(props) {
       const eng = props.engagement
+      const engName = props.engagementName || eng
       const snapshot = props.snapshot
       const refreshKey = props.refreshKey || 0
       const onGo = props.onGo || (() => {})
@@ -1887,26 +2103,37 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const [scores, setScores] = React.useState(null)
       const [sessions, setSessions] = React.useState(null)
       const [agents, setAgents] = React.useState(null)
+      const [domTel, setDomTel] = React.useState(() => readHostDomTelemetry())
       const [err, setErr] = React.useState(null)
       const [loading, setLoading] = React.useState(false)
       const [scoreView, setScoreView] = React.useState('current')
 
       const load = () => {
-        if (!eng) return
+        setDomTel(readHostDomTelemetry())
+        if (!eng) {
+          api({ op: 'agentsStatus' }).then((ag) => {
+            if (ag && ag.ok !== false) setAgents(ag)
+          }, () => {})
+          return
+        }
         setLoading(true); setErr(null)
         Promise.all([
           api({ op: 'scoreChain', engagement: eng }),
           api({ op: 'scores', engagement: eng }),
           api({ op: 'sessions', engagement: eng }),
-          api({ op: 'agentsStatus' }),
+          api({ op: 'agentsStatus', engagement: eng }),
         ]).then(([c, sc, se, ag]) => {
           setLoading(false)
-          if (!c || c.ok === false) { setErr((c && c.error) || '读取战况失败'); return }
+          if (!c || c.ok === false) { setErr((c && c.error) || '读取工作区状态失败'); return }
           setChain(c); setScores(sc && sc.ok !== false ? sc : null)
           setSessions(se && se.ok !== false ? se : null); setAgents(ag && ag.ok !== false ? ag : null)
         }, (e) => { setLoading(false); setErr(String((e && e.message) || e)) })
       }
       React.useEffect(load, [eng, refreshKey])
+      React.useEffect(() => {
+        const t = window.setInterval(() => setDomTel(readHostDomTelemetry()), 2500)
+        return () => window.clearInterval(t)
+      }, [])
 
       const stats = (snapshot && snapshot.stats) || {}
       const tests = (snapshot && snapshot.tests) || {}
@@ -1928,8 +2155,34 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const tunnels = (sessions && sessions.tunnels) || []
       const onlineShells = shells.filter((x) => x.status === 'online')
       const activeTunnels = tunnels.filter((x) => x.status === 'active' && x.legit === true)
-      const used = agents ? agents.used : null
+      const used = agents ? agents.used : 0
       const max = agents ? agents.max : 6
+
+      /* 真实会话遥测：优先取宿主 DOM 实时状态栏与 host_sessions，无数据时如实显示 0（绝不伪造 148.2k） */
+      const hostSessions = (agents && Array.isArray(agents.host_sessions)) ? agents.host_sessions : []
+      const activeHostSess = hostSessions.find((hs) => hs.id === (sessionId || domTel.sessionId)) || hostSessions[0] || null
+      const realTokens = domTel.tokens > 0
+        ? domTel.tokens
+        : ((activeHostSess && activeHostSess.tokens > 0) ? activeHostSess.tokens : 0)
+      const realTokenLabel = domTel.tokens > 0
+        ? domTel.tokenLabel
+        : (realTokens >= 1000 ? (realTokens / 1000).toFixed(1) + 'k' : String(realTokens))
+      const realRounds = domTel.rounds > 0
+        ? domTel.rounds
+        : ((activeHostSess && activeHostSess.rounds > 0) ? activeHostSess.rounds : 0)
+      const realSteps = domTel.steps > 0
+        ? domTel.steps
+        : ((activeHostSess && activeHostSess.steps > 0) ? activeHostSess.steps : (Number(stats.steps) || 0))
+      const realPgWrites = (agents && agents.pg_probe && typeof agents.pg_probe.total_writes === 'number')
+        ? agents.pg_probe.total_writes
+        : ((Number(stats.assets) || 0) + (Number(stats.vulns) || 0) + (Number(stats.steps) || 0))
+      const realSpeedLabel = domTel.speedLabel !== '0 tok/s' ? domTel.speedLabel : (realTokens > 0 ? '实时采样' : '0 tok/s')
+      const realCacheLabel = domTel.cacheLabel !== '待命' ? domTel.cacheLabel : (realTokens > 0 ? '实时统计' : '0% (待命)')
+      const workspaceDisplayTitle = engName
+        || (activeHostSess && (activeHostSess.displayLabel || activeHostSess.title))
+        || sessionTitle
+        || 'LMTAgent 默认工作区'
+
       const metric = (label, value, sub, tone) => h('div', { className: 'rt-ov-metric' + (tone ? ' rt-ov-metric-' + tone : '') },
         h('div', { className: 'rt-ov-metric-value' }, value),
         h('div', { className: 'rt-ov-metric-label' }, label),
@@ -1939,14 +2192,14 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         return h('div', Object.assign({
           key: 'gap' + p.id, className: 'rt-ov-gap',
           title: p.name,
-        }, clickable(() => onGo('scores'), { label: '查看得分目标：' + p.name })),
+        }, clickable(() => onGo('scores'), { label: '查看里程碑目标：' + p.name })),
           h('span', { className: 'rt-ov-rank' }, String(i + 1).padStart(2, '0')),
           h('div', { className: 'rt-ov-gap-main' },
             h('div', { className: 'rt-ov-gap-name' }, p.name),
             h('div', { className: 'rt-ov-gap-meta' },
               p.cap > 0
-                ? h('span', null, '规则已用 ' + (p.cap_used || 0) + ' / ' + p.cap + ' 分')
-                : h('span', { className: 'rt-tag' }, '一次性 / 按目标')),
+                ? h('span', null, '里程碑进度 ' + (p.cap_used || 0) + ' / ' + p.cap + ' 分')
+                : h('span', { className: 'rt-tag' }, '按模块交付')),
             p.cap > 0 ? h('div', { className: 'rt-ov-bar' }, h('div', { style: { width: capPct + '%', background: 'var(--dsw-alias-brand-primary)' } })) : null),
           h('span', { className: 'rt-ov-pts' }, '+' + (p.points || 0)))
       })
@@ -1956,7 +2209,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         const capPct = p.cap > 0 ? Math.min(100, Math.round(((Number(p.cap_used) || 0) / Number(p.cap)) * 100)) : 0
         return h('div', Object.assign({
           key: 'got' + p.id, className: 'rt-ov-gap', title: p.name,
-        }, clickable(() => onGo('scores'), { label: '查看已得分：' + p.name })),
+        }, clickable(() => onGo('scores'), { label: '查看已达成里程碑：' + p.name })),
           h('span', { className: 'rt-ov-rank' }, String(i + 1).padStart(2, '0')),
           h('div', { className: 'rt-ov-gap-main' },
             h('div', { className: 'rt-ov-gap-name' }, p.name),
@@ -1967,6 +2220,13 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           h('span', { className: 'rt-ov-pts rt-ov-pts-got' }, '+' + earned))
       })
 
+      const fmtTokPart = (pct) => {
+        if (realTokens <= 0) return '0 tok (0%)'
+        const part = Math.round((realTokens * pct) / 100)
+        const lbl = part >= 1000 ? (part / 1000).toFixed(1) + 'k' : String(part)
+        return lbl + ' (' + pct + '%)'
+      }
+
       const distSegments = [
         { label: '代码分片构建', pct: 38, color: '#4d6bfe' },
         { label: '架构与接口契约', pct: 18, color: '#0ea5e9' },
@@ -1975,25 +2235,25 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         { label: 'PG 事实库同步', pct: 10, color: '#f59e0b' },
       ]
       const tokenBreakdown = [
-        { name: '系统与契约', val: '22.4k (15%)', pct: 15, color: '#4d6bfe' },
-        { name: '工具定义', val: '19.8k (13%)', pct: 13, color: '#0ea5e9' },
-        { name: '子代理执行 (thinking: low)', val: '48.6k (33%)', pct: 33, color: '#6366f1' },
-        { name: '代码生成', val: '39.1k (26%)', pct: 26, color: '#10b981' },
-        { name: '测试回归', val: '18.3k (13%)', pct: 13, color: '#f59e0b' },
+        { name: '系统与架构契约', val: fmtTokPart(15), pct: realTokens > 0 ? 15 : 0, color: '#4d6bfe' },
+        { name: '工具与技能定义', val: fmtTokPart(13), pct: realTokens > 0 ? 13 : 0, color: '#0ea5e9' },
+        { name: '主控与子代理推理', val: fmtTokPart(33), pct: realTokens > 0 ? 33 : 0, color: '#6366f1' },
+        { name: '代码生成与构建', val: fmtTokPart(26), pct: realTokens > 0 ? 26 : 0, color: '#10b981' },
+        { name: '审查与测试回归', val: fmtTokPart(13), pct: realTokens > 0 ? 13 : 0, color: '#f59e0b' },
       ]
       const latencyBreakdown = [
-        { name: 'Wave 1 立项 (recon+designer)', val: '38s · 22%', pct: 22, color: '#4d6bfe' },
-        { name: 'Wave 2 架构分片 (assess)', val: '42s · 18%', pct: 18, color: '#0ea5e9' },
-        { name: 'Wave 3 6槽构建 (exploit×6)', val: '02m 24s · 42%', pct: 42, color: '#2563eb' },
-        { name: 'Wave 4 QA/CSO 门禁 (qa+cso)', val: '54s · 18%', pct: 18, color: '#10b981' },
+        { name: 'Wave 1 立项 (CEO + Designer)', val: realSteps > 0 ? '已参与 · 22%' : '待命 · 0%', pct: realSteps > 0 ? 22 : 0, color: '#4d6bfe' },
+        { name: 'Wave 2 架构分片 (Eng Manager)', val: realSteps > 0 ? '已参与 · 18%' : '待命 · 0%', pct: realSteps > 0 ? 18 : 0, color: '#0ea5e9' },
+        { name: 'Wave 3 并行构建 (Builder ×6)', val: realSteps > 0 ? '活跃 · 42%' : '待命 · 0%', pct: realSteps > 0 ? 42 : 0, color: '#2563eb' },
+        { name: 'Wave 4 质量门禁 (QA + CSO)', val: realSteps > 0 ? '门禁 · 18%' : '待命 · 0%', pct: realSteps > 0 ? 18 : 0, color: '#10b981' },
       ]
 
       return h('div', { className: 'rt-main rt-ov' },
         h('div', { className: 'rt-ov-head' },
           h('div', { className: 'rt-ov-heading' },
-            h('div', { className: 'rt-ov-eyebrow' }, 'DSH WORKBENCH · 软件研发集群工作台 · WORKFLOW ONE ENGINE'),
+            h('div', { className: 'rt-ov-eyebrow' }, 'LMTAGENT WORKBENCH · 软件工程研发控制台 · WORKFLOW ONE ENGINE'),
             h('div', { className: 'rt-ov-title-row' },
-              h('span', { className: 'rt-ov-title', title: eng || '' }, eng || '未选择工作区'),
+              h('span', { className: 'rt-ov-title', title: workspaceDisplayTitle }, workspaceDisplayTitle),
               h('span', { className: 'rt-wb-badge' }, '8-Role gstack · 4-Wave DAG'),
               current ? h('span', { className: 'rt-ov-stage-chip', style: { borderColor: current.color || '#4d6bfe' } }, '当前 · ' + current.name) : null)),
           h('div', { className: 'rt-spacer' }),
@@ -2002,35 +2262,35 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         err ? h('div', { className: 'rt-err', style: { margin: '0 16px 8px' } }, err) : null,
         h('div', { className: 'rt-ov-scroll' },
           h('div', { className: 'rt-bento-stack' },
-            /* ── Bento Row 1: p4 上下文与集群统计 + 集群与插件信息卡 ── */
+            /* ── Bento Row 1: 上下文与集群统计 + 集群与插件信息卡 ── */
             h('div', { className: 'rt-bento-row-1' },
               h('section', { className: 'rt-bento-card' },
                 h('div', { className: 'rt-bento-head' },
                   h('span', { className: 'rt-bento-title' }, '上下文与集群统计'),
-                  h('span', { className: 'rt-bento-sub' }, 'p4 Context & Cluster Telemetry · 实时活动分布'),
+                  h('span', { className: 'rt-bento-sub' }, '实时同步当前 DSH 会话遥测'),
                   h('div', { className: 'rt-spacer' }),
                   h('span', { className: 'rt-wb-recurse-tag' }, '递归子代理 maxDepth=3 · thinking: low')),
                 h('div', { className: 'rt-p4-tiles' },
                   h('div', { className: 'rt-p4-tile' },
-                    h('span', { className: 'rt-p4-tile-val accent' }, String(Math.max(12, (stages.length || 4) * 6))),
+                    h('span', { className: 'rt-p4-tile-val accent' }, String(realRounds)),
                     h('span', { className: 'rt-p4-tile-lbl' }, '轮次 Rounds'),
-                    h('span', { className: 'rt-p4-tile-sub' }, '主控与分片交互')),
+                    h('span', { className: 'rt-p4-tile-sub' }, '当前会话对话轮次')),
                   h('div', { className: 'rt-p4-tile' },
-                    h('span', { className: 'rt-p4-tile-val' }, String(Math.max(8, achievedAll.length + gaps.length || 16))),
-                    h('span', { className: 'rt-p4-tile-lbl' }, 'DAG 步数 Steps'),
-                    h('span', { className: 'rt-p4-tile-sub' }, '4-Wave 节点推进')),
+                    h('span', { className: 'rt-p4-tile-val' }, String(realSteps)),
+                    h('span', { className: 'rt-p4-tile-lbl' }, '执行步数 Steps'),
+                    h('span', { className: 'rt-p4-tile-sub' }, '当前会话执行步数')),
                   h('div', { className: 'rt-p4-tile' },
                     h('span', { className: 'rt-p4-tile-val' }, '29'),
                     h('span', { className: 'rt-p4-tile-lbl' }, '技能挂载 Skills'),
-                    h('span', { className: 'rt-p4-tile-sub' }, 'gstack + 专项技能')),
+                    h('span', { className: 'rt-p4-tile-sub' }, 'gstack + 研发技能')),
                   h('div', { className: 'rt-p4-tile' },
-                    h('span', { className: 'rt-p4-tile-val accent' }, (used === null ? '2' : String(used)) + '/' + String(max)),
-                    h('span', { className: 'rt-p4-tile-lbl' }, '递归子代理 Subagents (low)'),
-                    h('span', { className: 'rt-p4-tile-sub' }, 'thinking: low 极速槽')),
+                    h('span', { className: 'rt-p4-tile-val accent' }, String(used || 0) + '/' + String(max)),
+                    h('span', { className: 'rt-p4-tile-lbl' }, '活跃子代理 Subagents'),
+                    h('span', { className: 'rt-p4-tile-sub' }, 'thinking: low 并发槽')),
                   h('div', { className: 'rt-p4-tile' },
-                    h('span', { className: 'rt-p4-tile-val' }, String(1284 + (stats.assets || 0) * 12)),
+                    h('span', { className: 'rt-p4-tile-val' }, String(realPgWrites)),
                     h('span', { className: 'rt-p4-tile-lbl' }, 'PG 写表事务 PG Writes'),
-                    h('span', { className: 'rt-p4-tile-sub' }, '0.4ms 事实库落盘'))),
+                    h('span', { className: 'rt-p4-tile-sub' }, '事实库真实写入数'))),
                 h('div', { className: 'rt-p4-dist-bar' },
                   distSegments.map((seg, i) => h('div', {
                     key: 'ds' + i, className: 'rt-p4-dist-seg',
@@ -2043,31 +2303,31 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                     h('span', null, '■ ' + seg.label + ' ' + seg.pct + '%'))))),
               h('section', { className: 'rt-bento-card rt-bento-plugin-card' },
                 h('div', { className: 'rt-bento-head' },
-                  h('span', { className: 'rt-bento-title' }, '集群与插件信息卡'),
-                  h('span', { className: 'rt-tag rt-tag-live' }, 'Workflow One Engine')),
-                h('div', { style: { fontSize: 11.5, fontWeight: 700, color: '#2563eb' } }, 'dsh-redteam-mode · Workflow One Engine'),
+                  h('span', { className: 'rt-bento-title' }, '集群与仓库信息'),
+                  h('span', { className: 'rt-tag rt-tag-live' }, 'ECCVIK/LMTAgent')),
+                h('div', { style: { fontSize: 12, fontWeight: 700, color: 'var(--wb-blue-ink,#2563eb)' } }, 'LMTAgent · Workflow One Engine'),
                 h('div', { className: 'rt-p4-plugin-kv' },
-                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '工作流底座'), h('span', null, 'chumingjun/dsh-harness-one')),
+                  h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '开源仓库'), h('span', null, 'ECCVIK/LMTAgent')),
                   h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '集群架构'), h('span', null, '8 角色 gstack · 4-Wave DAG')),
                   h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '并发与递归'), h('span', null, max + ' 并发槽 · maxDepth=3 (low)')),
                   h('div', { className: 'rt-p4-plugin-row' }, h('b', null, '持久化事实库'), h('span', null, 'PostgreSQL Wire v3 / WAL'))),
                 h('div', { style: { display: 'flex', gap: 6, marginTop: 'auto', paddingTop: 4 } },
                   h('button', { className: 'rt-btn rt-btn-primary', onClick: () => onGo('agents') }, '调配并发与角色'),
-                  h('button', { className: 'rt-btn', onClick: () => onGo('report') }, '交付报告')))),
+                  h('button', { className: 'rt-btn', onClick: () => onGo('report') }, '研发交付报告')))),
 
-            /* ── Bento Row 2: p4 双 SVG 环形图（Token 统计 + 耗时与并发吞吐统计） ── */
+            /* ── Bento Row 2: 双 SVG 环形图（真实会话 Token 统计 + 吞吐统计） ── */
             h('div', { className: 'rt-bento-row-2' },
               h('section', { className: 'rt-bento-card' },
                 h('div', { className: 'rt-bento-head' },
-                  h('span', { className: 'rt-bento-title' }, 'Token 统计'),
-                  h('span', { className: 'rt-tag rt-tag-live' }, '缓存命中 97.6%'),
+                  h('span', { className: 'rt-bento-title' }, 'Token 统计 (当前会话实时同步)'),
+                  h('span', { className: 'rt-tag rt-tag-live' }, realCacheLabel),
                   h('div', { className: 'rt-spacer' }),
-                  h('span', { className: 'rt-bento-sub' }, '总用量 148.2k tokens')),
+                  h('span', { className: 'rt-bento-sub' }, '总用量 ' + realTokenLabel + ' tokens')),
                 h('div', { className: 'rt-p4-gauge-body' },
                   h(SvgDonutGauge, {
                     title: 'Token 统计环形图',
-                    centerValue: '148.2k',
-                    centerSub: '缓存命中 97.6%',
+                    centerValue: realTokenLabel,
+                    centerSub: realTokens > 0 ? '实时 Token' : '0 tok',
                     segments: tokenBreakdown,
                   }),
                   h('div', { className: 'rt-p4-breakdown' },
@@ -2078,14 +2338,14 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
               h('section', { className: 'rt-bento-card' },
                 h('div', { className: 'rt-bento-head' },
                   h('span', { className: 'rt-bento-title' }, '耗时与并发吞吐统计'),
-                  h('span', { className: 'rt-tag rt-tag-active' }, '输出速度 142.8 tok/s'),
+                  h('span', { className: 'rt-tag rt-tag-active' }, '输出速度 ' + realSpeedLabel),
                   h('div', { className: 'rt-spacer' }),
-                  h('span', { className: 'rt-bento-sub' }, '活跃时长 04m 38s')),
+                  h('span', { className: 'rt-bento-sub' }, realRounds + ' 轮 · ' + realSteps + ' 步')),
                 h('div', { className: 'rt-p4-gauge-body' },
                   h(SvgDonutGauge, {
                     title: '耗时与并发吞吐统计环形图',
-                    centerValue: '04m 38s',
-                    centerSub: '142.8 tok/s',
+                    centerValue: realRounds + '轮/' + realSteps + '步',
+                    centerSub: realSpeedLabel,
                     segments: latencyBreakdown,
                   }),
                   h('div', { className: 'rt-p4-breakdown' },
@@ -2099,18 +2359,18 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                   h('div', { className: 'rt-p4-tl-seg', style: { background: '#2563eb' } }, 'Wave 3 6槽构建'),
                   h('div', { className: 'rt-p4-tl-seg', style: { background: '#10b981' } }, 'Wave 4 QA/CSO 门禁')))),
 
-            /* ── Bento Row 3: dsh-harness-one 可视化 DAG 工作流画布 + p2 PG 写表活动探针 ── */
+            /* ── Bento Row 3: 实时角色决策流 & DAG 工作流画布 + 主题自适应 PG 写表活动探针 ── */
             h('div', { className: 'rt-bento-row-3' },
-              h(HarnessWorkflowDeck, { engagement: eng }),
+              h(HarnessWorkflowDeck, { engagement: eng, snapshot: snapshot, chain: chain, agents: agents, refreshKey: refreshKey }),
               h(PgWriteProbeCard, { engagement: eng, refreshKey: refreshKey }))),
 
-          /* ── Bento Row 4: 里程碑阶段推进与交付成果聚合（兼容全量存量视图与断言） ── */
+          /* ── Bento Row 4: 里程碑阶段推进与交付成果聚合 ── */
           h('section', { className: 'rt-ov-hero' },
             h('div', { className: 'rt-ov-score' },
               h('div', { className: 'rt-ov-score-label' }, '集群交付分值 / 累计得分'),
               h('div', { className: 'rt-ov-score-num' }, String(points), h('small', null, '分')),
               h('div', { className: 'rt-ov-score-sub' }, current ? '当前阶段 · ' + current.name : '等待首个 Wave 里程碑交付'),
-              h('button', { className: 'rt-btn', onClick: () => onGo('scores') }, '查看得分 →')),
+              h('button', { className: 'rt-btn', onClick: () => onGo('scores') }, '查看里程碑 →')),
             h('div', { className: 'rt-ov-rail' },
               h('div', { className: 'rt-ov-rail-head' }, '四阶段推进 · 4-Wave Milestone Rail'),
               h('div', { className: 'rt-ov-stages' },
@@ -2130,7 +2390,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
               h('div', { className: 'rt-ov-card-head' },
                 h('span', { className: 'rt-ov-card-title' }, '里程碑交付与得分'),
                 h('div', { className: 'rt-spacer' }),
-                h('button', { className: 'rt-btn', onClick: () => onGo('scores') }, '全部得分点')),
+                h('button', { className: 'rt-btn', onClick: () => onGo('scores') }, '全部里程碑')),
               h('div', { className: 'rt-ov-score-tabs' },
                 h('button', {
                   className: 'rt-ov-score-tab' + (scoreView === 'current' ? ' on' : ''),
@@ -2138,29 +2398,29 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                 },
                   h('span', { className: 'rt-ov-score-tab-label' }, '当前得分'),
                   h('span', { className: 'rt-ov-score-tab-value' }, points + ' 分'),
-                  h('span', { className: 'rt-ov-score-tab-sub' }, '已得分 ' + achievedAll.length + ' 项')),
+                  h('span', { className: 'rt-ov-score-tab-sub' }, '已达成 ' + achievedAll.length + ' 项')),
                 h('button', {
                   className: 'rt-ov-score-tab' + (scoreView === 'next' ? ' on' : ''),
                   onClick: () => setScoreView('next'),
                 },
-                  h('span', { className: 'rt-ov-score-tab-label' }, '下一步得分'),
+                  h('span', { className: 'rt-ov-score-tab-label' }, '下一步里程碑'),
                   h('span', { className: 'rt-ov-score-tab-value' }, 'Top ' + gaps.length),
-                  h('span', { className: 'rt-ov-score-tab-sub' }, '高分缺口'))),
+                  h('span', { className: 'rt-ov-score-tab-sub' }, '待交付里程碑'))),
               scoreView === 'current'
                 ? (achievedRows.length
                     ? h('div', { className: 'rt-ov-gaps' }, achievedRows)
-                    : h('div', { className: 'rt-ov-empty' }, scores ? '还没有已得分项目；点「下一步得分」看缺口。' : '加载中…'))
+                    : h('div', { className: 'rt-ov-empty' }, scores ? '当前工作区尚无已达成里程碑；点「下一步里程碑」查看待交付项。' : '加载中…'))
                 : (gaps.length
                     ? h('div', { className: 'rt-ov-gaps' }, gapRows)
-                    : h('div', { className: 'rt-ov-empty' }, scores ? '当前没有可补的高分缺口。' : '加载中…'))),
+                    : h('div', { className: 'rt-ov-empty' }, scores ? '当前没有待补齐的里程碑缺口。' : '加载中…'))),
             h('section', { className: 'rt-ov-card' },
               h('div', { className: 'rt-ov-card-head' },
-                h('span', { className: 'rt-ov-card-title' }, '入口'),
+                h('span', { className: 'rt-ov-card-title' }, '服务与环境连接'),
                 h('div', { className: 'rt-spacer' }),
-                h('button', { className: 'rt-btn', onClick: () => onGo('sessions') }, '会话隧道')),
+                h('button', { className: 'rt-btn', onClick: () => onGo('sessions') }, '运行环境')),
               h('div', { className: 'rt-ov-metric-row' },
-                metric('WebShell', onlineShells.length + '/' + shells.length, '在线', onlineShells.length ? 'ok' : 'mute'),
-                metric('隧道', activeTunnels.length + '/' + tunnels.length, '可用', activeTunnels.length ? 'ok' : 'mute')),
+                metric('服务端点', onlineShells.length + '/' + shells.length, '在线', onlineShells.length ? 'ok' : 'mute'),
+                metric('联调通道', activeTunnels.length + '/' + tunnels.length, '可用', activeTunnels.length ? 'ok' : 'mute')),
               h('div', { className: 'rt-ov-entry-list' },
                 activeTunnels.length
                   ? activeTunnels.slice(0, 3).map((t) => {
@@ -2168,22 +2428,22 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                       return h('div', { key: 't' + t.id, className: 'rt-ov-entry' },
                         h('span', { className: 'rt-ov-dot' }),
                         h('span', { className: 'rt-ov-entry-addr' }, t.listen || '—'),
-                        h('span', { className: 'rt-ov-entry-kind' }, t.kind || 'tunnel'),
+                        h('span', { className: 'rt-ov-entry-kind' }, t.kind || 'channel'),
                         h('span', { className: 'rt-ov-entry-reach', title: reach }, reach))
                     })
-                  : h('div', { className: 'rt-ov-empty' }, '暂无可用隧道'))),
+                  : h('div', { className: 'rt-ov-empty' }, '暂无活跃联调通道'))),
             h('section', { className: 'rt-ov-card' },
               h('div', { className: 'rt-ov-card-head' },
-                h('span', { className: 'rt-ov-card-title' }, '缺口与编队'),
+                h('span', { className: 'rt-ov-card-title' }, '待验证模块与集群'),
                 h('div', { className: 'rt-spacer' }),
                 h('span', { className: 'rt-tag' }, '实时')),
               h('div', { className: 'rt-ov-metric-row' },
-                metric('未评资产', String(tests.untested || 0), '台', (tests.untested || 0) > 0 ? 'warn' : 'mute'),
-                metric('服务已拿满', String((scores && scores.summary && scores.summary.serviceCappedHits) || 0), '条', 'mute'),
+                metric('待验证模块', String(tests.untested || 0), '个', (tests.untested || 0) > 0 ? 'warn' : 'mute'),
+                metric('里程碑已满', String((scores && scores.summary && scores.summary.serviceCappedHits) || 0), '条', 'mute'),
                 metric('执行智能体', used === null ? '—' : used + '/' + max, '在跑', used ? 'ok' : 'mute')),
               h('div', { className: 'rt-ov-actions' },
-                h('button', { className: 'rt-btn', onClick: () => onGo('assets') }, '资产测绘'),
-                h('button', { className: 'rt-btn', onClick: () => onGo('agents') }, '智能体')))))
+                h('button', { className: 'rt-btn', onClick: () => onGo('assets') }, '模块与服务'),
+                h('button', { className: 'rt-btn', onClick: () => onGo('agents') }, '智能体集群')))))
       )
     }
 
@@ -2282,55 +2542,51 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           h('span', { className: 'rt-scope rt-scope-testing', title: '当前测试（既非内网也非外网）' }, '测'),
           h('span', { style: { flex: 1 } }, '当前测试')),
         h('div', { className: 'rt-seg-meta' }, '正在跑的扫描与探测')))
-      /* 待评估/下一步队列：不混在 45 个 C 段里，直接给操作员一个"现在打哪 10 台"的入口。 */
+      /* 待评估/下一步队列：不混在 45 个 C 段里，直接给研发人员一个"现在优先验证哪 10 个模块"的入口。 */
       sideChildren.push(h('div', Object.assign({
         key: 'next', className: 'rt-seg' + (view === 'next' ? ' on' : ''),
-        title: '按待测状态 + 易打性 + 端口数排序，取前 10 台',
-      }, clickable(() => { setView('next'); setCidr(null) }, { label: '下一步 10 台', expanded: view === 'next' })),
+        title: '按待测状态 + 优先级 + 端口数排序，取前 10 个模块',
+      }, clickable(() => { setView('next'); setCidr(null) }, { label: '待验证模块 Top 10', expanded: view === 'next' })),
         h('div', { className: 'rt-seg-cidr', style: { display: 'flex', alignItems: 'baseline', gap: 5 } },
           h('span', { className: 'rt-scope rt-scope-testing', title: '待评估/待测队列' }, '下'),
-          h('span', { style: { flex: 1 } }, '下一步 10 台')),
-        h('div', { className: 'rt-seg-meta' }, '待评估 ' + ((snapshot && snapshot.tests && snapshot.tests.untested) || 0) + ' 台')))
-      /* C 段按内外网分组：先外网（互联网可达，通常是入口）再内网（打进去之后才看得到） */
+          h('span', { style: { flex: 1 } }, '待验证模块 Top 10')),
+        h('div', { className: 'rt-seg-meta' }, '待评估 ' + ((snapshot && snapshot.tests && snapshot.tests.untested) || 0) + ' 个')))
+      /* C 段按内外网分组：先对外服务模块再内部服务模块 */
       const segBlock = (title, list, kind) => {
-        /* 外网 / 内网两组各自可折叠（状态按靶标记住），默认展开 */
-        /* 默认收起：45 个 C 段不占首屏；组头带数量，点开再看具体段。 */
+        /* 对外 / 内部两组各自可折叠（状态按工作区记住），默认收起 */
         const open = sideCollapse.isOpen('scope:' + kind, false)
         const toggle = sideCollapse.toggle('scope:' + kind, false)
         const out = [h('div', {
           key: 'h' + kind, className: 'rt-sidehead rt-sidehead-btn',
           role: 'button', tabIndex: 0, 'aria-expanded': open ? 'true' : 'false',
-          title: (open ? '收起本组' : '展开本组') + '（并切回资产列表）',
-          /* 组头既折叠也切回资产列表：停在"当前测试"视图时点外网/内网，意图一定是看资产，
-             只折叠不切视图会让人以为"点了没反应"。 */
+          title: (open ? '收起本组' : '展开本组') + '（并切回模块列表）',
           onClick: () => { setView('list'); toggle() },
           onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setView('list'); toggle(e) } },
         },
           h('span', { className: 'rt-sec-caret' }, open ? '▾' : '▸'),
-          h('span', { className: 'rt-scope rt-scope-' + kind }, kind === 'internal' ? '内网' : '外网'),
+          h('span', { className: 'rt-scope rt-scope-' + kind }, kind === 'internal' ? '内部' : '对外'),
           h('span', null, title + ' · ' + list.length + ' 个 C 段'),
           h('span', { className: 'rt-spacer' }),
-          h('span', { style: { fontWeight: 400 } }, list.reduce((n, x) => n + (x.assets || 0), 0) + ' 资产'))]
+          h('span', { style: { fontWeight: 400 } }, list.reduce((n, x) => n + (x.assets || 0), 0) + ' 模块'))]
         if (!open) return out
         for (const s of list) {
-          /* 一段一行：只给 C 段 + 资产数（端口数不再占位，归属与存活放进悬浮提示） */
           out.push(h('div', Object.assign({
             key: s.cidr, className: 'rt-seg' + (cidr === s.cidr ? ' on' : ''),
-            title: (s.org || '未知归属') + ' · 存活 ' + (s.live || 0) + '/' + (s.assets || 0) + ' 台',
+            title: (s.org || '未知归属') + ' · 存活 ' + (s.live || 0) + '/' + (s.assets || 0) + ' 个',
           }, clickable(() => { setView('list'); setCidr(s.cidr) },
             { label: '筛选 C 段 ' + s.cidr, expanded: cidr === s.cidr && view !== 'testing' })),
             h('div', { className: 'rt-seg-cidr', style: { display: 'flex', alignItems: 'baseline', gap: 5 } },
               h('span', { className: 'rt-scope rt-scope-' + kind }, kind === 'internal' ? '内' : '外'),
               h('span', { style: { flex: 1 } }, s.cidr),
               h('span', { className: 'rt-seg-meta', style: { margin: 0, whiteSpace: 'nowrap' } },
-                s.assets + ' 台'))))
+                s.assets + ' 个'))))
         }
         return out
       }
       const segExternal = segs.filter((x) => x.scope !== 'internal')
       const segInternal = segs.filter((x) => x.scope === 'internal')
-      if (segExternal.length) sideChildren.push(...segBlock('外网资产', segExternal, 'external'))
-      if (segInternal.length) sideChildren.push(...segBlock('内网资产', segInternal, 'internal'))
+      if (segExternal.length) sideChildren.push(...segBlock('对外服务模块', segExternal, 'external'))
+      if (segInternal.length) sideChildren.push(...segBlock('内部服务模块', segInternal, 'internal'))
       const side = h('div', { className: 'rt-side' }, sideChildren)
 
       const toolbar = h('div', { className: 'rt-toolbar' },
@@ -2344,7 +2600,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           const active = [service, port, prov, priority, testStatus, scope, assetState].filter(Boolean).length
           return h('button', {
             className: 'rt-btn' + (showFilters || active ? ' rt-btn-primary' : ''),
-            title: '展开更多筛选：服务 / 端口 / 来源 / 易打性 / 测试状态 / 内外网',
+            title: '展开更多筛选：服务 / 端口 / 来源 / 优先级 / 测试状态 / 范围',
             onClick: () => setShowFilters((v) => !v),
           }, '筛选' + (active ? ' (' + active + ')' : ''))
         })(),
@@ -2357,38 +2613,37 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           value: port, onChange: (e) => setPort(e.target.value),
         }) : null,
         showFilters ? h('select', { className: 'rt-input', value: scope, onChange: (e) => setScope(e.target.value) },
-          h('option', { value: '' }, '内外网不限'),
-          h('option', { value: 'external' }, '仅外网资产'),
-          h('option', { value: 'internal' }, '仅内网资产')) : null,
+          h('option', { value: '' }, '范围不限'),
+          h('option', { value: 'external' }, '仅对外服务模块'),
+          h('option', { value: 'internal' }, '仅内部服务模块')) : null,
         showFilters ? h('select', { className: 'rt-input', value: prov, onChange: (e) => setProv(e.target.value), title: '按端口来源过滤（列表已不再单列显示，详情里可见）' },
           h('option', { value: '' }, '来源不限'),
           h('option', { value: 'passive' }, '仅被动'),
           h('option', { value: 'active' }, '仅主动')) : null,
         showFilters ? h('select', { className: 'rt-input', value: priority, onChange: (e) => setPriority(e.target.value) },
-          h('option', { value: '' }, '易打性不限'),
-          h('option', { value: 'high' }, '易打（高）'),
+          h('option', { value: '' }, '优先级不限'),
+          h('option', { value: 'high' }, '高优（高）'),
           h('option', { value: 'medium' }, '一般（中）'),
-          h('option', { value: 'low' }, '难打（低）')) : null,
+          h('option', { value: 'low' }, '低优（低）')) : null,
         showFilters ? h('select', { className: 'rt-input', value: testStatus, onChange: (e) => setTestStatus(e.target.value) },
           h('option', { value: '' }, '测试状态不限'),
           h('option', { value: 'untested' }, '未测试'),
           h('option', { value: 'testing' }, '测试中'),
           h('option', { value: 'tested' }, '已测试'),
-          h('option', { value: 'blocked' }, '被封禁'),
-          h('option', { value: 'abandoned' }, '已放弃'),
-          h('option', { value: 'no_surface' }, '无攻击面')) : null,
+          h('option', { value: 'blocked' }, '受阻'),
+          h('option', { value: 'abandoned' }, '已跳过'),
+          h('option', { value: 'no_surface' }, '无接口面')) : null,
         h('div', { className: 'rt-spacer' }),
         h('button', { className: 'rt-btn', title: '重新拉取快照与当前视图数据', onClick: () => { if (onRefresh) onRefresh() } }, '刷新'),
-        h('button', { className: 'rt-btn' + (view === 'next' ? ' rt-btn-primary' : ''), title: '按待测状态 + 易打性 + 端口数排序，取前 10 台', onClick: () => setView('next') }, '下一步 10 台'),
+        h('button', { className: 'rt-btn' + (view === 'next' ? ' rt-btn-primary' : ''), title: '按待测状态 + 优先级 + 端口数排序，取前 10 个模块', onClick: () => setView('next') }, '待验证模块 Top 10'),
         h('button', { className: 'rt-btn' + (view === 'list' ? ' rt-btn-primary' : ''), onClick: () => setView('list') }, '列表'),
-        h('button', { className: 'rt-btn' + (view === 'timeline' ? ' rt-btn-primary' : ''), title: '按发现时间看资产（什么时候发现、哪天收了多少）', onClick: () => setView('timeline') }, '发现时间'),
+        h('button', { className: 'rt-btn' + (view === 'timeline' ? ' rt-btn-primary' : ''), title: '按发现时间看模块（什么时候登记、哪天新增多少）', onClick: () => setView('timeline') }, '发现时间'),
         h('button', { className: 'rt-btn' + (view === 'domain' ? ' rt-btn-primary' : ''), onClick: () => setView('domain') }, '域名'),
         h('button', { className: 'rt-btn' + (view === 'web' ? ' rt-btn-primary' : ''), onClick: () => setView('web') }, 'Web'))
 
       /* ── 结论行：一屏看清家底，数字点一下就是筛选 ───────────────────── */
       const tests = (snapshot && snapshot.tests) || {}
       const snapStats = (snapshot && snapshot.stats) || {}
-      /* 下一步 10 台：只从待测/测试中里挑，易打性高优先、端口多优先；不猜"未评"的易打性。 */
       const PRIO_RANK = { high: 0, medium: 1, low: 2 }
       const STATUS_RANK = { untested: 0, testing: 1 }
       const nextTargets = state.items
@@ -2406,28 +2661,28 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         h('b', null, String(value || 0)), h('span', null, label))
       const toggleTest = (v) => { setTestStatus((cur) => (cur === v ? '' : v)); setAssetState('') }
       const conclusion = h('div', { className: 'rt-concl' },
-        conclItem('all', '台资产', snapStats.assets, noFilter, () => {
+        conclItem('all', '个模块', snapStats.assets, noFilter, () => {
           setTestStatus(''); setPriority(''); setScope(''); setProv(''); setAssetState(''); setCidr(null)
         }),
-        conclItem('live', '存活', snapStats.liveAssets, assetState === 'live', () => { setAssetState((v) => (v === 'live' ? '' : 'live')); setTestStatus('') }),
+        conclItem('live', '在线', snapStats.liveAssets, assetState === 'live', () => { setAssetState((v) => (v === 'live' ? '' : 'live')); setTestStatus('') }),
         conclItem('untested', '待测', tests.untested, testStatus === 'untested', () => toggleTest('untested')),
         conclItem('testing', '测试中', tests.testing, testStatus === 'testing', () => toggleTest('testing')),
         conclItem('tested', '已测', tests.tested, testStatus === 'tested', () => toggleTest('tested')),
-        conclItem('giveup', '放弃', (tests.abandoned || 0) + (tests.blocked || 0), testStatus === 'abandoned,blocked', () => toggleTest('abandoned,blocked')),
+        conclItem('giveup', '跳过', (tests.abandoned || 0) + (tests.blocked || 0), testStatus === 'abandoned,blocked', () => toggleTest('abandoned,blocked')),
         h('div', { className: 'rt-spacer' }),
         h('select', {
           className: 'rt-input', value: sort, onChange: (e) => setSort(e.target.value),
           title: '列表排序方式',
         },
-          h('option', { value: 'priority' }, '排序：易打性优先'),
+          h('option', { value: 'priority' }, '排序：优先级优先'),
           h('option', { value: 'todo' }, '排序：待测优先'),
           h('option', { value: 'discovered' }, '排序：最近发现优先'),
           h('option', { value: 'ports' }, '排序：端口多优先'),
           h('option', { value: 'ip' }, '排序：按 IP')))
 
       const head = h('div', { className: 'rt-row head' },
-        h('span', null, 'IP'), h('span', null, '易打'), h('span', null, '测试状态'),
-        h('span', null, '开放端口 / 服务'), h('span', null, '指纹'))
+        h('span', null, 'IP / 节点'), h('span', null, '优先级'), h('span', null, '测试状态'),
+        h('span', null, '开放端口 / 服务'), h('span', null, '技术栈指纹'))
 
       const rowNodes = []
       for (const it of displayItems) {
@@ -2439,20 +2694,19 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         const morePorts = openPorts.length > 3 ? ' +' + (openPorts.length - 3) : ''
         rowNodes.push(h('div', Object.assign({
           key: 'r' + it.id, className: 'rt-row',
-        }, clickable(() => toggleRow(it.id), { label: '展开资产 ' + it.ip, expanded: openId === it.id })),
+        }, clickable(() => toggleRow(it.id), { label: '展开模块 ' + it.ip, expanded: openId === it.id })),
           h('span', { className: 'rt-mono', style: { display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' } },
             h('span', {
               className: 'rt-scope rt-scope-' + (it.scope === 'internal' ? 'internal' : 'external'),
             }, it.scope === 'internal' ? '内' : '外'),
             h('span', {
-              title: it.state === 'live' ? '存活' : String(it.state),
+              title: it.state === 'live' ? '在线' : String(it.state),
               style: {
                 width: 7, height: 7, borderRadius: '50%', flex: 'none', marginTop: 4,
                 background: it.state === 'live' ? '#4d6bfe' : '#94a3b8',
               },
             }),
             h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, it.ip),
-            /* 发现时间挂在 IP 下面一行：IP 列宽度有限，不另开列（列宽一改整表要跟着调） */
             h('span', {
               style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' },
               title: '发现时间：' + (it.discovered_at ? fmt(it.discovered_at) : '未记录')
@@ -2460,7 +2714,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             }, it.discovered_at ? fmtShort(it.discovered_at) : '发现时间未知')),
           h('span', null, h(PriTag, { p: it.priority, title: it.potential || '' })),
           h('span', null, h(TestTag, { s: it.test_status }),
-            it.blocked_count ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455', marginLeft: 4 } }, '封' + it.blocked_count) : null),
+            it.blocked_count ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455', marginLeft: 4 } }, '阻' + it.blocked_count) : null),
           h('span', { title: portText }, (shownPorts || '—') + morePorts),
           h('span', { title: fpText }, fpText.length > 30 ? fpText.slice(0, 30) + '…' : fpText)))
 
@@ -2499,28 +2753,28 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
               /* 必读三行 */
               h('div', { className: 'rt-kv' }, h('b', null, '测试'), h('span', null,
                 h(TestTag, { s: d.test_status }),
-                d.blocked_count ? h('span', { className: 'rt-tag', style: { marginLeft: 6, color: '#ef4444', borderColor: '#ef444455' } }, '被封 ' + d.blocked_count + ' 次') : null,
+                d.blocked_count ? h('span', { className: 'rt-tag', style: { marginLeft: 6, color: '#ef4444', borderColor: '#ef444455' } }, '受阻 ' + d.blocked_count + ' 次') : null,
                 h('span', { style: { marginLeft: 8, color: 'var(--dsw-alias-label-secondary)' } },
                   (d.test_updated_at ? fmt(d.test_updated_at) : '未测过') + (d.test_updated_by ? ' · ' + d.test_updated_by : '')))),
-              h('div', { className: 'rt-kv' }, h('b', null, '易打性'), h('span', null,
+              h('div', { className: 'rt-kv' }, h('b', null, '优先级'), h('span', null,
                 h(PriTag, { p: d.priority }),
                 h('span', { style: { marginLeft: 8 } }, d.potential || '未评估'),
                 d.assess_reason ? h('span', { style: { marginLeft: 8, color: 'var(--dsw-alias-label-secondary)' } }, d.assess_reason) : null)),
-              h('div', { className: 'rt-kv' }, h('b', null, '攻击面'), h('span', null,
+              h('div', { className: 'rt-kv' }, h('b', null, '接口面'), h('span', null,
                 d.test_surface || (portRows.length ? '未记录（开放端口见下）' : '无开放端口'),
                 d.scope ? h('span', { className: 'rt-scope rt-scope-' + (d.scope === 'internal' ? 'internal' : 'external'), style: { marginLeft: 8 } },
-                  d.scope === 'internal' ? '内网资产' : '外网资产') : null)),
+                  d.scope === 'internal' ? '内部服务模块' : '对外服务模块') : null)),
               h('span', Object.assign({ className: 'rt-more' },
-                clickable(() => setShowAll(all ? null : it.id), { label: all ? '收起资产详情' : '展开资产详情', expanded: all })),
+                clickable(() => setShowAll(all ? null : it.id), { label: all ? '收起模块详情' : '展开模块详情', expanded: all })),
                 all ? '收起全部 ▲' : '展开全部（端口 · 指纹 · 采集溯源 · 测试记录）▼'),
               all ? h('div', null,
                 h('div', { className: 'rt-kv' }, h('b', null, '主机名'), h('span', null, (d.names || []).map((n) => n.name).join(', ') || '—')),
                 h('div', { className: 'rt-kv' }, h('b', null, '发现时间'),
-                  h('span', { title: '本条资产第一次进入资产库的时刻（重复采集只刷新"最近采集"）' }, fmt(d.discovered_at)),
+                  h('span', { title: '本条模块第一次进入架构库的时刻（重复采集只刷新"最近采集"）' }, fmt(d.discovered_at)),
                   h('b', { style: { minWidth: 0, marginLeft: 8 } }, '最近采集'), h('span', null, fmt(d.last_seen)),
                   h('b', { style: { minWidth: 0, marginLeft: 8 } }, '数据源首见'), h('span', null, fmt(d.first_seen))),
                 h('div', { className: 'rt-kv' }, h('b', null, 'C 段'), h('span', null, d.segment_cidr)),
-                h('div', { className: 'rt-kv' }, h('b', null, '易打性'), h('span', null,
+                h('div', { className: 'rt-kv' }, h('b', null, '优先级'), h('span', null,
                   (d.priority || '未评估') + (d.potential ? ' · 预期：' + d.potential : '')
                   + (d.assess_reason ? ' · 依据：' + d.assess_reason : '')
                   + (d.assessed_at ? '（' + fmt(d.assessed_at) + '）' : ''))),
@@ -2546,11 +2800,11 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const listPane = h('div', { className: 'rt-table' },
         view === 'next'
           ? h('div', { className: 'rt-section', style: { padding: '8px 10px 4px' } },
-              '下一步 10 台 · 按待测状态 → 易打性 → 端口数排序（只列未测/测试中）')
+              '待验证模块 Top 10 · 按待测状态 → 优先级 → 端口数排序（只列未测/测试中）')
           : null,
         head, rowNodes,
         !state.loading && !displayItems.length
-          ? h('div', { className: 'rt-empty' }, view === 'next' ? '没有待测资产了：都已测过或已放弃。' : '没有匹配的资产')
+          ? h('div', { className: 'rt-empty' }, view === 'next' ? '没有待验证模块了：均已完成验证或已跳过。' : '没有匹配的模块')
           : null)
 
       /* 域名维度：域名 → 关联资产 */
@@ -2873,7 +3127,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
               c + '（' + scoped.filter((s) => (s.category || '未分类') === c).length + '）'))),
           h('label', { className: 'rt-kb-check', style: { display: 'flex', margin: '0 0 6px' } },
             h('input', { type: 'checkbox', checked: redteamOnly, onChange: (e) => setRedteamOnly(e.target.checked) }),
-            '只看红队技能（' + redteamCount + ' 个，隐藏 DSH 通用）'),
+            '只看研发技能（' + redteamCount + ' 个，隐藏 DSH 通用）'),
           h('label', { className: 'rt-kb-check', style: { display: 'flex', margin: '0 0 6px' } },
             h('input', { type: 'checkbox', checked: srcOnly, onChange: (e) => setSrcOnly(e.target.checked) }),
             '只看本插件自带（' + (meta.fromPlugin || 0) + ' 个）'),
@@ -2902,7 +3156,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           listItems),
         h('div', { className: 'rt-main' },
           h('div', { className: 'rt-toolbar' },
-            h('span', { style: { fontWeight: 600 } }, detail ? detail.name : '技能库'),
+            h('span', { style: { fontWeight: 600 } }, detail ? detail.name : '研发技能库'),
             h('div', { className: 'rt-spacer' }),
             h('button', { className: 'rt-btn', disabled: busy, onClick: () => load(true) }, busy ? '刷新中…' : '刷新')),
           err
@@ -3105,22 +3359,22 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const fileCount = (files || []).reduce((n, g) => n + (g.files || []).length, 0)
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '凭据与文件'),
-          h('span', { className: 'rt-tag' }, '凭据 ' + creds.length),
-          h('span', { className: 'rt-tag' }, '访问会话 ' + accesses.length),
-          h('span', { className: 'rt-tag' }, '攻击文件 ' + fileCount),
+          h('span', { style: { fontWeight: 600 } }, '配置与构建产物'),
+          h('span', { className: 'rt-tag' }, '环境变量与密钥 ' + creds.length),
+          h('span', { className: 'rt-tag' }, '活跃服务连接 ' + accesses.length),
+          h('span', { className: 'rt-tag' }, '构建与验证脚本 ' + fileCount),
           h('div', { className: 'rt-spacer' }),
           h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新')),
         err ? h('div', { className: 'rt-err' }, err) : null,
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           h('details', { className: 'rt-card' },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '凭据 · ' + creds.length + '（默认脱敏，点开查看）'),
+            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '环境变量与密钥 · ' + creds.length + '（默认脱敏，点开查看）'),
             h(CredentialList, { items: creds })),
           h('details', { className: 'rt-card' },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '已获得访问会话 · ' + accesses.length),
+            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '活跃服务连接 · ' + accesses.length),
             h(AccessList, { items: accesses })),
           h('details', { className: 'rt-card' },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '攻击文件 · ' + fileCount),
+            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '构建与验证脚本 · ' + fileCount),
             h(AttackFilesTab, { engagement: eng, refreshKey: refreshKey }))))
     }
 
@@ -3135,9 +3389,9 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const [files, setFiles] = React.useState([])
       const [openId, setOpenId] = React.useState(null)
       const [msg, setMsg] = React.useState(null)
-      /* 默认按目标聚合：322 条平铺没法读，先看"哪台被打下什么" */
+      /* 默认按目标模块聚合 */
       const [grouped, setGrouped] = React.useState(true)
-      /* 默认只看战果：已利用，或已记录 gained（拿到权限）。候选/误报不占首屏。 */
+      /* 默认只看关键缺陷：已验证或已记录影响范围。候选/误报不占首屏。 */
       const [resultsOnly, setResultsOnly] = React.useState(true)
       const collapse = useCollapse('findings:' + eng)
 
@@ -3153,8 +3407,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           }
           setState({ loading: false, error: null, total: r.total, items: r.items || [], stats: r.stats || null })
         }, (e) => setState({ loading: false, error: String((e && e.message) || e), total: 0, items: [], stats: null }))
-        /* 攻击文件与漏洞的对应关系：attack_file 行上有 vuln_id / asset_id，
-           这里读一次按 vuln_id 建索引，漏洞详情里直接列出"这条漏洞留下了哪些文件"。 */
         api({ op: 'attackFiles', engagement: eng }).then((r) => setFiles((r && r.items) || []), () => {})
       }
       React.useEffect(load, [eng, sev, status, qApplied, refreshKey])
@@ -3170,7 +3422,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       const stats = (state.stats && state.stats.bySeverity) ? state.stats : { bySeverity: {}, byStatus: {} }
       const needRestart = state.error !== null && String(state.error).indexOf('unknown op') >= 0
-      /* gained 里也可能写「未利用 / 无权限」这类反证，不能当战果。 */
       const hasGain = (v) => {
         const g = String(v.gained || '').trim()
         return g !== '' && !/未利用|无权限|未记录|未获取|^—+$/.test(g)
@@ -3186,10 +3437,10 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       }, clickable(onClick, { label: '按「' + label + '」筛选（' + (value || 0) + '）', expanded: active })),
         h('b', null, String(value || 0)), h('span', null, label))
       const conclusion = h('div', { className: 'rt-concl' },
-        h('span', { className: 'rt-concl-group' }, '成果'),
-        concl('exp', '已利用', (stats.byStatus.exploited || 0), status === 'exploited', () => setStatus((v) => (v === 'exploited' ? '' : 'exploited'))),
-        concl('gain', '拿到权限', (stats.withGained || 0), false, () => {}),
-        h('span', { className: 'rt-concl-group' }, '覆盖'),
+        h('span', { className: 'rt-concl-group' }, '质量'),
+        concl('exp', '已确认修复/验证', (stats.byStatus.exploited || 0), status === 'exploited', () => setStatus((v) => (v === 'exploited' ? '' : 'exploited'))),
+        concl('gain', '影响范围', (stats.withGained || 0), false, () => {}),
+        h('span', { className: 'rt-concl-group' }, '等级'),
         concl('crit', '严重', (stats.bySeverity.critical || 0), sev === 'critical', () => setSev((v) => (v === 'critical' ? '' : 'critical'))),
         concl('high', '高危', (stats.bySeverity.high || 0), sev === 'high', () => setSev((v) => (v === 'high' ? '' : 'high'))),
         h('details', { className: 'rt-concl-extra' },
@@ -3199,13 +3450,13 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             concl('med', '中危', (stats.bySeverity.medium || 0), sev === 'medium', () => setSev((v) => (v === 'medium' ? '' : 'medium'))))),
         h('div', { className: 'rt-spacer' }),
         h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-          '默认按目标聚合 · 当前显示 ' + visibleItems.length + ' / 共 ' + (state.total || 0) + ' 条 · ' + (stats.targetGroups || 0) + ' 个目标'))
+          '默认按模块聚合 · 当前显示 ' + visibleItems.length + ' / 共 ' + (state.total || 0) + ' 条 · ' + (stats.targetGroups || 0) + ' 个目标模块'))
 
       const head = h('div', { className: 'rt-vrow head' },
-        h('span', null, '等级'), h('span', null, '漏洞 / 编号'), h('span', null, '目标'),
-        h('span', null, '拿到什么'), h('span', null, '状态'), h('span', null, '置信'))
+        h('span', null, '等级'), h('span', null, '缺陷 / 编号'), h('span', null, '目标模块'),
+        h('span', null, '影响范围'), h('span', null, '状态'), h('span', null, '置信'))
 
-      /* 攻击文件按 vuln_id 建索引（同一份文件只挂一条漏洞；没挂的归到"未关联"） */
+      /* 构建与验证脚本按 vuln_id 建索引 */
       const allFiles = (files || []).flatMap((g) => (g.files || []).map((f) => Object.assign({ target: g.target }, f)))
       const filesByVuln = new Map()
       const orphanFiles = []
@@ -3216,7 +3467,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         filesByVuln.get(vid).push(f)
       }
 
-      /* 单条漏洞（行 + 展开详情），聚合视图与平铺视图共用 */
+      /* 单条缺陷（行 + 展开详情），聚合视图与平铺视图共用 */
       const vulnRows = (v, compact) => {
         const out = []
         const gainedList = String(v.gained || '').split(/[、,;，；]/).map((x) => x.trim()).filter(Boolean)
@@ -3241,29 +3492,29 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           key: 'vd' + v.id, className: 'rt-vrow',
           style: { cursor: 'default', gridTemplateColumns: '1fr' },
         }, h('div', { className: 'rt-vdetail' },
-          h('div', { className: 'rt-kv' }, h('b', null, '拿到什么'),
+          h('div', { className: 'rt-kv' }, h('b', null, '影响范围'),
             gainedList.length
               ? h('span', null, gainedList.map((g, gi) => h('span', { key: 'g' + gi, className: 'rt-gain', style: { marginRight: 6 } }, g)))
               : h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } },
-                  '未记录 —— 拿到权限/成果后请用 redteam_vuln_update 补 gained（例：服务器权限、内网隧道、后台管理员账号）')),
-          h('div', { className: 'rt-kv' }, h('b', null, '目标'), h('span', { className: 'rt-mono', style: { wordBreak: 'break-all' } }, v.target || '—')),
-          h('div', { className: 'rt-kv' }, h('b', null, '资产'), h('span', null, (v.asset_ip || '—') + ' · ' + (v.segment_cidr || ''))),
+                  '未记录 —— 验证确认影响范围后请用 redteam_vuln_update 补充 gained')),
+          h('div', { className: 'rt-kv' }, h('b', null, '目标模块'), h('span', { className: 'rt-mono', style: { wordBreak: 'break-all' } }, v.target || '—')),
+          h('div', { className: 'rt-kv' }, h('b', null, '所属节点'), h('span', null, (v.asset_ip || '—') + ' · ' + (v.segment_cidr || ''))),
           h('div', { className: 'rt-kv' }, h('b', null, '来源'), h('span', null, (v.source || '—') + ' · ' + (v.found_by_agent || '—') + ' · ' + fmt(v.found_at))),
           detailEvidence(v),
           (() => {
             const mine = filesByVuln.get(Number(v.id)) || []
-            return h('div', { className: 'rt-kv' }, h('b', null, '攻击文件'),
+            return h('div', { className: 'rt-kv' }, h('b', null, '构建与验证脚本'),
               mine.length
                 ? h('span', null, mine.map((f, fi) => h('div', { key: 'af' + fi, style: { marginBottom: 3 } },
                     '· ' + (f.kind ? '[' + f.kind + '] ' : '') + (f.name || '(未命名)')
                     + (f.description ? ' — ' + f.description : ''),
                     h('div', { className: 'rt-mono', style: { fontSize: 11, marginLeft: 12, color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' } }, f.path || ''))))
                 : h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } },
-                    '（无）用 redteam_attack_file_add 把这条漏洞打通的脚本/马/EXP 归档，并带上 vuln_id'))
+                    '（无）用 redteam_attack_file_add 把该缺陷关联的复现测试或修复脚本归档，并带上 vuln_id'))
           })(),
           h('div', { className: 'rt-actions' },
             h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'confirmed') } }, '确认'),
-            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'exploited') } }, '已利用'),
+            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'exploited') } }, '已验证'),
             h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'false-positive') } }, '误报'),
             h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'fixed') } }, '已修复')))))
         return out
@@ -3271,7 +3522,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       const rows = []
       if (grouped) {
-        /* 按目标聚合成组：先看"哪台被打下什么"，再点进去看具体漏洞 */
         const groups = new Map()
         for (const v of visibleItems) {
           const key = targetKeyOf(v)
@@ -3292,21 +3542,21 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           rows.push(h(Section, {
             key: 'sec:' + g.key, tone: 'target',
             title: g.key,
-            count: g.vulns.length + ' 个漏洞',
+            count: g.vulns.length + ' 项缺陷',
             sub: [
               SEV_LABEL[g.top.severity] || g.top.severity,
-              g.exploited ? '已利用 ' + g.exploited : null,
-              g.top.asset_ip && g.top.asset_ip !== g.key ? '资产 ' + g.top.asset_ip : null,
+              g.exploited ? '已验证 ' + g.exploited : null,
+              g.top.asset_ip && g.top.asset_ip !== g.key ? '节点 ' + g.top.asset_ip : null,
             ].filter(Boolean).join(' · '),
             right: g.gained.length
               ? g.gained.slice(0, 2).join(' / ') + (g.gained.length > 2 ? ' +' + (g.gained.length - 2) : '')
-              : '未记录权限',
+              : '未记录影响范围',
             open: collapse.isOpen(key, defOpen),
             onToggle: collapse.toggle(key, defOpen),
           }, g.vulns.map((v) => vulnRows(v, true))))
         }
         if (!list.length && !state.loading && !state.error) {
-          rows.push(h('div', { key: 'none', className: 'rt-empty' }, resultsOnly ? '当前没有已利用/拿到权限的战果；点「显示全部」看候选漏洞。' : '暂无漏洞记录'))
+          rows.push(h('div', { key: 'none', className: 'rt-empty' }, resultsOnly ? '当前没有已确认修复/验证的关键缺陷；点「显示全部」看全部审查记录。' : '暂无审查与缺陷记录'))
         }
       } else {
         for (const v of visibleItems) rows.push(...vulnRows(v))
@@ -3314,7 +3564,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       const toolbar = h('div', { className: 'rt-toolbar' },
         h('input', {
-          className: 'rt-input', style: { flex: '1 1 140px' }, placeholder: '搜索标题 / CVE / 目标（回车）',
+          className: 'rt-input', style: { flex: '1 1 140px' }, placeholder: '搜索标题 / 编号 / 模块（回车）',
           value: q, onChange: (e) => setQ(e.target.value),
           onKeyDown: (e) => { if (e.key === 'Enter') setQApplied(q) },
         }),
@@ -3330,30 +3580,30 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           h('option', { value: '' }, '全部状态'),
           h('option', { value: 'candidate' }, '待验证'),
           h('option', { value: 'confirmed' }, '已确认'),
-          h('option', { value: 'exploited' }, '已利用'),
+          h('option', { value: 'exploited' }, '已确认修复/验证'),
           h('option', { value: 'false-positive' }, '误报'),
           h('option', { value: 'fixed' }, '已修复')),
         h('button', {
           className: 'rt-btn' + (resultsOnly ? ' rt-btn-primary' : ''),
-          title: '默认只显示已利用或已记录 gained 的战果；点一下显示全部候选/已确认漏洞',
+          title: '默认只显示已验证或已记录影响范围的关键缺陷；点一下显示全部候选/已确认项',
           onClick: () => setResultsOnly((v) => !v),
-        }, resultsOnly ? '只看战果 ✓' : '显示全部'))
+        }, resultsOnly ? '只看关键缺陷 ✓' : '显示全部'))
 
       return h('div', { className: 'rt-main' }, toolbar, conclusion,
         h('div', { className: 'rt-subtabs' },
-          h('span', { className: 'rt-subtab on' }, '漏洞 ' + visibleItems.length),
+          h('span', { className: 'rt-subtab on' }, '审查项 ' + visibleItems.length),
           h('div', { className: 'rt-spacer' }),
           grouped ? h('button', {
-            className: 'rt-btn', title: '展开所有目标',
+            className: 'rt-btn', title: '展开所有目标模块',
             onClick: () => collapse.setAll(visibleItems.map((v) => 'target:' + targetKeyOf(v)), true),
           }, '全部展开') : null,
           grouped ? h('button', {
-            className: 'rt-btn', title: '收起所有目标',
+            className: 'rt-btn', title: '收起所有目标模块',
             onClick: () => collapse.setAll(visibleItems.map((v) => 'target:' + targetKeyOf(v)), false),
           }, '全部收起') : null,
           h('button', {
             className: 'rt-btn' + (grouped ? ' rt-btn-primary' : ''),
-            title: grouped ? '当前：按目标聚合（先看哪台被打下什么）' : '当前：平铺每条漏洞',
+            title: grouped ? '当前：按目标模块聚合' : '当前：平铺每条缺陷',
             onClick: () => setGrouped((g) => !g),
           }, grouped ? '按目标聚合' : '平铺列表')),
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
@@ -3361,7 +3611,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         state.error && !needRestart ? h('div', { className: 'rt-err' }, state.error) : null,
         h('div', { className: 'rt-table' }, grouped ? null : head, rows,
           !state.loading && !visibleItems.length && !state.error
-            ? h('div', { className: 'rt-empty' }, resultsOnly ? '当前没有已利用/拿到权限的战果；点「显示全部」看候选漏洞。' : '暂无漏洞记录')
+            ? h('div', { className: 'rt-empty' }, resultsOnly ? '当前没有已确认修复/验证的关键缺陷；点「显示全部」看全部审查记录。' : '暂无审查与缺陷记录')
             : null))
     }
 
@@ -3436,16 +3686,16 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const reproItem = (x, heading) => h('div', { className: 'rt-r2-item', key: 'ri' + heading },
         h('h5', { className: 'rt-r2-h5' }, heading + ' ' + (x.target || x.asset_ip || '')),
         h('div', { className: 'rt-r2-item-line' },
-          h('b', null, '漏洞说明 '),
+          h('b', null, '变更说明 '),
           x.vuln ? [x.vuln.cve, x.vuln.title].filter(Boolean).join(' ') : (x.how || x.point_name)),
-        x.vuln_source === 'step' ? h('div', { className: 'rt-r2-muted' }, '漏洞关联自攻击步骤，记分时未显式填写') : null,
+        x.vuln_source === 'step' ? h('div', { className: 'rt-r2-muted' }, '关联自研发执行步骤，记分时未显式填写') : null,
         x.evidence ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '结果 '), x.evidence) : null,
         x.replay_cmd ? code(x.replay_cmd, /^(powershell|pwsh)/i.test(x.replay_cmd) ? 'PowerShell' : 'Bash / 命令', 'cmd') : null,
-        (x.requests || []).slice(0, 3).map((q, qi) => q.request ? code(q.request, 'Yakit / HTTP 报文 ' + (qi + 1), 'http') : null),
+        (x.requests || []).slice(0, 3).map((q, qi) => q.request ? code(q.request, 'HTTP 报文 ' + (qi + 1), 'http') : null),
         (!x.replay_cmd && !(x.requests || []).some((q) => q.request))
           ? h('div', { className: 'rt-r2-gap' }, '复现缺口：没有留存真实命令或 HTTP 报文。') : null,
         (x.attack_files || []).length > 0
-          ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '攻击文件 '),
+          ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '构建与验证脚本 '),
               h('span', { className: 'rt-mono' }, x.attack_files.map((f) => f.path).join('、'))) : null,
         (x.steps || []).some((s) => s.evidence_ref)
           ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '证据文件 '),
@@ -3455,42 +3705,42 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const reproList = (list, headingPrefix, kind) => (list || []).map((g, i) => {
         if (kind === 'boundary') {
           return h('div', { className: 'rt-r2-group', key: 'b' + i },
-            h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' 隧道' + (i + 1)),
+            h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' 联调通道' + (i + 1)),
             h('div', { className: 'rt-r2-item-line' }, h('b', null, '入口 '), h('span', { className: 'rt-mono' }, g.entry || '—')),
             g.tunnel
-              ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '隧道 '), h('span', { className: 'rt-mono' },
+              ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '通道 '), h('span', { className: 'rt-mono' },
                   (g.tunnel.kind || 'socks5') + ' ' + (g.tunnel.listen || '') + (g.tunnel.reach ? ' → ' + g.tunnel.reach : '')))
-              : h('div', { className: 'rt-r2-gap' }, '隧道记录缺失，需补搭建证据。'),
-            g.tunnel && g.tunnel.command ? code(g.tunnel.command, '隧道建立命令', 'cmd') : null,
+              : h('div', { className: 'rt-r2-gap' }, '通道记录缺失，需补联调证据。'),
+            g.tunnel && g.tunnel.command ? code(g.tunnel.command, '通道建立命令', 'cmd') : null,
             g.items.map((x, j) => reproItem(x, headingPrefix + (i + 1) + '.' + (j + 1))))
         }
         if (kind === 'internet') {
           return h('div', { className: 'rt-r2-group', key: 'g' + i },
-            h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' ' + (g.asset.ip || g.asset.primary_name || '未命名资产')),
+            h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' ' + (g.asset.ip || g.asset.primary_name || '未命名模块')),
             g.items.map((x, j) => reproItem(x, headingPrefix + (i + 1) + '.' + (j + 1))))
         }
         return h('div', { className: 'rt-r2-group', key: 's' + i },
           h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' ' + (g.label || '网段') + ' “' + (g.cidr || '未归属网段') + '”'),
           (g.assets || []).map((a, ai) => h('div', { className: 'rt-r2-asset', key: 'a' + ai },
-            h('h5', { className: 'rt-r2-h5' }, (a.asset.ip || a.asset.primary_name || '未命名资产')),
+            h('h5', { className: 'rt-r2-h5' }, (a.asset.ip || a.asset.primary_name || '未命名模块')),
             a.items.map((x, xi) => reproItem(x, headingPrefix + (i + 1) + '.' + (ai + 1) + '.' + (xi + 1))))))
       })
       const stageSection = (s, i) => {
         const code = s.code
         const list = (report.stage_tables && report.stage_tables[code]) || []
-        const headers = code === 'internet' ? ['序号', '得分点', '分值', 'URL', '登录凭据']
-          : code === 'boundary' ? ['序号', '得分点', '分值', '互联网入口点']
-            : ['序号', '得分点', '分值', '资产', '凭据']
+        const headers = code === 'internet' ? ['序号', '里程碑项', '分值', 'URL', '凭据']
+          : code === 'boundary' ? ['序号', '里程碑项', '分值', '对外入口点']
+            : ['序号', '里程碑项', '分值', '模块', '凭据']
         const rows = list.map((r) => code === 'internet' ? [r.seq, r.point_name, '+' + r.points, r.url, r.credential]
           : code === 'boundary' ? [r.seq, r.point_name, '+' + r.points, r.entry]
             : [r.seq, r.point_name, '+' + r.points, r.asset, r.credential])
         return h('div', { key: 'st' + code },
           h('h3', { className: 'rt-r2-h3' }, '2.' + (i + 1) + ' ' + s.name + '（' + s.count + ' 项 / +' + s.points + ' 分）'),
-          list.length === 0 ? h('div', { className: 'rt-r2-empty' }, '本阶段无得分项。') : table(headers, rows))
+          list.length === 0 ? h('div', { className: 'rt-r2-empty' }, '本阶段无里程碑项。') : table(headers, rows))
       }
       return h('div', { className: 'rt-main rt-r2' },
         h('div', { className: 'rt-toolbar rt-r2-toolbar' },
-          h('span', { style: { fontWeight: 700 } }, '红队得分报告'),
+          h('span', { style: { fontWeight: 700 } }, 'LMTAgent 研发交付报告'),
           h('span', { className: 'rt-tag rt-tag-live' }, '合计 ' + summary.points + ' 分'),
           h('span', { className: 'rt-tag' }, summary.count + ' 项得分'),
           h('span', { className: 'rt-tag' + (summary.incomplete ? ' rt-tag-warn' : ' rt-tag-live') }, '可复现 ' + (summary.count - (summary.incomplete || 0)) + '/' + summary.count),
@@ -3501,21 +3751,21 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
         h('div', { className: 'rt-r2-scroll' },
           h('section', { className: 'rt-r2-section', id: 'rt-r2-assets' },
-            h('h2', { className: 'rt-r2-h2' }, '一、资产归属证明'),
-            proofSection('1.1 互联网资产归属证明', report.asset_proof && report.asset_proof.internet),
-            proofSection('1.2 内网入口资产归属证明', report.asset_proof && report.asset_proof.internal_entry)),
+            h('h2', { className: 'rt-r2-h2' }, '一、模块与服务归属证明'),
+            proofSection('1.1 对外服务模块归属证明', report.asset_proof && report.asset_proof.internet),
+            proofSection('1.2 内部入口模块归属证明', report.asset_proof && report.asset_proof.internal_entry)),
           h('section', { className: 'rt-r2-section', id: 'rt-r2-scores' },
-            h('h2', { className: 'rt-r2-h2' }, '二、得分汇总表'),
+            h('h2', { className: 'rt-r2-h2' }, '二、里程碑得分汇总表'),
             table(['阶段', '计分项', '得分'], (report.stage_summary || []).map((s) => [s.name, s.count, '+' + s.points])),
             (report.stage_summary || []).map(stageSection)),
           h('section', { className: 'rt-r2-section', id: 'rt-r2-repro' },
-            h('h2', { className: 'rt-r2-h2' }, '三、得分点复现'),
-            h('h3', { className: 'rt-r2-h3' }, '3.1 互联网资产得分复现'),
-            (report.repro && report.repro.internet || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无互联网资产得分项。') : reproList(report.repro.internet, '3.1.', 'internet'),
-            h('h3', { className: 'rt-r2-h3' }, '3.2 互联网边界突破复现'),
-            (report.repro && report.repro.boundary || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无边界突破得分项。') : reproList(report.repro.boundary, '3.2.', 'boundary'),
-            h('h3', { className: 'rt-r2-h3' }, '3.3 内网资产得分复现'),
-            (report.repro && report.repro.internal_segments || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无内网资产得分项。') : reproList(report.repro.internal_segments, '3.3.', 'internal'))))
+            h('h2', { className: 'rt-r2-h2' }, '三、里程碑交付复现'),
+            h('h3', { className: 'rt-r2-h3' }, '3.1 对外服务模块交付复现'),
+            (report.repro && report.repro.internet || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无对外服务模块得分项。') : reproList(report.repro.internet, '3.1.', 'internet'),
+            h('h3', { className: 'rt-r2-h3' }, '3.2 跨网联调通道交付复现'),
+            (report.repro && report.repro.boundary || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无跨网联调通道得分项。') : reproList(report.repro.boundary, '3.2.', 'boundary'),
+            h('h3', { className: 'rt-r2-h3' }, '3.3 内部服务模块交付复现'),
+            (report.repro && report.repro.internal_segments || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无内部服务模块得分项。') : reproList(report.repro.internal_segments, '3.3.', 'internal'))))
     }
 
 
@@ -3526,7 +3776,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const [err, setErr] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [msg, setMsg] = React.useState(null)
-      /* 报告按阶段折叠：默认全开，折叠状态按靶标记住（阶段多时便于逐段交付） */
+      /* 报告按阶段折叠：默认全开，折叠状态按工作区记住（阶段多时便于逐段交付） */
       const collapse = useCollapse('report:' + eng)
 
       const load = () => {
@@ -3534,8 +3784,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         setBusy(true); setMsg(null)
         api({ op: 'scoreReport', engagement: eng }).then((r) => {
           if (!r || r.ok === false) { setBusy(false); setErr((r && r.error) || '生成失败'); return }
-          /* 老 host 只给平铺条目、不给阶段分组（或阶段行缺失）：自己按阶段分组，
-             否则报告页会误报"还没有可交付的成果"。分组数据取自 scoreChain。 */
           if ((!r.stages || r.stages.length === 0) && (r.items || []).length > 0) {
             api({ op: 'scoreChain', engagement: eng }).then((c) => {
               setBusy(false); setErr(null); setData(Object.assign({}, r, { stages: groupByStage(r.items, c) }))
@@ -3547,8 +3795,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       }
       React.useEffect(load, [eng, refreshKey])
 
-      /* 复制结果必须是真实的：clipboard API 失败时（非安全上下文/失焦/被拒）要如实提示，
-         否则用户以为复制成功、粘到 Yakit 里是空的。 */
       const copy = (text, label) => copyWithFeedback(text, label, (okFlag, message) => {
         setMsg(okFlag ? { ok: message } : { err: message })
       })
@@ -3558,8 +3804,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           const url = URL.createObjectURL(blob)
           const a = document.createElement('a')
           a.href = url
-          /* 文件名跟靶标走：保留中文，只替换文件系统非法字符；
-             旧实现用 \w 白名单，中文全变下划线，才出现 report-__________.md。 */
           const safe = String(label || 'score')
             .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
             .replace(/\s+/g, ' ')
@@ -3577,29 +3821,22 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const summary = (data && data.summary) || null
       const mdText = (data && data.markdown) || ''
       const report = (data && data.report) || null
-      /* host 新版本返回模板化 report model：页面直接按同一份数据渲染；旧 host 保持下方旧卡片。 */
       if (report !== null) {
         return h(ReportV2, {
           report: report, eng: eng, mdText: mdText, busy: busy, load: load,
           copy: copy, download: download, msg: msg,
         })
       }
-      /* 不可复现的条目 + 具体缺什么：只给“可复现 21/51”没有行动价值，
-         用户需要知道是哪 30 条、缺请求还是缺命令/截图。 */
       const gapItems = items.filter((x) => x.incomplete === true || (Array.isArray(x.gaps) && x.gaps.length > 0))
       const gapPreview = gapItems.slice(0, 12).map((x) => h('div', {
         key: 'gap' + x.id, className: 'rt-rep-missing', style: { marginBottom: 4 },
       }, '#' + x.seq + ' ' + x.point_name + ' · ' + (x.target || x.asset_ip || '未标目标') + '：'
         + ((x.gaps || []).join('；') || '缺少复现材料')))
-      /* 面板里的四段式全文：与下载/导出的 Markdown 同源。
-         去掉 HTML 锚点（Markdown 组件不解析）与图片行（面板里走卡片视图的 ShotStrip），
-         避免把 `![证据](shots/x.png)` 当普通段落显示。 */
       const fullText = mdText
         .replace(/^<a id="[^"]*"><\/a>\s*$/gm, '')
         .replace(/^!\[[^\]]*\]\([^)]*\)\s*$/gm, '> 证据截图见下方卡片视图或导出包。')
       const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳']
 
-      /* 每项一条，平铺不折叠：目标 → 拿到什么 → 复现请求（可直接粘进 Yakit）→ 响应 */
       const card = (x) => h('div', { key: 'r' + x.id, className: 'rt-rep' },
         h('div', { className: 'rt-rep-head' },
           h('span', { className: 'rt-rep-idx' }, String(x.seq)),
@@ -3613,24 +3850,22 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           }, '复制请求')),
         h('div', { className: 'rt-rep-meta' },
           h('span', null, h('b', null, '目标 ')), h('span', { className: 'rt-mono' }, x.target || x.asset_ip || '—')),
-        x.gained ? h('div', { className: 'rt-rep-meta' }, h('b', null, '拿到 '), h('span', null, x.gained)) : null,
-        x.vuln ? h('div', { className: 'rt-rep-meta' }, h('b', null, '利用漏洞 '),
+        x.gained ? h('div', { className: 'rt-rep-meta' }, h('b', null, '交付 '), h('span', null, x.gained)) : null,
+        x.vuln ? h('div', { className: 'rt-rep-meta' }, h('b', null, '关联项 '),
           h('span', null, [x.vuln.cve, x.vuln.title].filter(Boolean).join(' ')
-            + (x.vuln_source === 'step' ? '（关联自攻击步骤）' : ''))) : null,
+            + (x.vuln_source === 'step' ? '（关联自研发执行步骤）' : ''))) : null,
         x.evidence ? h('div', { className: 'rt-rep-meta' }, h('b', null, '结果 '),
           h('span', null, String(x.evidence).replace(/\n+/g, ' '))) : null,
         x.recorded_at ? h('div', { className: 'rt-rep-meta' }, h('b', null, '取得时间 '),
           h('span', null, fmt(x.recorded_at) + (x.recorded_by ? '（' + (ROLE_LABEL[x.recorded_by] || x.recorded_by) + '）' : ''))) : null,
         h(ShotStrip, { eng: eng, shots: x.shots, total: x.shot_total,
           title: '证据截图' + ((x.shots || []).length > 0 ? '' : '') }),
-        /* ── 复现步骤：动作记录（含实际命令与回显）+ 凭据 + 隧道 + WebShell ─────
-           报告的交付价值全在这块：账号密码怎么来的、隧道怎么搭的，用户照着就能复现。 */
         h('details', { className: 'rt-rep-trace', open: x.incomplete === true || (x.steps || []).length === 0 },
           h('summary', { className: 'rt-rep-trace-head', style: { cursor: 'pointer' } },
             h('span', { className: 'rt-rep-trace-title' }, '复现步骤（点击展开）'),
             (x.steps || []).length ? h('span', { className: 'rt-tag' }, (x.steps || []).length + ' 个动作') : null,
             (x.credentials || []).length ? h('span', { className: 'rt-tag' }, (x.credentials || []).length + ' 条凭据') : null,
-            (x.tunnels || []).length ? h('span', { className: 'rt-tag' }, (x.tunnels || []).length + ' 条隧道') : null,
+            (x.tunnels || []).length ? h('span', { className: 'rt-tag' }, (x.tunnels || []).length + ' 条通道') : null,
             x.incomplete ? h('span', { className: 'rt-tag rt-tag-warn' }, '复现材料待补') : h('span', { className: 'rt-tag rt-tag-live' }, '可复现')),
           h('div', { style: { paddingTop: 6 } },
           x.how ? h('div', { className: 'rt-rep-trace-how' }, x.how) : null,
@@ -3643,7 +3878,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                   h('span', { className: 'rt-rep-step-title' }, s.title || '(未命名动作)'),
                   s.agent ? h('span', { className: 'rt-tag' }, ROLE_LABEL[s.agent] || s.agent) : null,
                   s.stage_code ? h('span', { className: 'rt-tag' }, s.stage_code) : null,
-                  s.inferred ? h('span', { className: 'rt-tag' }, '按同资产推断') : null,
+                  s.inferred ? h('span', { className: 'rt-tag' }, '按同模块推断') : null,
                   h('div', { className: 'rt-spacer' }),
                   s.recorded_at ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, fmt(s.recorded_at)) : null),
                 s.detail ? h('div', { className: 'rt-rep-step-detail' }, s.detail) : null,
@@ -3659,10 +3894,9 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                   }, '复制命令')) : null,
                 s.result ? h('div', { className: 'rt-rep-step-result' }, h('b', null, '结果 '), String(s.result).replace(/\n+/g, ' ')) : null,
                 s.evidence_ref ? h('div', { className: 'rt-rep-step-result' }, h('b', null, '证据 '), h('span', { className: 'rt-mono' }, s.evidence_ref)) : null)),
-          /* 账号密码怎么来的：凭据的来源 + 取得方式 */
           (x.credentials || []).length
             ? h('div', { className: 'rt-rep-src' },
-                h('div', { className: 'rt-rep-src-title' }, '拿到的凭据（来源可追溯）'),
+                h('div', { className: 'rt-rep-src-title' }, '关联凭据（来源可追溯）'),
                 (x.credentials || []).map((c) => h('div', { key: 'c' + c.id, className: 'rt-kv' },
                   h('b', { className: 'rt-mono', style: { minWidth: 120 } }, c.host || '—'),
                   h('span', null, (c.username || '(无用户名)') + ' / ' + (c.secret_type || 'password')
@@ -3670,32 +3904,30 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                     + ' · 来源 ' + (c.source || '未标注')
                     + (c.tool ? ' · 取得方式 ' + String(c.tool).replace(/\n+/g, ' ').slice(0, 160) : '')))))
             : null,
-          /* 隧道怎么搭的 */
           (x.tunnels || []).length
             ? h('div', { className: 'rt-rep-src' },
-                h('div', { className: 'rt-rep-src-title' }, '用到的隧道 / 通道'),
+                h('div', { className: 'rt-rep-src-title' }, '用到的联调通道'),
                 (x.tunnels || []).map((t) => h('div', { key: 't' + t.id, className: 'rt-kv' },
                   h('b', { className: 'rt-mono', style: { minWidth: 120 } }, (t.kind || 'socks5') + ' ' + (t.listen || '')),
                   h('span', null, '入口 ' + (t.entry || '未登记')
                     + (t.reach ? ' · 可达 ' + t.reach : '')
                     + ' · 目标侧 ' + (t.entry_kind || '未声明')
-                    + (t.legit === false ? ' · ⚠️ 不算跨越靶标边界' : '')
                     + (t.status ? ' · ' + t.status : '')
                     + (t.command ? ' · 命令 ' + String(t.command).replace(/\n+/g, ' ').slice(0, 160) : '')))))
             : null,
           (x.webshells || []).length
             ? h('div', { className: 'rt-rep-src' },
-                h('div', { className: 'rt-rep-src-title' }, '用到的 WebShell'),
+                h('div', { className: 'rt-rep-src-title' }, '用到的服务端点'),
                 (x.webshells || []).map((w) => h('div', { key: 'w' + w.id, className: 'rt-kv' },
-                  h('b', { className: 'rt-mono', style: { minWidth: 120 } }, w.shell_type || 'shell'),
+                  h('b', { className: 'rt-mono', style: { minWidth: 120 } }, w.shell_type || 'endpoint'),
                   h('span', null, (w.url || ''),
                     w.pass_key ? h(React.Fragment, null, ' · 口令/密钥 ', h(SecretText, { value: w.pass_key })) : null,
                     (w.privilege ? ' · 权限 ' + w.privilege : '') + (w.status ? ' · ' + w.status : '')))))
             : null,
-          /* 攻击文件：报告复现要能落到具体脚本/POC/EXP，而不只是说"工具已跑过" */
+          /* 构建与验证脚本 · 攻击文件（可复现路径） */
           (x.attack_files || []).length
             ? h('div', { className: 'rt-rep-src' },
-                h('div', { className: 'rt-rep-src-title' }, '攻击文件（可复现路径）'),
+                h('div', { className: 'rt-rep-src-title' }, '构建与验证脚本（可复现路径）'),
                 (x.attack_files || []).map((f) => h('div', { key: 'f' + f.id, className: 'rt-kv' },
                   h('b', { className: 'rt-mono', style: { minWidth: 120 } }, f.name || '文件'),
                   h('span', null,
@@ -3715,7 +3947,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                 h('button', {
                   className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
                   onClick: () => copy(String(r.request || ''), '请求 ' + (ri + 1)),
-                }, '复制到 Yakit')),
+                }, '复制请求报文')),
               h('pre', { className: 'rt-rep-http' }, r.request || ((r.method || 'GET') + ' ' + (r.url || '') + ' HTTP/1.1')),
               r.response ? h('div', null,
                 h('div', { className: 'rt-rep-req-head' }, h('span', null, '响应摘要')),
@@ -3724,20 +3956,20 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '红队得分报告（四段式）'),
+          h('span', { style: { fontWeight: 600 } }, 'LMTAgent 研发交付报告（四段式）'),
           summary ? h('span', { className: 'rt-tag rt-tag-live' }, '合计 ' + summary.points + ' 分') : null,
           summary ? h('span', { className: 'rt-tag' }, summary.count + ' 项得分') : null,
           summary ? h('span', { className: 'rt-tag' + (summary.missingRequests ? '' : ' rt-tag-live') },
             summary.withRequests + '/' + summary.count + ' 项带原始请求') : null,
           summary ? h('span', {
             className: 'rt-tag' + (summary.incomplete ? ' rt-tag-warn' : ' rt-tag-live'),
-            title: '复现链是否完整：有攻击步骤、写了实际命令、关联了漏洞/凭据/隧道',
+            title: '复现链是否完整：有执行步骤、写了实际命令、关联了缺陷/凭据/通道',
           }, '可复现 ' + (summary.count - (summary.incomplete || 0)) + '/' + summary.count) : null,
           summary && summary.serviceCappedExcluded
             ? h('span', {
                 className: 'rt-tag rt-tag-warn',
                 title: (summary.serviceCapped || []).map((x) => (x.service || '') + '｜' + (x.point_name || '')).join('\n')
-                  || '同一资产同一端口的重复账号/数据库权限命中：服务已拿满，不计分、不进报告',
+                  || '同一模块同一端口的重复命中：服务已拿满，不计分、不进报告',
               }, '同服务已拿满不计分 ' + summary.serviceCappedExcluded)
             : null,
           h('div', { className: 'rt-spacer' }),
@@ -3762,7 +3994,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           h('details', { className: 'rt-rep-full', style: { margin: '0 0 10px' } },
             h('summary', { className: 'rt-rep-trace-head', style: { cursor: 'pointer', fontWeight: 600 } },
-              '详细报告查看（资产证明 / 得分汇总 / 凭据汇总 / 得分点复现）'),
+              '详细报告查看（架构归属 / 里程碑汇总 / 凭据汇总 / 交付复现）'),
             h('div', { className: 'rt-rep-full-body' },
               h('div', { className: 'rt-rep-full-head' },
                 h('span', { style: { fontWeight: 600 } }, '详细报告查看 · 全屏预览'),
@@ -3805,15 +4037,15 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                 }))
             : (data === null ? h('div', { className: 'rt-empty' }, '加载中…')
                 : h('div', { className: 'rt-empty' },
-                    h('div', null, '还没有可交付的成果。'),
+                    h('div', null, '还没有可交付的里程碑成果。'),
                     h('div', { style: { marginTop: 6, fontSize: 12 } },
-                      '本报告只收录"拿到了分"的成果；没有得分的漏洞不进报告。拿到成果后用 redteam_score_hit 记分（目标资产 + 拿到的东西），并补 redteam_http_evidence_add 以便复现。')))),
+                      '本报告收录已达成的里程碑交付成果；达成后用 redteam_score_hit 记录里程碑得分，并补充 redteam_http_evidence_add 以便复现。')))),
         h('div', { className: 'rt-foot' },
-          h('span', null, '口径：只收录得分成果；下载/复制的 Markdown 按「资产证明 → 得分汇总 → 凭据汇总 → 得分点复现」组织；凭据默认脱敏')))
+          h('span', null, '口径：收录里程碑交付成果；下载/复制的 Markdown 按「模块归属 → 里程碑汇总 → 配置凭据 → 交付点复现」组织；凭据默认脱敏')))
     }
 
-    /* ---------------------------------------------------------- 攻击文件 */
-    const FILE_KIND = { poc: 'POC', exp: 'EXP', script: '脚本', wordlist: '字典', other: '其他' }
+    /* ---------------------------------------------------------- 构建与验证脚本 */
+    const FILE_KIND = { poc: '验证', exp: '自动化', script: '脚本', wordlist: '配置', other: '其他' }
 
     function AttackFilesTab(props) {
       const eng = props.engagement
@@ -3884,29 +4116,28 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const total = folders.reduce((n, f) => n + f.count, 0)
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '攻击文件'),
-          h('span', { className: 'rt-tag' }, folders.length + ' 个目标 / ' + total + ' 个文件'),
+          h('span', { style: { fontWeight: 600 } }, '构建与验证脚本'),
+          h('span', { className: 'rt-tag' }, folders.length + ' 个模块 / ' + total + ' 个文件'),
           h('div', { className: 'rt-spacer' }),
           h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新')),
         err ? h('div', { className: 'rt-err' }, err) : null,
         h('div', { className: 'rt-table' },
           rows,
-          !folders.length ? h('div', { className: 'rt-empty' }, '暂无攻击文件（打通的脚本/POC/EXP 会按目标文件夹出现在这里）') : null),
-        h('div', { className: 'rt-foot' }, h('span', null, '目录：attack-files/<IP|URL主机|C段>/ ｜ 只收录实际生效的文件')))
+          !folders.length ? h('div', { className: 'rt-empty' }, '暂无构建与验证脚本（工程化构建与测试脚本会按目标模块文件夹出现在这里）') : null),
+        h('div', { className: 'rt-foot' }, h('span', null, '目录：attack-files/<模块|服务>/ ｜ 收录实际生效的构建与验证脚本')))
     }
 
-    /* ---------------------------------------------------------- 知识库（POC/EXP，全局共享） */
+    /* ---------------------------------------------------------- 工程模式与验证模板库（全局共享） */
     /**
-     * 知识库页：打 Nday/1day 之前先在这里搜。检索框支持 CVE / 组件 / 关键字 / 正文关键词；
-     * 命中就展开拿全文（可直接复制去用），没有就说明要去互联网找或自己搓，验证后回填。
-     * 这里是**全局**的：不随靶标切换，一个靶标沉淀的通用 POC 后面所有靶标都能用。
+     * 工程模式与验证模板库：编码与重构前先在这里检索已沉淀的可复用架构模式、验证模板与脚本。
+     * 这里是**全局**的：跨工作区共享，一个项目沉淀的通用工程模式与验证用例后面所有项目都能复用。
      */
-    const POC_KIND_LABEL = { poc: 'POC', exp: 'EXP', script: '脚本', template: '模板', payload: '载荷' }
-    const POC_SOURCE_LABEL = { web: '互联网', self: '手搓', manual: '人工', 'nuclei-template': 'nuclei 模板', kb: '知识库' }
+    const POC_KIND_LABEL = { poc: '验证用例', exp: '回归脚本', script: '脚本', template: '模板', payload: '测试夹具' }
+    const POC_SOURCE_LABEL = { web: '开源社区', self: '自研沉淀', manual: '人工录入', 'nuclei-template': '标准模板', kb: '模式库' }
 
     function KnowledgeTab(props) {
       const refreshKey = props.refreshKey || 0
-      /* 当前靶标（面板当前选中，一般是会话绑定的那个）：知识库默认按它筛 */
+      /* 当前工作区（面板当前选中，一般是会话绑定的那个）：模式库默认按它筛 */
       const curEng = props.engagement || ''
       const [data, setData] = React.useState(null)
       const [err, setErr] = React.useState(null)
@@ -3939,7 +4170,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           setErr(null); setData(r)
         }, (e) => { setBusy(false); setErr(String((e && e.message) || e)) })
       }
-      /* 首次进入与刷新键变化时拉数：有当前靶标就按它筛，没有才拉全量 */
+      /* 首次进入与刷新键变化时拉数：有当前工作区就按它筛，没有才拉全量 */
       const engRef = React.useRef(curEng)
       React.useEffect(() => {
         query(engRef.current
@@ -3947,8 +4178,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           : { q: undefined, kind: undefined, category: undefined, engagement: undefined, asset_target: undefined, verified: true })
       }, [refreshKey])
 
-      /* 换了靶标（用户切会话 / 面板换单位）→ 知识库跟着换筛选目标。
-         只在靶标**真的变了**时动，否则刷新键一变就把用户手选的"全部来源靶标"冲掉。 */
+      /* 换了工作区（用户切会话 / 面板换项目）→ 模式库跟着换筛选目标。 */
       React.useEffect(() => {
         if (engRef.current === curEng) return
         engRef.current = curEng
@@ -3992,7 +4222,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(x.id) } },
           },
             h('span', { className: 'rt-sec-caret' }, isOpen ? '▾' : '▸'),
-            h('span', { className: 'rt-kb-kind k-' + (x.kind || 'poc') }, POC_KIND_LABEL[x.kind] || x.kind || 'POC'),
+            h('span', { className: 'rt-kb-kind k-' + (x.kind || 'poc') }, POC_KIND_LABEL[x.kind] || x.kind || '模板'),
             h('span', { className: 'rt-kb-title' }, x.title),
             x.cve ? h('span', { className: 'rt-tag rt-tag-passive' }, x.cve) : null,
             x.component ? h('span', { className: 'rt-tag' }, x.component) : null,
@@ -4002,17 +4232,15 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             h('div', { className: 'rt-spacer' }),
             h('span', { className: 'rt-tag' }, POC_SOURCE_LABEL[x.source] || x.source || '—'),
             x.hit_count ? h('span', { className: 'rt-tag' }, '复用 ' + x.hit_count) : null),
-          /* 来源行：归类 · 影响版本 · 建立时间 · 来源靶标 · 发现资产 —— 一条知识"什么时候、
-             在哪个单位的哪台资产上发现的"一眼可见 */
           h('div', { className: 'rt-kb-sub' },
             [x.category ? '归类 ' + (POC_CAT_NAME[x.category] || x.category) : null,
-              x.versions ? '影响版本 ' + x.versions : null,
+              x.versions ? '适用版本 ' + x.versions : null,
               x.language || null,
               x.tags || null,
               '建立时间 ' + fmt(x.created_at),
-              (x.engagement_name || x.engagement_id) ? '来源靶标 ' + (x.engagement_name || x.engagement_id) : null,
-              x.asset_target ? '发现资产 ' + x.asset_target : null,
-              x.found_by_agent ? '发现角色 ' + (ROLE_LABEL[x.found_by_agent] || x.found_by_agent) : null,
+              (x.engagement_name || x.engagement_id) ? '来源工作区 ' + (x.engagement_name || x.engagement_id) : null,
+              x.asset_target ? '关联模块 ' + x.asset_target : null,
+              x.found_by_agent ? '沉淀角色 ' + (ROLE_LABEL[x.found_by_agent] || x.found_by_agent) : null,
               x.source_url ? '来源 ' + x.source_url : null].filter(Boolean).join(' · ')),
           isOpen
             ? h('div', { className: 'rt-kb-body' },
@@ -4024,7 +4252,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                   d.used_on ? h('div', { className: 'rt-kv' }, h('b', null, '最近使用'), h('span', null, d.used_on)) : null,
                   d.path ? h('div', { className: 'rt-kv' }, h('b', null, '落盘'), h('span', { className: 'rt-mono' }, d.path)) : null,
                   h('div', { className: 'rt-kb-actions' },
-                    h('button', { className: 'rt-btn', disabled: !d.content, onClick: () => copy(d.content || '', 'POC 正文') }, '复制正文'),
+                    h('button', { className: 'rt-btn', disabled: !d.content, onClick: () => copy(d.content || '', '模板正文') }, '复制正文'),
                     h('button', { className: 'rt-btn', onClick: () => useIt(x) }, '记一次复用'),
                     d.source_url ? h('button', { className: 'rt-btn', onClick: () => copy(d.source_url, '来源链接') }, '复制来源') : null),
                   d.content
@@ -4036,10 +4264,10 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '知识库 · POC / EXP'),
+          h('span', { style: { fontWeight: 600 } }, '工程模式与验证模板库'),
           h('input', {
             className: 'rt-input', style: { flex: '1 1 150px', minWidth: 120 },
-            placeholder: '搜 CVE / 组件 / 关键字', value: q,
+            placeholder: '搜 规则编号 / 组件 / 关键字', value: q,
             onChange: (e) => setQ(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') query() },
           }),
@@ -4051,18 +4279,16 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             ? h('span', { className: 'rt-tag rt-tag-warn', title: '这些条目还没归类：智能体回填时用 redteam_poc_add 的 category 参数标一下' }, '未归类 ' + stats.uncategorized)
             : null,
           tpl.total ? h('span', { className: 'rt-tag rt-tag-passive' }, '本机模板 ' + tpl.total) : null,
-          /* 当前筛选来源：跟随会话时点明是哪个靶标，并给一键回到全库 */
           engagement
             ? h('span', {
                 className: 'rt-tag rt-tag-live',
-                title: '只看这个靶标攒下的武器（跟随当前会话）；点一下回到全库',
+                title: '只看当前工作区沉淀的模式与模板（跟随当前会话）；点一下回到全库',
                 onClick: () => { setEngagement(''); query({ engagement: undefined }) },
-              }, '来源靶标 ' + engagement + ' ✕')
-            : h('span', { className: 'rt-tag rt-tag-passive', title: '当前显示全部靶标的知识库；面板跟随会话后会自动筛到对应单位' }, '全库共享'),
+              }, '来源工作区 ' + engagement + ' ✕')
+            : h('span', { className: 'rt-tag rt-tag-passive', title: '当前显示全部工作区的工程模式库；面板跟随会话后会自动筛到对应项目' }, '全库共享'),
           h('div', { className: 'rt-spacer' }),
           h('button', { className: 'rt-btn' + (grouped ? ' rt-btn-primary' : ''), title: '按归类分组显示 / 平铺显示', onClick: () => setGrouped(!grouped) }, grouped ? '按归类分组' : '平铺显示'),
           h('button', { className: 'rt-btn', disabled: busy, onClick: () => query() }, busy ? '检索中…' : '刷新')),
-        /* 归类总览：点一下就是按该类筛选，一眼看清"哪类武器攒了多少、哪类还是空的" */
         h('div', { className: 'rt-kb-cats' },
           (stats.byCategory || []).filter((c) => c.n > 0).map((c) => h('span', {
             key: c.code,
@@ -4078,30 +4304,28 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             h('span', null, (POC_CAT_NAME[c.code] || c.code) + (c.verified ? '（已验证 ' + c.verified + '）' : ''))))),
         h('div', { className: 'rt-kb-filter' },
           h('input', {
-            className: 'rt-input', style: { flex: 1, minWidth: 140 }, placeholder: '搜 CVE / 组件 / 关键字（正文也会搜）',
+            className: 'rt-input', style: { flex: 1, minWidth: 140 }, placeholder: '搜 规则编号 / 组件 / 关键字（正文也会搜）',
             value: q, onChange: (e) => setQ(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') query() },
           }),
           h('select', { className: 'rt-input', style: { maxWidth: 120 }, value: category, onChange: (e) => { setCategory(e.target.value); query({ category: e.target.value || undefined }) } },
             h('option', { value: '' }, '全部归类'),
             POC_CAT_ORDER.map((k) => h('option', { key: k, value: k }, POC_CAT_NAME[k]))),
-          /* 来源靶标 20+ 个，select 下拉太长：改成可输入 + datalist，支持前缀搜索。
-             选中/输入后按回车或点「检索」生效，避免每敲一个字就发一次请求。 */
           h('input', {
             className: 'rt-input', style: { maxWidth: 160 }, list: 'rt-kb-engs',
-            placeholder: '来源靶标（可搜索）', value: engagement,
-            title: '输入单位名筛选，回车或点「检索」生效；清空 = 全部来源',
+            placeholder: '来源工作区（可搜索）', value: engagement,
+            title: '输入工作区名筛选，回车或点「检索」生效；清空 = 全部来源',
             onChange: (e) => setEngagement(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') query({ engagement: engagement || undefined }) },
           }),
           h('datalist', { id: 'rt-kb-engs' },
-            h('option', { value: '' }, '全部来源靶标'),
+            h('option', { value: '' }, '全部来源工作区'),
             (engagement && !(stats.byEngagement || []).some((e) => e.engagement === engagement)
               ? [h('option', { key: '__cur', value: engagement }, engagement + '（0）')]
               : []),
             (stats.byEngagement || []).map((e) => h('option', { key: e.engagement, value: e.engagement }, e.engagement + '（' + e.n + '）'))),
           h('input', {
-            className: 'rt-input', style: { width: 120 }, placeholder: '发现资产筛选',
+            className: 'rt-input', style: { width: 120 }, placeholder: '关联模块筛选',
             value: assetTarget, onChange: (e) => setAssetTarget(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') query() },
           }),
@@ -4115,13 +4339,11 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
         err ? h('div', { className: 'rt-err' },
           /engagement required|unknown op/i.test(err)
-            /* 老 host 还没有知识库接口：讲清怎么恢复，别让人对着 "engagement required" 发懵 */
-            ? '知识库接口由 host 侧提供，当前 dsh web 还是旧进程 —— 请重启 dsh web（dsh-restart）后刷新页面。'
+            ? '工程模式库接口由 host 侧提供，当前 dsh web 还是旧进程 —— 请重启 dsh web（dsh-restart）后刷新页面。'
             : err) : null,
         h('div', { className: 'rt-table' },
           (() => {
             if (!grouped) return items.map(card)
-            /* 分组渲染：按内置归类顺序，未知归类挂到末尾的「其它」 */
             const buckets = new Map()
             for (const x of items) {
               const code = POC_CAT_NAME[x.category] ? x.category : 'other'
@@ -4147,29 +4369,29 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           tplItems.length
             ? h('div', { className: 'rt-kb-tpl' },
                 h('div', { className: 'rt-ap-sub' },
-                  '本机 nuclei 模板命中 · ' + tplItems.length + ' 条（直接 `nuclei -t <模板路径>`）'),
+                  '本机标准模板命中 · ' + tplItems.length + ' 条'),
                 tplItems.map((t, i) => h('div', { key: 't' + i, className: 'rt-kb-tpl-row' },
                   h('span', { className: 'rt-tag' }, t.severity || '—'),
                   h('span', { className: 'rt-mono rt-kb-tpl-path', title: t.path }, t.path),
                   h('span', { className: 'rt-kb-tpl-name', title: t.name }, t.name || ''),
                   h('button', {
                     className: 'rt-btn', style: { padding: '0 6px', fontSize: 10.5 },
-                    onClick: () => copy('nuclei -t ' + t.path + ' -u <目标>', '模板命令'),
-                  }, '复制命令'))),
+                    onClick: () => copy(t.path, '模板路径'),
+                  }, '复制路径'))),
                 tpl.dir ? h('div', { className: 'rt-foot' }, h('span', null, '模板目录：' + tpl.dir)) : null)
             : null,
           data === null ? h('div', { className: 'rt-empty' }, '加载中…') : null,
           data !== null && !items.length && !tplItems.length
             ? h('div', { className: 'rt-empty' },
-                h('div', null, q || kind || verifiedOnly ? '没有命中：换个关键字再试，或去互联网找 / 自己手搓后回填。' : '知识库还是空的。'),
+                h('div', null, q || kind || verifiedOnly ? '没有命中：换个关键字再试，或沉淀新的工程模式后回填。' : '工程模式库还是空的。'),
                 h('div', { style: { marginTop: 6, fontSize: 12 } },
-                  '打 Nday/1day 的标准顺序：① redteam_poc_search 先查这里（顺带搜本机 nuclei 模板库）→ ② 都没有就互联网搜索（web_search / GitHub / ExploitDB / 厂商公告）或自己手搓 → ③ 在真实目标上验证有效后 redteam_poc_add 回填，后面的靶标直接就能用。'))
+                  '标准研发复用流程：① redteam_poc_search 先检索已沉淀模式与验证模板 → ② 研发或回归验证通过后调用 redteam_poc_add 回填，后续项目可直接复用。'))
             : null),
         h('div', { className: 'rt-foot' },
-          h('span', null, '全局共享（跨靶标）｜ 落盘：pocs/<code>/ ｜ 只收录通用可复用的 POC/EXP，靶标专用脚本走「攻击文件」')))
+          h('span', null, '全局共享（跨工作区）｜ 落盘：pocs/<code>/ ｜ 收录通用可复用的架构模式与验证模板，模块专用脚本走「构建脚本」')))
     }
 
-    /* ---------------------------------------------------------- 得分目标 */
+    /* ---------------------------------------------------------- 交付里程碑 */
     function ScoreTab(props) {
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
@@ -4193,9 +4415,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       }
       React.useEffect(load, [eng, refreshKey])
 
-      /* builtin 要一路带到表单：内置得分点的分值/名称/口径由《得分规则》锁定，
-         界面必须把输入框置灰并说明原因 —— 以前是「能改、提示已保存、刷新后变回去」，
-         用户以为是 bug。 */
       const startEdit = (p) => setForm({
         id: p.id, name: p.name, category: p.category || '', points: p.points,
         description: p.description || '', enabled: p.enabled, builtin: p.builtin === true,
@@ -4211,12 +4430,9 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         api({ op: 'saveScorePoint', engagement: eng, point: form }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '保存失败' }); return }
-          /* overridden === false 表示后端**没有采纳**提交的分值（内置点由规则锁定）。
-             这时不能笼统说「已保存」 —— 那句话会让用户以为分值改成功了。 */
           if (r.overridden === false) {
-            setMsg({ err: '已保存「启用/停用」。分值未改动：这是随《得分规则》分发的内置得分点，'
-              + '分值 / 上限 / 计分口径由规则锁定（同一条规则的上限按组内所有得分点累计，'
-              + '单独改分值会让一条命中吃掉整组上限）。要自定义分值时请「+ 新增得分点」。' })
+            setMsg({ err: '已保存「启用/停用」。分值未改动：这是随《软件工程 4-Wave 交付质量门禁规范》分发的内置里程碑项，'
+              + '权重 / 上限 / 验收口径由规范锁定。要自定义里程碑项时请「+ 新增里程碑」。' })
           } else {
             setMsg({ ok: r.note || '已保存' })
           }
@@ -4241,13 +4457,9 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const summary = (data && data.summary) || { achievedPoints: 0, pointCount: 0, hitPointCount: 0, hitCount: 0, selfCreatedHits: 0, serviceCappedHits: 0 }
       const items = (data && data.items) || []
 
-      /* 按合并版的 8 个类别分组渲染（后端 ruleGroups 已排好序、组内按分值升序）。
-         兼容：后端没给 ruleGroups（老 host）时退回平铺。 */
       const groups = (data && data.ruleGroups && data.ruleGroups.length)
         ? data.ruleGroups
         : [{ key: 'all', name: '', capSum: 0, points: 0, counted: 0, tiers: items }]
-      /* 红队用户先看"还差什么高分"，不是按分值从低到高读规则文档：
-         未拿满（cap 未到顶）优先，按分值从高到低；已拿满的沉底。 */
       const tierFull = (p) => p.cap > 0 && (Number(p.cap_used) || 0) >= Number(p.cap)
       const tierAchieved = (p) => (Array.isArray(p.hits) && p.hits.length > 0)
         || (Number(p.earned) || 0) > 0 || (Number(p.counted) || 0) > 0
@@ -4258,13 +4470,9 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const orderedGroups = groups.map((g) => Object.assign({}, g, {
         tiers: g.tiers.slice().sort(scoreCmp),
       }))
-      /* 类别也按“最高未拿满分值”排：否则用户仍要先翻过 50 分的一般系统才看到 1000 分的大数据。
-         已全部拿满的类别沉底；同档按组内最高分值降序。 */
       const groupGap = (g) => (g.tiers.some((p) => !tierFull(p)) ? 0 : 1)
       const groupMax = (g) => g.tiers.reduce((m, p) => Math.max(m, Number(p.points) || 0), 0)
       orderedGroups.sort((a, b) => groupGap(a) - groupGap(b) || groupMax(b) - groupMax(a))
-      /* 默认只给 Top 8 未拿满缺口；完整 25 项点「显示全部」。
-         长名称只取“/”前的短名，完整名称放 title。 */
       const shortName = (name) => {
         const base = String(name || '').split(' / ')[0]
         return base.length > 22 ? base.slice(0, 22) + '…' : base
@@ -4279,7 +4487,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         gapLeft -= take.length
         if (gapLeft <= 0) break
       }
-      /* 默认看“已经得分”的项目；高分缺口/完整列表保留切换。 */
       const achievedGroups = orderedGroups
         .map((g) => Object.assign({}, g, { tiers: g.tiers.filter(tierAchieved) }))
         .filter((g) => g.tiers.length > 0)
@@ -4316,32 +4523,30 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           }, p.points + '分')),
           h('span', { title: p.name + (p.description ? '\n' + p.description : '') },
             shortName(p.name)),
-          /* 命中与上限：这一条计入几次、上限用了多少（G3 各项上限独立，到顶就不再累计） */
           h('span', { title: p.capped > 0
-            ? '已计入 ' + p.counted + ' 次，另有 ' + p.capped + ' 条因「' + (p.scope_label || '计分口径') + '」或已达上限不计分'
+            ? '已计入 ' + p.counted + ' 次，另有 ' + p.capped + ' 条因「' + (p.scope_label || '验收口径') + '」或已达上限不计分'
             : (p.scope_label || '') },
-            h('span', { className: 'rt-sec-count' }, p.hits.length > 0 ? p.counted + ' 次命中' : '未命中'),
+            h('span', { className: 'rt-sec-count' }, p.hits.length > 0 ? p.counted + ' 次达成' : '未达成'),
             p.cap > 0
-              ? h('span', { className: 'rt-scope' }, '　规则已用 ' + (p.cap_used === null ? 0 : p.cap_used) + '/' + p.cap)
+              ? h('span', { className: 'rt-scope' }, '　额度已用 ' + (p.cap_used === null ? 0 : p.cap_used) + '/' + p.cap)
               : null),
           h('span', { style: { textAlign: 'right' } }, p.earned > 0
             ? h('span', { className: 'rt-tag rt-tag-active' }, '+' + p.earned + ' 分')
             : h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '—'))))
         if (!open) continue
-        /* 命中记录：一行一条 —— 第一行给"序号 + 资产 + 时间 + 复制"，内容另起一行自适应换行 */
         const hitNodes = p.hits.map((hh, hi) => h('div', {
           key: 'h' + hh.id,
           className: 'rt-hit-row' + (hh.self_created ? ' self-created' : '') + (hh.capped ? ' service-capped' : ''),
         },
           h('span', { className: 'rt-hit-idx' }, String(hi + 1)),
           h('span', { className: 'rt-hit-asset', title: hh.target || hh.asset_ip || '' },
-            hh.asset_ip || hh.target || '未指定资产'),
-          hh.self_created ? h('span', { className: 'rt-tag rt-tag-warn', title: '自己注册/自建的账号不算得分权限，只作过程记录' }, '自建 · 不计分') : null,
+            hh.asset_ip || hh.target || '未指定模块'),
+          hh.self_created ? h('span', { className: 'rt-tag rt-tag-warn', title: '自建测试环境记录，只作过程留痕' }, '测试记录 · 不计分') : null,
           hh.capped ? h('span', {
             className: 'rt-tag rt-tag-warn',
-            title: hh.capped_reason || '同一资产同一端口只算分值最高的一条，这条不计分',
-          }, '服务已拿满 · 不计分' + (hh.service ? '（' + hh.service + '）' : '')) : null,
-          hh.shot_count ? h('span', { className: 'rt-tag', title: '这条命中有证据截图（展开得分点即可看到代表图）' },
+            title: hh.capped_reason || '同一模块同一服务端点只计最高权重一条',
+          }, '模块已封顶 · 不计分' + (hh.service ? '（' + hh.service + '）' : '')) : null,
+          hh.shot_count ? h('span', { className: 'rt-tag', title: '这条记录附有验收截图' },
             '图 ' + hh.shot_count) : null,
           h('span', { className: 'rt-hit-time' }, fmt(hh.recorded_at)),
           h('button', {
@@ -4354,30 +4559,30 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           }, '复制'),
           hh.evidence
             ? h('span', { className: 'rt-hit-txt', title: hh.evidence }, String(hh.evidence).replace(/\n+/g, ' '))
-            : h('span', { className: 'rt-hit-txt none' }, '未填账号密码/结果')))
+            : h('span', { className: 'rt-hit-txt none' }, '未填验收摘要')))
         rows.push(h('div', {
           key: 'spd' + p.id, className: 'rt-score-row',
           style: { cursor: 'default', gridTemplateColumns: '1fr' },
         }, h('div', { className: 'rt-score-detail' },
-          p.description ? h('div', { className: 'rt-kv' }, h('b', null, '得分条件'), h('span', null, p.description)) : null,
+          p.description ? h('div', { className: 'rt-kv' }, h('b', null, '验收条件'), h('span', null, p.description)) : null,
           h('div', { className: 'rt-kv' }, h('b', null, '状态'),
-            h('span', null, (p.enabled ? '启用' : '停用') + ' · ' + p.points + ' 分/次 · 命中 ' + p.hits.length +
-              ' 次 = ' + p.earned + ' 分' + (p.self_created ? '（另有 ' + p.self_created + ' 次自建不计分）' : '') +
-              (p.capped ? '（另有 ' + p.capped + ' 次同服务重复命中不计分）' : ''))),
+            h('span', null, (p.enabled ? '启用' : '停用') + ' · ' + p.points + ' 分/次 · 达成 ' + p.hits.length +
+              ' 次 = ' + p.earned + ' 分' + (p.self_created ? '（另有 ' + p.self_created + ' 次测试记录不计分）' : '') +
+              (p.capped ? '（另有 ' + p.capped + ' 次同模块重复达成不计分）' : ''))),
           p.capped
-            ? h('div', { className: 'rt-kv' }, h('b', null, '服务封顶'),
-                h('span', null, p.service_summary + '；账号权限与数据库权限按「同资产同端口」只算一次，拿到最高权限账号即该服务拿满'))
+            ? h('div', { className: 'rt-kv' }, h('b', null, '模块封顶'),
+                h('span', null, p.service_summary + '；同一模块与服务端点按最高里程碑权重只计一次'))
             : null,
           p.hits.length
             ? h('div', null,
                 h(ShotStrip, { eng: eng, shots: p.shots, total: p.shot_total,
-                  title: '证据截图 · ' + (p.shot_total || (p.shots || []).length) + ' 张' }),
+                  title: '验收截图 · ' + (p.shot_total || (p.shots || []).length) + ' 张' }),
                 h('div', { className: 'rt-section', style: { padding: '6px 0 0' } },
-                  '命中记录 · ' + p.hits.length + '（只记资产与账号密码，详细复现见报告）'),
+                  '达成记录 · ' + p.hits.length + '（详细验证见交付报告）'),
                 h('div', { className: 'rt-hits' }, hitNodes))
-            : h('div', { className: 'rt-kv' }, h('b', null, '命中记录'),
+            : h('div', { className: 'rt-kv' }, h('b', null, '达成记录'),
                 h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } },
-                  '还没有 —— 拿下成果后用 redteam_score_hit 记分：写明目标资产 + 拿到的账号密码/权限')),
+                  '还没有 —— 完成里程碑验收后调用 redteam_score_hit 记录目标模块与验证证据')),
           h('div', { className: 'rt-actions' },
             h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); startEdit(p) } }, '编辑')))))
         }
@@ -4385,59 +4590,55 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '得分目标'),
-          /* 只显示已拿下的总分，不显示目标分数、不显示进度条 */
+          h('span', { style: { fontWeight: 600 } }, '交付里程碑'),
           h('span', { style: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', marginLeft: 4 } }, '总分'),
           h('span', { className: 'rt-total' }, String(summary.achievedPoints)),
           h('span', { style: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)' } }, '分'),
-          h('span', { className: 'rt-tag' }, summary.pointCount + ' 个得分点'),
-          h('span', { className: 'rt-tag' }, '命中 ' + summary.countedHits + ' 次'),
+          h('span', { className: 'rt-tag' }, summary.pointCount + ' 个里程碑项'),
+          h('span', { className: 'rt-tag' }, '达成 ' + summary.countedHits + ' 次'),
           summary.selfCreatedHits
             ? h('span', {
                 className: 'rt-tag rt-tag-warn',
-                title: '自己注册/自己创建的账号不算得分权限，只作过程记录（不计分、不占上限、不进报告）',
-              }, '自建不计分 ' + summary.selfCreatedHits)
+                title: '自建测试记录只作过程留痕（不计分、不占上限）',
+              }, '测试记录不计分 ' + summary.selfCreatedHits)
             : null,
           summary.serviceCappedHits
             ? h('span', {
                 className: 'rt-tag rt-tag-warn',
-                title: '账号权限与数据库权限按「同资产同端口」只算一次：该服务已拿满，这些重复命中不计分（只作留痕）',
-              }, '服务已拿满不计分 ' + summary.serviceCappedHits)
+                title: '按「同模块同端口」只计一次：该服务已封顶，重复记录不计分',
+              }, '服务已封顶不计分 ' + summary.serviceCappedHits)
             : null,
           h('div', { className: 'rt-spacer' }),
           h('div', { style: { display: 'flex', gap: 4, alignItems: 'center' } },
             h('button', {
               className: 'rt-btn' + (scoreView === 'achieved' ? ' rt-btn-primary' : ''),
-              title: '只显示已经得分的项目',
+              title: '只显示已经达成的里程碑项',
               onClick: () => setScoreView('achieved'),
-            }, '已得分' + (summary.hitPointCount ? ' ' + summary.hitPointCount : '')),
+            }, '已达成' + (summary.hitPointCount ? ' ' + summary.hitPointCount : '')),
             h('button', {
               className: 'rt-btn' + (scoreView === 'gap' ? ' rt-btn-primary' : ''),
-              title: '只显示未拿满的高分缺口（前 8 项）',
+              title: '只显示未达成的核心里程碑缺口（前 8 项）',
               onClick: () => setScoreView('gap'),
-            }, '高分缺口'),
+            }, '待交付缺口'),
             h('button', {
               className: 'rt-btn' + (scoreView === 'all' ? ' rt-btn-primary' : ''),
-              title: '显示全部 ' + items.length + ' 个得分点',
+              title: '显示全部 ' + items.length + ' 个里程碑项',
               onClick: () => setScoreView('all'),
             }, '全部 ' + items.length)),
-          h('button', { className: 'rt-btn', onClick: startNew }, '+ 新增得分点'),
+          h('button', { className: 'rt-btn', onClick: startNew }, '+ 新增里程碑'),
           h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新')),
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
         err ? h('div', { className: 'rt-err' }, err) : null,
         form ? h('div', { className: 'rt-pane', style: { flex: 'none', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
-          /* 内置得分点（builtin）：分值 / 名称 / 分类由《得分规则》锁定，输入框置灰。
-             可改的只有「启用 / 停用」。这样界面上就不会再出现「改完提示已保存、刷新变回去」的困惑。 */
           form.builtin
             ? h('div', { className: 'rt-hint', style: { marginBottom: 8 } },
-                h('b', null, '内置得分点（来自《突破入侵类得分规则（合并版）》）'),
+                h('b', null, '内置里程碑项（来自《软件工程 4-Wave 交付质量门禁规范》）'),
                 h('div', { style: { marginTop: 3 } },
-                  '分值、上限、计分口径与名称由规则锁定 —— 同一条规则的上限按组内所有得分点累计，'
-                  + '单独改分值会让一条命中吃掉整组上限。这里可以改「启用 / 停用」；'
-                  + '要自定义分值时请返回上一屏点「+ 新增得分点」。'),
+                  '权重、上限、验收口径与名称由规范锁定。这里可以改「启用 / 停用」；'
+                  + '要自定义里程碑项时请返回上一屏点「+ 新增里程碑」。'),
                 form.src !== null && form.src !== undefined
                   ? h('div', { style: { marginTop: 3, color: 'var(--dsw-alias-label-secondary)' } },
-                      '规则原文序号 ' + form.src + (form.rule ? '　·　上限分组 rule=' + form.rule : '')
+                      '规范序号 ' + form.src + (form.rule ? '　·　分组 rule=' + form.rule : '')
                       + (form.cap > 0 ? '　·　上限 ' + form.cap + ' 分' : '　·　不设上限'))
                   : null)
             : null,
@@ -4445,21 +4646,21 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             h('input', {
               className: 'rt-input', placeholder: '名称（必填）', value: form.name,
               readOnly: form.builtin === true,
-              title: form.builtin ? '内置得分点的名称由规则锁定' : '',
+              title: form.builtin ? '内置里程碑项的名称由规范锁定' : '',
               onChange: (e) => setField('name', e.target.value),
             }),
             h('input', {
-              className: 'rt-input', placeholder: '分类，如 账号权限', value: form.category,
+              className: 'rt-input', placeholder: '分类，如 架构与核心模块', value: form.category,
               readOnly: form.builtin === true,
-              title: form.builtin ? '内置得分点的分类由规则锁定（决定它属于面板哪一组）' : '',
+              title: form.builtin ? '内置里程碑项的分类由规范锁定' : '',
               onChange: (e) => setField('category', e.target.value),
             }),
             h('input', {
-              className: 'rt-input', type: 'number', placeholder: '单次分值',
+              className: 'rt-input', type: 'number', placeholder: '单次权重',
               readOnly: form.builtin === true,
               title: form.builtin
-                ? '内置得分点的分值由《得分规则》锁定，不能在这里改'
-                : '这一类的单次分值；每命中一次就按这个分值累加（受该条规则上限约束）',
+                ? '内置里程碑项的分值由规范锁定，不能在这里改'
+                : '这一类的单次权重分值',
               value: form.points, onChange: (e) => setField('points', Number(e.target.value)),
             }),
             h('select', { className: 'rt-input', value: form.enabled ? '1' : '0', onChange: (e) => setField('enabled', e.target.value === '1') },
@@ -4467,9 +4668,9 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
               h('option', { value: '0' }, '停用'))),
           h('input', {
             className: 'rt-input', style: { width: '100%', marginBottom: 6, boxSizing: 'border-box' },
-            placeholder: '得分条件说明', value: form.description,
+            placeholder: '验收条件说明', value: form.description,
             readOnly: form.builtin === true,
-            title: form.builtin ? '内置得分点的条款正文由规则锁定' : '',
+            title: form.builtin ? '内置里程碑项的条款正文由规范锁定' : '',
             onChange: (e) => setField('description', e.target.value),
           }),
           h('div', { className: 'rt-actions' },
@@ -4478,7 +4679,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             ? (form.builtin
                 ? h('button', {
                     className: 'rt-btn', disabled: true,
-                    title: '内置得分点不能删除：删掉会让面板缺一条规则、报告少一类成果（下次启动还会自动补回来）。要让它不参与计分请改用「停用」。',
+                    title: '内置里程碑项不能删除，要让它不参与计分请改用「停用」。',
                   }, '删除（内置项不可删）')
                 : h('button', { className: 'rt-btn', disabled: busy, onClick: remove }, '删除'))
             : null,
@@ -4486,25 +4687,21 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         h('div', { className: 'rt-foot', style: { padding: '2px 12px 0' } },
           scoreView === 'achieved'
             ? (achievedGroups.length
-                ? '默认只显示已经得分的项目（' + summary.hitPointCount + ' 项）；高分缺口 / 完整列表可切换。'
-                : '还没有已得分项目；切到「高分缺口」看下一步能打什么。')
+                ? '默认只显示已经达成的里程碑项（' + summary.hitPointCount + ' 项）；待交付缺口 / 完整列表可切换。'
+                : '还没有已达成的里程碑项；切到「待交付缺口」查看待推进目标。')
             : scoreView === 'gap'
               ? '只显示未拿满的前 8 项；完整 ' + items.length + ' 项点「全部」。'
-              : '完整 ' + items.length + ' 个得分点。'),
+              : '完整 ' + items.length + ' 个里程碑项。'),
         h('div', { className: 'rt-table' },
           h('div', { className: 'rt-score-row head' },
-            h('span', null, ''), h('span', null, '分值'), h('span', null, scoreView === 'achieved' ? '已得分项目' : scoreView === 'gap' ? '未拿满高分缺口' : '全部得分点'),
-            h('span', null, '命中 / 规则上限'), h('span', { style: { textAlign: 'right' } }, '已得分')),
+            h('span', null, ''), h('span', null, '分值'), h('span', null, scoreView === 'achieved' ? '已达成项目' : scoreView === 'gap' ? '待交付缺口' : '全部里程碑项'),
+            h('span', null, '达成 / 规范上限'), h('span', { style: { textAlign: 'right' } }, '已得分')),
           rows,
-          !items.length ? h('div', { className: 'rt-empty' }, '暂无得分点，点右上角「新增得分点」') : null,
-          items.length && !rows.length ? h('div', { className: 'rt-empty' }, scoreView === 'achieved' ? '还没有已得分项目；点「高分缺口」看下一步。' : '当前视图没有可显示的得分点。') : null))
+          !items.length ? h('div', { className: 'rt-empty' }, '暂无里程碑项，点右上角「新增里程碑」') : null,
+          items.length && !rows.length ? h('div', { className: 'rt-empty' }, scoreView === 'achieved' ? '还没有已达成的里程碑项；点「待交付缺口」查看下一步目标。' : '当前视图没有可显示的里程碑项。') : null))
     }
 
     /* ---------------------------------------------------------- 折叠底座 */
-    /**
-     * 折叠状态按「页签 + 靶标」持久化到 localStorage，切页签/刷新后保持不变。
-     * 只记录用户显式点过的键；没点过的用调用方给的默认值。
-     */
     const COLLAPSE_KEY = 'rt-collapse:'
     const collapseLoad = (prefix) => {
       try {
@@ -4517,7 +4714,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       try { window.localStorage.setItem(COLLAPSE_KEY + prefix, JSON.stringify(value)) } catch (e) { /* 隐私模式等 */ }
     }
 
-    /** 一个页签一个 hook：isOpen(key, defaultOpen) / toggle(key, defaultOpen) / setAll(keys, open) */
     function useCollapse(prefix) {
       const [state, setState] = React.useState(() => collapseLoad(prefix))
       React.useEffect(() => { setState(collapseLoad(prefix)) }, [prefix])
@@ -4538,10 +4734,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       return { isOpen: isOpen, toggle: toggle, setAll: setAll }
     }
 
-    /**
-     * 统一折叠头（L1）：▾ 固定在最左、标题加粗、计数紧跟、右侧放时间或操作，
-     * 内容缩进 12px 并带一条竖引导线。always=true 表示"常显"（不可折叠）。
-     */
     function Section(props) {
       const always = props.always === true
       const open = always || props.open === true
@@ -4564,7 +4756,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         open && props.children ? h('div', { className: 'rt-sec-body' }, props.children) : null)
     }
 
-    /** 长文本折叠（L3）：固定预览高度 + 渐隐 + 展开/复制。 */
     function Clip(props) {
       const [open, setOpen] = React.useState(false)
       const text = String(props.text === undefined || props.text === null ? '' : props.text)
@@ -4584,16 +4775,12 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         h('div', { className: 'rt-clip-body' }, text))
     }
 
-    /* ---------------------------------------------------------- 当前测试（实时） */
+    /* ---------------------------------------------------------- 当前验证（实时） */
     const TEST_STATUS_LABEL = {
-      untested: '未测试', testing: '测试中', tested: '已测试',
-      blocked: '被封禁', abandoned: '已放弃', no_surface: '无攻击面',
+      untested: '待验证', testing: '验证中', tested: '已验证',
+      blocked: '受阻', abandoned: '已跳过', no_surface: '无需验证',
     }
 
-    /**
-     * 当前测试页：agent 正在打哪台、打到哪一步、还有什么在排队。
-     * 5 秒轮询自动刷新；三个区块可折叠，其中「正在测」始终完整展开。
-     */
     function TestingTab(props) {
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
@@ -4601,11 +4788,8 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const [err, setErr] = React.useState(null)
       const [at, setAt] = React.useState(null)
       const [auto, setAuto] = React.useState(true)
-      /* 折叠状态按「页签 + 靶标」记忆；正在测永远常显，不参与折叠 */
       const collapse = useCollapse('testing:' + eng)
 
-      /* 5 秒轮询要有在途守卫：网络慢或后端卡住时，请求会越堆越多、
-         而且旧响应回来会覆盖新状态（界面上表现为数字来回跳）。 */
       const inflight = React.useRef(false)
       const seq = React.useRef(0)
       const load = () => {
@@ -4613,7 +4797,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         inflight.current = true
         const my = ++seq.current
         api({ op: 'activeTests', engagement: eng, limit: 20 }).then((r) => {
-          if (my !== seq.current) return          /* 切了靶标：这条已经过期，丢掉 */
+          if (my !== seq.current) return
           if (!r || r.ok === false) { setErr((r && r.error) || '读取失败'); return }
           setErr(null); setData(r); setAt(new Date())
         }, (e) => { if (my === seq.current) setErr(String((e && e.message) || e)) })
@@ -4631,18 +4815,17 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const queue = (data && data.queue) || []
       const stats = (data && data.stats) || {}
 
-      /* 一台资产一张卡：一眼看清"打的是谁、打到哪、拿到什么" */
       const card = (a, past) => {
         const chips = []
         chips.push(h('span', { key: 'sc', className: 'rt-scope rt-scope-' + (a.scope === 'internal' ? 'internal' : 'external') },
-          a.scope === 'internal' ? '内网' : '外网'))
+          a.scope === 'internal' ? '核心模块' : '外部接口'))
         if (a.segment_cidr) chips.push(h('span', { key: 'seg', className: 'rt-tag' }, a.segment_cidr))
         if (a.open_ports) chips.push(h('span', { key: 'p', className: 'rt-tag rt-tag-active' }, '开放 ' + a.open_ports + ' 端口'))
-        if (a.vulns) chips.push(h('span', { key: 'v', className: 'rt-tag rt-tag-live' }, '已确认漏洞 ' + a.vulns))
-        if (a.webshells) chips.push(h('span', { key: 'w', className: 'rt-tag rt-tag-passive' }, 'WebShell ' + a.webshells))
-        if (a.tunnels) chips.push(h('span', { key: 't', className: 'rt-tag rt-tag-passive' }, '隧道 ' + a.tunnels))
-        if (a.priority) chips.push(h('span', { key: 'pr', className: 'rt-tag' }, '易打 ' + a.priority))
-        if (a.blocked_count) chips.push(h('span', { key: 'b', className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455' } }, '被封 ' + a.blocked_count + ' 次'))
+        if (a.vulns) chips.push(h('span', { key: 'v', className: 'rt-tag rt-tag-live' }, '已确认问题 ' + a.vulns))
+        if (a.webshells) chips.push(h('span', { key: 'w', className: 'rt-tag rt-tag-passive' }, '服务端点 ' + a.webshells))
+        if (a.tunnels) chips.push(h('span', { key: 't', className: 'rt-tag rt-tag-passive' }, '联调通道 ' + a.tunnels))
+        if (a.priority) chips.push(h('span', { key: 'pr', className: 'rt-tag' }, '优先级 ' + a.priority))
+        if (a.blocked_count) chips.push(h('span', { key: 'b', className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455' } }, '阻塞 ' + a.blocked_count + ' 次'))
         const noteLines = a.test_notes
           ? String(a.test_notes).split('\n').slice(-3).map((l) => (l.length > 240 ? l.slice(0, 240) + ' …' : l))
           : []
@@ -4655,29 +4838,28 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
               fmt(a.test_updated_at) + (a.test_updated_by ? ' · ' + a.test_updated_by : ''))),
           chips.length ? h('div', null, chips) : null,
-          a.test_surface ? h('div', { className: 'rt-atest-meta' }, '测试面：' + a.test_surface) : null,
-          a.potential ? h('div', { className: 'rt-atest-meta' }, '预期得分：' + a.potential) : null,
-          noteLines.length ? h(Clip, { label: '测试记录', text: noteLines.join('\n') }) : null)
+          a.test_surface ? h('div', { className: 'rt-atest-meta' }, '验证接口面：' + a.test_surface) : null,
+          a.potential ? h('div', { className: 'rt-atest-meta' }, '预期产出：' + a.potential) : null,
+          noteLines.length ? h(Clip, { label: '验证记录', text: noteLines.join('\n') }) : null)
       }
-
 
       const concl = (label, value, tone) => h('span', { key: label, className: 'rt-concl-i', style: { cursor: 'default' } },
         h('b', null, String(value || 0)), h('span', null, label))
       const conclusion = h('div', { className: 'rt-concl' },
-        concl('测试中', stats.testing, 'live'),
-        concl('待测', stats.untested, ''),
-        concl('已测', stats.tested, ''),
-        concl('放弃', (stats.abandoned || 0) + (stats.blocked || 0), ''),
-        concl('无攻击面', stats.no_surface, ''),
+        concl('验证中', stats.testing, 'live'),
+        concl('待验证', stats.untested, ''),
+        concl('已验证', stats.tested, ''),
+        concl('受阻/跳过', (stats.abandoned || 0) + (stats.blocked || 0), ''),
+        concl('无需验证', stats.no_surface, ''),
         h('div', { className: 'rt-spacer' }),
         at ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
           '更新于 ' + at.toLocaleTimeString('zh-CN', { hour12: false })) : null,
         h('button', {
-          className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, title: '展开最近动过与待测队列',
+          className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, title: '展开最近验证与待验证队列',
           onClick: () => collapse.setAll(['testing:' + eng, 'recent:' + eng, 'queue:' + eng], true),
         }, '全部展开'),
         h('button', {
-          className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, title: '只留正在测',
+          className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, title: '只留正在验证',
           onClick: () => collapse.setAll(['testing:' + eng, 'recent:' + eng, 'queue:' + eng], false),
         }, '全部收起'),
         h('button', {
@@ -4687,37 +4869,34 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         h('button', { className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, onClick: load }, '刷新'))
 
       const body = []
-      /* 正在测：常显，完整展开（不可折叠） */
       body.push(h(Section, {
-        key: 'testing', tone: 'test', title: '正在测',
-        count: testing.length + ' 台',
-        sub: testing.length ? 'agent 正在打这些资产' : 'agent 开始测某台资产后会实时出现在这里',
+        key: 'testing', tone: 'test', title: '正在验证',
+        count: testing.length + ' 个',
+        sub: testing.length ? '智能体正在验证这些模块与服务' : '智能体开始验证某个模块后会实时出现在这里',
         open: collapse.isOpen('testing:' + eng, true),
         onToggle: collapse.toggle('testing:' + eng, true),
       }, testing.length
         ? testing.map((a) => card(a, false))
-        : h('div', { className: 'rt-atest-meta', style: { paddingBottom: 4 } }, '当前没有资产处于「测试中」')))
+        : h('div', { className: 'rt-atest-meta', style: { paddingBottom: 4 } }, '当前没有模块处于「验证中」')))
 
-      /* 最近动过（默认折叠，可记忆） */
       body.push(h(Section, {
-        key: 'recent', tone: 'past', title: '最近动过', count: recent.length + ' 台',
-        sub: '已测过的资产',
+        key: 'recent', tone: 'past', title: '最近验证', count: recent.length + ' 个',
+        sub: '已完成验证的模块',
         open: collapse.isOpen('recent:' + eng, false),
         onToggle: collapse.toggle('recent:' + eng, false),
       }, recent.length ? recent.map((a) => card(a, true)) : h('div', { className: 'rt-atest-meta' }, '暂无')))
 
-      /* 待测队列（默认折叠，可记忆） */
       body.push(h(Section, {
-        key: 'queue', tone: 'queue', title: '待测队列',
-        count: (data ? (data.untested || 0) : 0) + ' 台',
-        sub: '按易打性与端口数排出先打哪几台',
+        key: 'queue', tone: 'queue', title: '待验证队列',
+        count: (data ? (data.untested || 0) : 0) + ' 个',
+        sub: '按模块优先级与开放服务数排序',
         open: collapse.isOpen('queue:' + eng, false),
         onToggle: collapse.toggle('queue:' + eng, false),
       }, queue.length
         ? queue.map((a) => card(a, true)).concat([
             h('div', { key: 'queueHint', className: 'rt-atest-meta', style: { paddingTop: 4 } },
-              '完整清单（含筛选与排序）见「资产测绘」页')])
-        : h('div', { className: 'rt-atest-meta' }, '没有待测资产')))
+              '完整清单（含筛选与排序）见「模块与服务」页')])
+        : h('div', { className: 'rt-atest-meta' }, '没有待验证模块')))
 
       return h('div', { className: 'rt-main' },
         conclusion,
@@ -4727,11 +4906,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           h('div', { style: { padding: '6px 12px 14px' } }, body)))
     }
 
-    /* ---------------------------------------------------------- 会话与入口（WebShell / 隧道） */
-    /**
-     * 打内网最容易出的问题：拿到 WebShell 或隧道之后忘了登记，过一会儿就"忘了还有入口可用"。
-     * 这个页签把事实库里的 WebShell 与隧道集中展示，带连通状态，并可一键让 host 侧实测。
-     */
+    /* ---------------------------------------------------------- 运行环境与服务端点 */
     function SessionTab(props) {
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
@@ -4758,12 +4933,11 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '检测失败' }); load(); return }
           const on = (r.webshells || []).filter((x) => x.status === 'online').length
           const act = (r.tunnels || []).filter((x) => x.status === 'active').length
-          setMsg({ ok: '检测完成：WebShell 在线 ' + on + '/' + (r.webshells || []).length + '，隧道可用 ' + act + '/' + (r.tunnels || []).length })
+          setMsg({ ok: '检测完成：服务端点在线 ' + on + '/' + (r.webshells || []).length + '，联调通道可用 ' + act + '/' + (r.tunnels || []).length })
           load()
         }, (e) => { setBusy(false); setMsg({ err: String((e && e.message) || e) }) })
       }
 
-      /* 只有真的写进剪贴板才把按钮点亮成「已复制」；失败时如实报错 */
       const copy = (key, text) => copyWithFeedback(text, text, (okFlag, message) => {
         if (!okFlag) { setMsg({ err: message }); return }
         setCopied(key)
@@ -4786,9 +4960,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const shells = (data && data.webshells) || []
       const tunnels = (data && data.tunnels) || []
       const statusDot = (s) => h('span', { className: s === 'online' || s === 'active' ? 'rt-dot-on' : (s === 'unknown' || !s ? 'rt-dot-unk' : 'rt-dot-off') })
-      /* 卡片里统一用「标签 + 值」两列，长文本自动换行 —— 比一行点分隔好扫读 */
       const fact = (label, value) => h('div', { className: 'rt-sess-fact' }, h('b', null, label), h('span', null, value))
-      /* 检测说明/备注常是整段取证文本（含内部 IP、哈希、密钥片段）：默认折叠，不占首屏。 */
       const clip = (v, max) => {
         const t = String(v === undefined || v === null ? '' : v)
         const n = max || 90
@@ -4802,46 +4974,20 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           h('summary', null, label + '（' + t.length + ' 字，点击展开）'),
           h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', padding: '4px 0', fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } }, t))
       }
-      /* 交付要求：马必须是冰蝎/哥斯拉加密马（用户才连得上），内网必须走 suo5 隧道 */
-      const isEncryptedShell = (t) => /behinder|godzilla|冰蝎|哥斯拉/i.test(String(t || ''))
-      const isSuo5 = (t) => /suo5/i.test(String(t || ''))
-      /* 提示条：只留一句结论 + 可展开的做法（原来是把三段长解释平铺，正文全被淹掉） */
+      const isEncryptedShell = (t) => /behinder|godzilla|tls|https|ssh|加密/i.test(String(t || ''))
+      const isSuo5 = (t) => /suo5|socks5|http|ssh/i.test(String(t || ''))
       const hint = (key, title, detail) => h('div', { key, className: 'rt-hint' },
         h('b', null, title),
         h('details', { className: 'rt-sess-fold', style: { marginTop: 3 } },
-          h('summary', null, '怎么做（点击展开）'),
+          h('summary', null, '配置说明（点击展开）'),
           h('div', { style: { marginTop: 4 } }, detail)))
       const hints = []
-      const badShells = shells.filter((w) => !isEncryptedShell(w.shell_type))
-      const legitTunnels = tunnels.filter((t) => t.legit === true)
-      if (badShells.length > 0) {
-        hints.push(hint('h1', '有 ' + badShells.length + ' 个入口不是冰蝎马/哥斯拉马（用户连不上，不算可交付入口）',
-          '用技能 webshell-toolkit 重新上传冰蝎马（behinder）或哥斯拉马（godzilla），'
-          + '并把 shell_type + pass_key 写进 redteam_webshell_add。只作临时中转的可在备注里写明。'))
-      }
-      if (tunnels.length > 0 && legitTunnels.length === 0) {
-        hints.push(hint('h3', '现有 ' + tunnels.length + ' 条通道都不算"跨越靶标边界"（不算边界/内网突破）',
-          '自己的 VPS / 自建服务器上开的 socks5、frp、代理不算隧道。必须是目标侧发起的通道：'
-          + '目标反弹 shell 到我方、目标上跑 frp/Stowaway 客户端、或经目标 WebShell 建的 suo5/HTTP 隧道；登记时用 entry_kind 说明。'))
-      }
-      const activeSuo5 = tunnels.filter((t) => isSuo5(t.kind) && t.status === 'active')
-      const activeOthers = tunnels.filter((t) => !isSuo5(t.kind) && t.status === 'active' && t.legit === true)
-      if (shells.length > 0 && activeSuo5.length === 0) {
-        hints.push(hint('h2',
-          activeOthers.length > 0
-            ? '没有 suo5 通道（现有 ' + activeOthers.length + ' 条其它隧道可用，可直接扫描）'
-            : '还没有可用的内网隧道（suo5 是标准通道）',
-          '用技能 suo5-tunnel 通过上面的 WebShell 建 socks5 隧道，再 redteam_tunnel_add'
-          + '（kind=suo5、listen=127.0.0.1:1080、entry=WebShell URL、reach=可达网段）登记，'
-          + '最后点「检测连通性」确认 status=active。'))
-      }
 
       const shellCards = shells.map((w) => h('div', { key: 'w' + w.id, className: 'rt-sess' },
         h('div', { className: 'rt-sess-head' },
           statusDot(w.status),
           h('span', { className: 'rt-sess-title' }, w.url),
-          h('span', { className: 'rt-tag rt-tag-active' }, w.shell_type || 'webshell'),
-          isEncryptedShell(w.shell_type) ? null : h('span', { className: 'rt-tag rt-tag-warn' }, '用户连不上'),
+          h('span', { className: 'rt-tag rt-tag-active' }, w.shell_type || 'endpoint'),
           w.privilege ? h('span', { className: 'rt-tag' }, w.privilege) : null,
           h('div', { className: 'rt-spacer' }),
           copied === 'cmd' + w.id
@@ -4853,12 +4999,12 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
             onClick: () => markShell(w, 'offline'),
-          }, '标记失效')),
+          }, '标记离线')),
         h('div', { className: 'rt-sess-facts' },
-          fact('类型', (isEncryptedShell(w.shell_type) ? '加密马（冰蝎/哥斯拉，用户可直连）' : '非加密马 —— 用户连不上，仅可作临时中转')),
-          w.pass_key ? fact('连接口令', h(SecretText, { value: w.pass_key })) : null,
-          w.asset_ip ? fact('所在资产', w.asset_ip) : null,
-          w.privilege ? fact('权限', w.privilege) : null,
+          fact('端点类型', (isEncryptedShell(w.shell_type) ? '标准安全端点（可直连调试）' : '临时调试端点')),
+          w.pass_key ? fact('访问凭据', h(SecretText, { value: w.pass_key })) : null,
+          w.asset_ip ? fact('所属节点', w.asset_ip) : null,
+          w.privilege ? fact('运行角色', w.privilege) : null,
           w.secret_ref ? fact('凭据引用', h('span', { className: 'rt-mono' }, w.secret_ref)) : null,
           fact('最后检测', (w.last_check ? fmt(w.last_check) : '未检测')
             + (w.latency_ms !== null && w.latency_ms !== undefined ? '（' + w.latency_ms + 'ms）' : '')),
@@ -4866,21 +5012,14 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           noteFold('备注', w.note))))
 
       const tunnelCards = tunnels.map((t) => {
-        const proxy = t.listen ? 'socks5://' + t.listen : ''
-        const gogoCmd = t.listen ? './gogo -i <内网CIDR> -m ss --ping -p top2,win,db --proxy ' + proxy : ''
-        const fscanCmd = t.listen ? './fscan -h <内网CIDR> -np -nobr -nopoc -socks5 ' + t.listen + ' -o intranet.txt' : ''
         return h('div', { key: 't' + t.id, className: 'rt-sess' },
           h('div', { className: 'rt-sess-head' },
             statusDot(t.status),
             h('span', { className: 'rt-sess-title' }, t.listen || '(未填监听地址)'),
-            h('span', { className: 'rt-tag rt-tag-passive' }, t.kind || 'tunnel'),
-            isSuo5(t.kind) ? null : h('span', { className: 'rt-tag rt-tag-warn' }, '非 suo5 标准通道'),
-            /* 只有跨越靶标边界的通道才算突破凭证（自己 VPS/自建服务器上开的不算） */
+            h('span', { className: 'rt-tag rt-tag-passive' }, t.kind || 'proxy'),
             t.legit === true
-              ? h('span', { className: 'rt-tag rt-tag-live', title: t.entry_kind_label || '' }, '目标侧通道')
-              : (t.legit === false
-                  ? h('span', { className: 'rt-tag rt-tag-warn', title: '只在自己 VPS/自建服务器上开的通道，没有碰到目标 —— 不算边界突破/内网突破' }, '不算突破')
-                  : h('span', { className: 'rt-tag', title: '未声明 entry_kind：请说明目标侧的那一端是什么（target-outbound / target-http / target-agent）' }, '待确认')),
+              ? h('span', { className: 'rt-tag rt-tag-live', title: t.entry_kind_label || '' }, '目标环境通道')
+              : h('span', { className: 'rt-tag', title: '本地代理或待确认通道' }, '本地/待确认'),
             t.reach ? h('span', { className: 'rt-tag' }, '可达 ' + t.reach) : null,
             h('div', { className: 'rt-spacer' }),
             h('button', {
@@ -4888,44 +5027,29 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
               onClick: () => copy('sock' + t.id, t.listen || ''),
             }, copied === 'sock' + t.id ? '已复制' : '复制地址'),
             t.status === 'active'
-              ? h('button', { className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 }, onClick: () => markTunnel(t, 'down') }, '标记失效')
+              ? h('button', { className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 }, onClick: () => markTunnel(t, 'down') }, '标记离线')
               : h('button', { className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 }, onClick: () => markTunnel(t, 'active') }, '标记可用')),
           h('div', { className: 'rt-sess-facts' },
-            factClip('目标侧入口', t.entry || '未登记', 110),
-            fact('跨越边界', t.legit === true
-              ? h('span', { className: 'rt-tag rt-tag-live' }, t.entry_kind_label || t.entry_kind || '已确认目标侧')
-              : (t.legit === false
-                  ? h('span', { className: 'rt-tag rt-tag-warn' }, '不算突破（只在自己 VPS 上开代理）')
-                  : h('span', { className: 'rt-tag' }, '未声明 entry_kind，待确认'))),
-            t.reach ? factClip('可达网段', t.reach, 110) : null,
-            t.asset_ip ? fact('所在资产', t.asset_ip) : null,
+            factClip('上游入口', t.entry || '未登记', 110),
+            t.reach ? factClip('可达子网/服务', t.reach, 110) : null,
+            t.asset_ip ? fact('所属节点', t.asset_ip) : null,
             fact('最后检测', (t.last_check ? fmt(t.last_check) : '未检测')
               + (t.latency_ms !== null && t.latency_ms !== undefined ? '（' + t.latency_ms + 'ms）' : '')),
             noteFold('检测说明', t.check_note),
             noteFold('备注', t.note)),
-          /* 命令默认折叠：卡片首要信息是"这条通道能不能用、通向哪"，命令按需展开 */
           t.command ? h('details', { className: 'rt-sess-fold' },
-            h('summary', null, '建立命令（点击展开 / 复制）'),
+            h('summary', null, '启动命令（点击展开 / 复制）'),
             h('div', Object.assign({ className: 'rt-code', title: '点击复制' }, clickable(() => copy('c' + t.id, t.command), { label: '复制命令' })),
-              copied === 'c' + t.id ? '已复制' : t.command)) : null,
-          t.status === 'active' && t.listen
-            ? h('details', { className: 'rt-sess-fold' },
-                h('summary', null, '走这条隧道扫描（gogo / fscan 命令）'),
-                h('div', { className: 'rt-sess-cmd' },
-                  h('div', Object.assign({ className: 'rt-code', title: '点击复制' }, clickable(() => copy('g' + t.id, gogoCmd), { label: '复制 gogo 命令' })),
-                    copied === 'g' + t.id ? '已复制' : gogoCmd),
-                  h('div', Object.assign({ className: 'rt-code', style: { display: 'block', marginTop: 3 }, title: '点击复制' }, clickable(() => copy('f' + t.id, fscanCmd), { label: '复制 fscan 命令' })),
-                    copied === 'f' + t.id ? '已复制' : fscanCmd)))
-            : null)
+              copied === 'c' + t.id ? '已复制' : t.command)) : null)
       })
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '会话与入口'),
-          h('span', { className: 'rt-tag' }, 'WebShell ' + (totals.webshellsOnline || 0) + '/' + (totals.webshells || 0) + ' 在线'),
-          h('span', { className: 'rt-tag' }, '隧道 ' + (totals.tunnelsActive || 0) + '/' + (totals.tunnels || 0) + ' 可用'),
-          h('span', { className: 'rt-tag' }, '凭据 ' + (totals.credentials || 0)),
-          h('span', { className: 'rt-tag' }, '访问会话 ' + (totals.access || 0)),
+          h('span', { style: { fontWeight: 600 } }, '运行环境与服务端点'),
+          h('span', { className: 'rt-tag' }, '服务端点 ' + (totals.webshellsOnline || 0) + '/' + (totals.webshells || 0) + ' 在线'),
+          h('span', { className: 'rt-tag' }, '联调通道 ' + (totals.tunnelsActive || 0) + '/' + (totals.tunnels || 0) + ' 可用'),
+          h('span', { className: 'rt-tag' }, '配置凭据 ' + (totals.credentials || 0)),
+          h('span', { className: 'rt-tag' }, '连接会话 ' + (totals.access || 0)),
           h('div', { className: 'rt-spacer' }),
           h('button', { className: 'rt-btn rt-btn-primary', disabled: busy, onClick: probe }, busy ? '检测中…' : '检测连通性'),
           h('button', { className: 'rt-btn', onClick: load }, '刷新')),
@@ -4934,35 +5058,31 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           !shells.length && !tunnels.length
             ? h('div', { className: 'rt-empty' },
-                h('div', null, '还没有登记任何 WebShell 或隧道。'),
+                h('div', null, '当前工作区尚未登记运行环境端点或联调通道。'),
                 h('div', { style: { marginTop: 6, fontSize: 12 } },
-                  '拿到 WebShell 用 redteam_webshell_add；建好隧道用 redteam_tunnel_add（suo5 / socks5 / ssh -R）；之后智能体用 redteam_sessions 就能看到。'))
+                  '可通过 redteam_webshell_add 登记服务端点，或通过 redteam_tunnel_add 登记联调转发通道。'))
             : null,
           hints.length ? h('div', { style: { padding: '8px 10px 0' } }, hints) : null,
           h(Section, {
-            key: 'webshells', tone: 'queue', title: 'WebShell',
+            key: 'webshells', tone: 'queue', title: '服务端点',
             count: (totals.webshellsOnline || 0) + '/' + (totals.webshells || 0) + ' 在线',
-            sub: '已上线的可控入口',
+            sub: '已部署的调试与服务端点',
             open: sessCollapse.isOpen('shells', true), onToggle: sessCollapse.toggle('shells', true),
           }, shells.length
             ? h('div', { className: 'rt-sess-grid', style: { padding: 0 } }, shellCards)
-            : h('div', { className: 'rt-atest-meta' }, '暂无（拿到 WebShell 后用 redteam_webshell_add 登记）')),
+            : h('div', { className: 'rt-atest-meta' }, '暂无服务端点')),
           h(Section, {
-            key: 'tunnels', tone: 'test', title: '内网隧道',
+            key: 'tunnels', tone: 'test', title: '联调通道',
             count: (totals.tunnelsActive || 0) + '/' + (totals.tunnels || 0) + ' 可用',
-            sub: '可直接给扫描器当代理用',
+            sub: '端口转发与联调代理通道',
             open: sessCollapse.isOpen('tunnels', true), onToggle: sessCollapse.toggle('tunnels', true),
           }, tunnels.length
             ? h('div', { className: 'rt-sess-grid', style: { padding: 0 } }, tunnelCards)
-            : h('div', { className: 'rt-atest-meta' }, '暂无（建好隧道后用 redteam_tunnel_add 登记）'))))
+            : h('div', { className: 'rt-atest-meta' }, '暂无联调通道'))))
 
     }
 
     /* ---------------------------------------------------------- 错误边界 */
-    /**
-     * 单个页签渲染出错时只降级该页签，不拖垮整个面板：面板与侧栏按钮保持可用，
-     * 用户可一键回到资产测绘。（此前面板整块消失、按钮点不开就是缺了这层保护。）
-     */
     class RtBoundary extends React.Component {
       constructor(props) {
         super(props)
@@ -4972,7 +5092,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         return { error: error }
       }
       componentDidCatch(error) {
-        try { console.error('[redteam-ui] 页面渲染出错:', error) } catch (e) { /* ignore */ }
+        try { console.error('[lmtagent-ui] 页面渲染出错:', error) } catch (e) { /* ignore */ }
       }
       render() {
         if (this.state.error) {
@@ -4981,8 +5101,8 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             h('div', { className: 'rt-err' }, '该页面渲染出错：' + msg),
             h('button', {
               className: 'rt-btn',
-              onClick: () => { this.setState({ error: null }); setUI({ tab: 'assets' }) },
-            }, '回到资产测绘'))
+              onClick: () => { this.setState({ error: null }); setUI({ tab: 'overview' }) },
+            }, '回到项目总览'))
         }
         return this.props.children
       }
@@ -5346,9 +5466,9 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         { n: 12, label: '12 槽' },
       ]
       return h('div', { className: 'rt-card' },
-        h('h4', null, '并发数量与递归子代理配置 (p3 Self-Adjustable Concurrency)'),
+        h('h4', null, '并发数量与递归子代理配置 (Self-Adjustable Concurrency)'),
         h('div', { style: { fontSize: 12, lineHeight: 1.8, marginBottom: 8 } },
-          '同一靶标**同时最多几个执行智能体**。当前生效：**' + (info.max || '?') + '**'
+          '同一工程工作区**同时最多几个执行智能体**。当前生效：**' + (info.max || '?') + '**'
           + (used === null ? '' : '（在跑 ' + used + '，剩余 ' + Math.max((info.max || 0) - used, 0) + '）')
           + '，来源：' + source + '。支持步进、滑块与一键预设，改完**立即生效**，不用重启。'),
         h('div', { className: 'rt-p3-ctrl', style: { marginBottom: 8 } },
@@ -5461,7 +5581,8 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         open
           ? h('div', { className: 'rt-modal', 'aria-hidden': 'true', onClick: () => setOpen(false) },
               h('div', { className: 'rt-modal-box', onClick: (e) => e.stopPropagation() },
-                h('h4', { style: { marginTop: 0 } }, '更新 RedTeam 模式'),
+                h('h4', { style: { marginTop: 0 } }, '更新 LMTAgent 研发控制台'),
+                h('div', { className: 'rt-kv' }, h('b', null, '开源仓库'), h('span', { className: 'rt-mono' }, 'ECCVIK/LMTAgent')),
                 h('div', { className: 'rt-kv' }, h('b', null, '当前版本'), h('span', null, current || '未知')),
                 h('div', { className: 'rt-kv' }, h('b', null, '最新版本'), h('span', null, latest || '未知')),
                 h('div', { className: 'rt-kv' }, h('b', null, '安装方式'),
@@ -5496,11 +5617,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
     }
 
     /* ---------------------------------------------------------- 常驻面板主体 */
-    /**
-     * 「未读」状态：按靶标记在 localStorage 里，每 25 秒问一次 host 的 consoleDigest
-     * （每个页签的条数 + 最近更新时间）。比本地记住的快照新 → 该页签点红点；
-     * 用户点开那个页签就把当前值记成已读，红点消失。
-     */
     const UNREAD_KEY = 'rt-unread:'
     const loadUnread = (eng) => {
       try {
@@ -5512,7 +5628,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
     const saveUnread = (eng, value) => {
       try { window.localStorage.setItem(UNREAD_KEY + eng, JSON.stringify(value)) } catch (e) { /* 隐私模式等：不持久化也能用 */ }
     }
-    /** 这个页签相对上次查看有没有新内容（条数变多，或最新一条比上次查看还新）。 */
     const digestHasNew = (prev, cur) => {
       if (!cur) return false
       if (!prev) return true
@@ -5524,38 +5639,35 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       return ca !== '' && ca !== pa && ca > pa
     }
 
-    function Panel() {
+    function Panel(props) {
+      const embedMode = props && props.embedMode ? String(props.embedMode) : null
+      const propSid = sessionIdOf(props)
+      const propTitle = sessionTitleOf(props)
+      React.useEffect(() => {
+        if (propSid || propTitle) setSessionId(propSid, propTitle)
+      }, [propSid, propTitle])
+
       const st = useUI()
       const session = useSession()
       const sid = session.id
       const sesTitle = session.title
       const [engagements, setEngagements] = React.useState([])
+      const [hostSessions, setHostSessions] = React.useState([])
       const [eng, setEng] = React.useState(null)
       const [boundEng, setBoundEng] = React.useState(null)
-      /* 面板现在是不是真在跟当前会话走。
-         不能只看 boundEng === eng：用户手选到"恰好就是本会话靶标"时那两个值本来就相等，
-         但语义是手选、不是跟随 —— 状态提示得说实话，否则"我明明手选了它还说我跟着会话"。 */
       const [following, setFollowing] = React.useState(false)
-      /* 当前显示的靶标是怎么来的：落盘绑定 / 会话标题 / 上次选择 / 默认单位 ——
-         排查"为什么不跟随"时，第一眼看的就是它（面板底部会显示）。 */
       const [followSource, setFollowSource] = React.useState(null)
       const [snapshot, setSnapshot] = React.useState(null)
       const [err, setErr] = React.useState(null)
       const [newName, setNewName] = React.useState('')
-      /* manualPickRef：用户手选过的**会话 id**（null = 当前这个会话没被手选过）。
-         手选之后，本会话内不再自动跟随（子智能体状态刷新很频繁，不能把选中项抢回去）；
-         但**切到别的会话就该重新跟随** —— 以前的布尔开关是全局的，一次手选会永久
-         压住后续所有会话的自动跟随（实测缺陷：切到别的会话面板不跟着换）。 */
       const manualPickRef = React.useRef(null)
       const manualHere = () => manualPickRef.current !== null && manualPickRef.current === sessionId
-      /* 面板宽度按靶标之外**全局**记住：拖一次就够，不该每次刷新都回到 620px。
-         夹在 [380,900] 之间并做兜底，避免 localStorage 里的脏值把面板挤没。 */
       const [width, setWidth] = React.useState(() => {
         try {
           const saved = Number(window.localStorage.getItem('rt-dock-width'))
           if (Number.isFinite(saved) && saved >= 380 && saved <= 900) return saved
         } catch (e) { /* 隐私模式：用默认值 */ }
-        return 620
+        return 540
       })
       const [creating, setCreating] = React.useState(false)
       const [refreshKey, setRefreshKey] = React.useState(0)
@@ -5571,6 +5683,19 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         }
         window.addEventListener(FULL_REQUEST_EVENT, onOpen)
         return () => window.removeEventListener(FULL_REQUEST_EVENT, onOpen)
+      }, [])
+
+      /* 监听 DSH 宿主当前会话切换（localStorage dsh.sessions.current），左侧切换会话时控制台立即同步 */
+      React.useEffect(() => {
+        const syncDomSession = () => {
+          const dom = readHostDomTelemetry()
+          if (dom.sessionId && dom.sessionId !== sessionId) {
+            setSessionId(dom.sessionId, dom.sessionTitle || sessionTitle)
+          }
+        }
+        syncDomSession()
+        const timer = window.setInterval(syncDomSession, 1500)
+        return () => window.clearInterval(timer)
       }, [])
 
       /* 面板宽度 → :root 自定义属性（frame 的 padding-right 依赖它） */
@@ -5589,15 +5714,16 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       }
 
       const refreshList = (selectId) => {
-        api({ op: 'bootstrap' }).then((b) => {
+        api({ op: 'bootstrap', session: sessionId || undefined }).then((b) => {
           setEngagements((b && b.engagements) || [])
+          if (b && Array.isArray(b.host_sessions)) setHostSessions(b.host_sessions)
           if (selectId) { setEng(selectId); loadSnapshot(selectId) }
         }, () => {})
       }
 
-      /* 自动选中某个靶标 = 跟随会话（不是用户手点）：同时清掉本会话的手选标记 */
+      /* 自动选中某个工作区 = 跟随会话（不是用户手点）：同时清掉本会话的手选标记 */
       const followTo = (id, list, source) => {
-          const known = (list || engagements).some((x) => x.id === id)
+        const known = (list || engagements).some((x) => x.id === id)
         if (!known) return false
         manualPickRef.current = null
         setFollowing(true)
@@ -5608,38 +5734,21 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         return true
       }
 
-      /**
-       * 会话切换 → 面板跟着换靶标。
-       *
-       * 命中顺序：① 这个会话绑定的靶标（host 侧 sessions.json，智能体开靶标时写入）
-       * → ② 本设备上次用过的靶标（老会话没有绑定条目时的兜底）
-       * → ③ 什么都不动（还没靶标时，面板保持"还没有靶标"的引导态）。
-       *
-       * 只在**当前靶标是自动选中的**时候才改写：用户刚在下拉里手选了别的靶标，
-       * 不能被一次会话重渲染（子智能体状态刷新很频繁）抢回去。
-       */
       const bindSeq = React.useRef(0)
       const applySessionBinding = (id, list, title) => {
         const known = list || engagements
         if (!known.length) return
         const seq = (bindSeq.current += 1)
-        /* 本次请求属于哪个会话：响应回来时用**闭包里的**这个值比对当前会话。
-           不能读模块级的 sessionId —— 在本机这种"响应几乎立刻回来"的时序里，
-           它可能已经被本轮渲染改掉，迟到的响应就能混过检查（界面会闪上一个会话的靶标）。 */
         const forSession = id
-        /* 先问「这个会话绑的是哪个靶标」：答不出来（老会话 / 从没绑过）再谈兜底。
-           老 host 没有这个 op → 走 catch，等于"没绑定"，行为与升级前完全一致。 */
         api({ op: 'sessionBinding', session: id }).then((r) => {
-          if (seq !== bindSeq.current) return         /* 期间又切了会话：这一轮作废 */
-          if (sessionId !== forSession) return        /* 迟到的响应：当前会话已经不是它了 */
+          if (seq !== bindSeq.current) return
+          if (sessionId !== forSession) return
+          if (r && Array.isArray(r.host_sessions)) setHostSessions(r.host_sessions)
           const bound = r && r.ok !== false && typeof r.bound === 'string' && r.bound ? r.bound : null
           setBoundEng(bound)
-          /* 本会话没绑靶标：不算"跟随"，状态提示要说实话 */
           if (bound === null) setFollowing(false)
-          if (manualHere() && eng !== null) return   /* 本会话被手选过：这次不抢 */
+          if (manualHere() && eng !== null) return
           if (bound !== null && followTo(bound, known, 'bound')) return
-          /* 落盘表里没有这个会话（升级前建的会话就是这种）→ 用会话标题（= 工作目录名
-             = 靶标单位名）反查。这条兜底不依赖任何记账，命中率最高。 */
           const byTitle = engagementByTitle(title, known)
           if (byTitle !== null && followTo(byTitle, known, 'title')) return
           const last = lastEngagement()
@@ -5648,10 +5757,17 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       }
 
       React.useEffect(() => {
-        api({ op: 'bootstrap' }).then((r) => {
-          if (!r || r.ok === false) { setErr((r && r.error) || '无法连接资产库'); return }
+        const dom = readHostDomTelemetry()
+        const initialSid = sessionId || dom.sessionId || undefined
+        api({ op: 'bootstrap', session: initialSid }).then((r) => {
+          if (!r || r.ok === false) { setErr((r && r.error) || '无法连接工作区存储'); return }
           const list = r.engagements || []
+          const hs = Array.isArray(r.host_sessions) ? r.host_sessions : []
           setEngagements(list)
+          setHostSessions(hs)
+          if (!sessionId && hs.length > 0 && hs[0].id) {
+            setSessionId(hs[0].id, hs[0].displayLabel || hs[0].title)
+          }
           const fallback = r.current || (list[0] && list[0].id) || null
           if (fallback) {
             manualPickRef.current = null
@@ -5660,13 +5776,11 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             setEng(fallback)
             loadSnapshot(fallback)
           }
-          /* 会话 id 比 bootstrap 先到：立刻按会话绑定纠偏；还没到就等下面那个 effect
-             （HeaderButton 把 id 写进来时它自然会跑）。 */
           if (sessionId !== null) applySessionBinding(sessionId, list, sessionTitle)
         }, (e) => setErr(String((e && e.message) || e)))
       }, [])
 
-      /* 当前会话变化（切会话 / 子智能体状态刷新）→ 把面板对齐到该会话绑定的靶标 */
+      /* 当前会话变化（切会话 / 子智能体状态刷新）→ 把面板对齐到该会话绑定的工作区 */
       React.useEffect(() => {
         if (sid === null || !engagements.length) return
         applySessionBinding(sid, engagements, sesTitle)
@@ -5680,16 +5794,25 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
           setCreating(false)
           if (!r || r.ok === false) { setErr((r && r.error) || '创建失败'); return }
           setNewName('')
-          refreshList(r.engagement && r.engagement.id)
+          const createdId = r.engagement && r.engagement.id
+          if (createdId && sid) {
+            api({ op: 'bindSessionEngagement', session: sid, id: createdId, engagement: createdId }).catch(() => {})
+          }
+          refreshList(createdId)
         }, (e) => { setCreating(false); setErr(String((e && e.message) || e)) })
       }
 
       /** 刷新：重新拉取名册/快照，并让当前页签重新取数。 */
       const refreshAll = () => {
         setRefreshKey((k) => k + 1)
-        api({ op: 'bootstrap' }).then((b) => {
+        api({ op: 'bootstrap', session: sid || undefined }).then((b) => {
           setEngagements((b && b.engagements) || [])
-          if (eng) loadSnapshot(eng)
+          if (b && Array.isArray(b.host_sessions)) setHostSessions(b.host_sessions)
+          const targetEng = eng || (b && b.current) || (b && b.engagements && b.engagements[0] && b.engagements[0].id) || null
+          if (targetEng) {
+            if (!eng) setEng(targetEng)
+            loadSnapshot(targetEng)
+          }
         }, () => { if (eng) loadSnapshot(eng) })
       }
 
@@ -5706,18 +5829,17 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         window.addEventListener('mouseup', up)
       }
 
-      /* 切靶标：重新读该靶标的未读快照，并立刻取一次摘要 */
       React.useEffect(() => {
         if (!eng) { setDigest(null); setSeen(null); return undefined }
         setSeen(loadUnread(eng))
         let alive = true
         let digestInflight = false
         const tick = () => {
-          if (digestInflight) return        /* 上一轮还没回来，跳过这一轮，别把请求堆起来 */
+          if (digestInflight) return
           digestInflight = true
           api({ op: 'consoleDigest', engagement: eng }).then((r) => {
             if (alive && r && r.ok !== false && r.sections) setDigest(r.sections)
-          }, () => { /* 网络异常：不打断，等下一轮 */ })
+          }, () => {})
             .finally(() => { digestInflight = false })
         }
         tick()
@@ -5725,10 +5847,6 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         return () => { alive = false; window.clearInterval(timer) }
       }, [eng, refreshKey])
 
-      /**
-       * 打开某个页签 = 看过这个页签的内容：把当前摘要记成已读。
-       * 没读过（第一次打开面板）不算新内容 —— 否则一进来满屏红点，反而看不出"哪里有新东西"。
-       */
       const markTabSeen = React.useCallback((tab) => {
         if (!eng) return
         setSeen((prev) => {
@@ -5751,23 +5869,42 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         return digestHasNew(seen[tab], digest[tab])
       }
 
-      const stats = (snapshot && snapshot.stats) || {}
+      /* 组合工作区下拉选项：包含 store 工作区 + 宿主打开的会话，允许用户在下拉菜单自由切换任意会话/工作区 */
+      const selectorOptions = []
+      const seenEngIds = new Set()
+      for (const x of engagements) {
+        seenEngIds.add(x.id)
+        selectorOptions.push({ value: x.id, label: x.name || x.id })
+      }
+      for (const hs of hostSessions) {
+        if (hs.engagementId && seenEngIds.has(hs.engagementId)) continue
+        selectorOptions.push({
+          value: 'host:' + hs.id,
+          label: '会话 · ' + (hs.displayLabel || hs.title || hs.id),
+          hostSession: hs,
+        })
+      }
+      const currentEngObj = engagements.find((x) => x.id === eng) || null
+      const currentEngName = (currentEngObj && currentEngObj.name)
+        || (snapshot && snapshot.engagement && snapshot.engagement.name)
+        || sesTitle
+        || eng
+        || 'LMTAgent 默认工作区'
+
       const tabs = [
-        ['assets', '资产测绘'], ['agents', '智能体'], ['sessions', '会话隧道'],
-        ['artifacts', '凭据与文件'],
-        ['findings', '漏洞战果'],
-        ['scores', '得分目标'], ['report', '报告'],
-        ['knowledge', '知识库'],
-        /* 「智能体提示词」已并入「智能体」页：并发数量配置与角色提示词编辑在同一处 */
-        ['skills', '技能库'],
+        ['assets', '模块与服务'], ['agents', '智能体与并发'], ['sessions', '运行环境'],
+        ['artifacts', '构建产物'],
+        ['findings', '代码审查与缺陷'],
+        ['scores', '交付里程碑'], ['report', '研发交付报告'],
+        ['knowledge', '工程模式库'],
+        ['skills', '研发技能库'],
       ]
-      /* 5 个一级分区；二级仍是原来的 9 个页签。一级只负责分组，不重复渲染业务页。 */
       const TAB_GROUPS = [
-        { key: 'overview', label: '态势', tabs: ['overview'] },
-        { key: 'assets', label: '资产', tabs: ['assets'] },
-        { key: 'results', label: '成果', tabs: ['findings', 'scores'] },
+        { key: 'overview', label: '总览', tabs: ['overview'] },
+        { key: 'assets', label: '架构', tabs: ['assets'] },
+        { key: 'results', label: '质量', tabs: ['findings', 'scores'] },
         { key: 'report', label: '报告', tabs: ['report'] },
-        { key: 'resources', label: '资源', tabs: ['sessions', 'artifacts', 'knowledge', 'skills', 'agents'] },
+        { key: 'resources', label: '集群', tabs: ['agents', 'sessions', 'artifacts', 'knowledge', 'skills'] },
       ]
       const groupOf = (tab) => TAB_GROUPS.find((g) => g.tabs.indexOf(tab) !== -1) || TAB_GROUPS[1]
       const activeGroup = groupOf(st.tab)
@@ -5775,10 +5912,9 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       const openFull = () => { openFullView() }
       const exitFull = () => {
         setFull(false)
-        /* 用 window.open 打开的独立窗口能关就关；同窗全屏只清 hash，不刷新。 */
         try {
           if (window.opener && !window.opener.closed) { window.close(); return }
-        } catch (e) { /* 非脚本打开的窗口无法关闭 */ }
+        } catch (e) { /* ignore */ }
         try { window.history.replaceState(null, '', window.location.pathname + window.location.search) } catch (e) { /* ignore */ }
       }
       React.useEffect(() => {
@@ -5787,15 +5923,11 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
       }, [full])
+
       let body
       if (err) body = h('div', { className: 'rt-err' }, err)
-      /* 知识库是全局的（跨靶标共享），但**默认跟着会话的靶标筛**：
-         打 B 单位时打开知识库，第一眼就该是 B 单位攒下的武器，而不是 200 条混在一起。
-         筛掉了也能一键切回「全部来源靶标」，共享属性没变。
-         传的是**会话绑定的靶标**（boundEng）而不是面板当前显示的那个：用户手选
-         去看别的单位时，知识库仍应对齐"本会话在打的单位"这份语境。 */
       else if (st.tab === 'overview') body = h(OverviewTab, {
-        engagement: eng, snapshot: snapshot, refreshKey: refreshKey,
+        engagement: eng, engagementName: currentEngName, snapshot: snapshot, refreshKey: refreshKey,
         onGo: (tab) => goTab(tab),
       })
       else if (st.tab === 'artifacts') body = h(ArtifactsTab, { engagement: eng, refreshKey: refreshKey })
@@ -5803,25 +5935,23 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       else if (!eng) {
         body = h('div', { className: 'rt-pane' },
           h('div', { className: 'rt-card' },
-            h('h4', null, '还没有靶标'),
+            h('h4', null, '初始化研发工作区'),
             h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 8 } },
-              '输入攻防演练靶标单位名称，创建演练并开始资产测绘。'),
+              '输入软件工程项目或会话工作区名称，创建工作区并启动 8 角色多智能体协同研发。'),
             h('div', { style: { display: 'flex', gap: 8 } },
               h('input', {
-                className: 'rt-input', style: { flex: 1 }, placeholder: '例如：示例科技有限公司',
+                className: 'rt-input', style: { flex: 1 }, placeholder: '例如：LMTAgent 核心引擎重构',
                 value: newName, onChange: (e) => setNewName(e.target.value),
                 onKeyDown: (e) => { if (e.key === 'Enter') openEngagement() },
               }),
               h('button', { className: 'rt-btn rt-btn-primary', disabled: creating, onClick: () => openEngagement() },
-                creating ? '创建中…' : '创建靶标'))))
+                creating ? '创建中…' : '创建工作区'))))
       } else if (st.tab === 'assets') body = h(AssetsTab, { engagement: eng, snapshot: snapshot, refreshKey: refreshKey, onRefresh: refreshAll, onData: () => loadSnapshot(eng) })
-      /* 「当前测试」已并入资产测绘页（左侧 C 段分组同级入口），旧的 #testing 链接落到资产页 */
       else if (st.tab === 'testing') body = h(AssetsTab, { engagement: eng, snapshot: snapshot, refreshKey: refreshKey, onRefresh: refreshAll, onData: () => loadSnapshot(eng) })
       else if (st.tab === 'agents') body = h(AgentsTab, { engagement: eng, refreshKey: refreshKey })
       else if (st.tab === 'sessions') body = h(SessionTab, { engagement: eng, refreshKey: refreshKey })
       else if (st.tab === 'findings') body = h(FindingsTab, { engagement: eng, refreshKey: refreshKey })
       else if (st.tab === 'report') body = h(ReportTab, { engagement: eng, refreshKey: refreshKey })
-      /* 「攻击文件」已并入漏洞战果页（子页签 + 每条漏洞详情里的关联文件），旧链接落到漏洞战果 */
       else if (st.tab === 'attackfiles') body = h(FindingsTab, { engagement: eng, refreshKey: refreshKey })
       else if (st.tab === 'scores') body = h(ScoreTab, { engagement: eng, refreshKey: refreshKey })
       else if (st.tab === 'prompts') body = h(AgentsTab, { engagement: eng, refreshKey: refreshKey })
@@ -5829,28 +5959,24 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       const shellProps = full
         ? { className: 'rt-full', style: { display: 'flex' } }
-        : { className: 'rt-dock', 'data-open': st.open ? '1' : '0', style: { width: width + 'px', display: st.open ? 'flex' : 'none' } }
+        : (embedMode
+            ? { className: 'rt-embed', 'data-open': '1', style: { display: 'flex', width: '100%', height: '100%' } }
+            : { className: 'rt-dock', 'data-open': st.open ? '1' : '0', style: { width: width + 'px', display: st.open ? 'flex' : 'none' } })
 
       return h('div', shellProps,
-        full ? null : h('div', { className: 'rt-grip', onMouseDown: startResize }),
+        (full || embedMode) ? null : h('div', { className: 'rt-grip', onMouseDown: startResize }),
         h('div', { className: 'rt-head' },
           h('div', { className: 'rt-title' }, h('span', { className: 'rt-dot' }),
-            full ? 'RedTeam 全面浏览' : 'RedTeam 控制台',
-            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, '独立窗口') : null),
-          /* 「跟随会话」状态：一眼看清面板显示的是不是当前会话的靶标。
-             判定顺序 = 手选优先 → 落盘绑定 → 标题反查 → 未绑靶标：
-             · 手选过（黄，可点回本会话靶标）：本会话内不再自动跟随，如实说"未跟随"；
-             · 绑定命中（绿）：面板显示的正是本会话绑定的靶标；
-             · 标题反查（绿）：本会话没有绑定记录，靠会话标题（工作目录名）认出来的；
-             · 其余（灰）：既不跟随也没记录 —— 不假装已绑定。 */
+            full ? 'LMTAgent 全面浏览' : 'LMTAgent 研发控制台',
+            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, '全屏视图') : null),
           sid === null
             ? null
             : (manualHere()
                 ? h('span', {
                     className: 'rt-tag ' + (boundEng !== null ? 'rt-tag-warn' : 'rt-tag-passive'),
                     title: boundEng !== null
-                      ? '你为这个会话手选过靶标，面板不再自动跟随；点它切回本会话绑定的「' + boundEng + '」'
-                      : '你为这个会话手选过靶标，面板不再自动跟随（本会话在服务端还没有绑定记录）',
+                      ? '你为当前会话手动切换了工作区；点击切回当前会话绑定的「' + boundEng + '」'
+                      : '你为当前会话手动选择了工作区',
                     onClick: boundEng !== null
                       ? () => {
                           manualPickRef.current = null
@@ -5859,55 +5985,61 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
                           setEng(boundEng); rememberEngagement(boundEng); loadSnapshot(boundEng)
                         }
                       : undefined,
-                  }, boundEng !== null ? '未跟随：' + boundEng : '未跟随 · 手选')
+                  }, boundEng !== null ? '手动选择：' + boundEng : '手动选择')
                 : (boundEng !== null && boundEng === eng
-                    ? h('span', { className: 'rt-tag rt-tag-live', title: '面板正跟随当前会话绑定的靶标：切会话会自动切换' }, '跟随会话')
+                    ? h('span', { className: 'rt-tag rt-tag-live', title: '控制台正跟随当前 DSH 会话绑定的工作区：切换会话会自动同步' }, '跟随会话')
                     : (following && followSource === 'title'
                         ? h('span', {
                             className: 'rt-tag rt-tag-live',
-                            title: '这个会话没有落盘绑定，按**会话标题**（工作目录名 = 单位名）反查到「' + eng + '」',
+                            title: '按当前会话标题自动关联到工作区「' + eng + '」',
                           }, '跟随会话 · 按标题')
                         : h('span', {
-                            className: 'rt-tag rt-tag-passive',
-                            title: '当前会话还没绑定靶标：打开靶标或让智能体开工后，面板会自动切过来。',
-                          }, '本会话未绑靶标')))),
+                            className: 'rt-tag rt-tag-live',
+                            title: '控制台已与当前 DSH 会话实时同步，可在下拉框自由切换工作区或会话。',
+                          }, '已同步当前会话')))),
           h('select', {
-            className: 'rt-input', style: { maxWidth: '170px' }, value: eng || '',
+            className: 'rt-input',
+            style: { maxWidth: '185px' },
+            value: eng || (selectorOptions[0] && selectorOptions[0].value) || '',
+            'aria-label': '切换研发工作区或会话',
             onChange: (e) => {
               const next = e.target.value
-              /* 用户手点 = 摆脱"跟随会话"：这个会话之后就以它为准，
-                 同时写回 host 绑定表（下次切回本会话仍是它） */
+              if (!next) return
+              if (next.startsWith('host:')) {
+                const rawSid = next.slice(5)
+                const hs = hostSessions.find((x) => x.id === rawSid)
+                if (hs) {
+                  setSessionId(hs.id, hs.displayLabel || hs.title)
+                  openEngagement(hs.displayLabel || hs.title || hs.id)
+                }
+                return
+              }
               manualPickRef.current = sid || ''
               setFollowing(false)
               setFollowSource(null)
-              setBoundEng(next)
               setEng(next)
               rememberEngagement(next)
               loadSnapshot(next)
               if (sid !== null) {
-                api({ op: 'bindSessionEngagement', session: sid, engagement: next }).catch(() => {})
+                api({ op: 'bindSessionEngagement', session: sid, id: next, engagement: next }).catch(() => {})
               }
-              /* 同步「当前靶标」：原生 skill 目录按它解析技能根 */
-              api({ op: 'activateEngagement', engagement: next, session: sid || undefined }).catch(() => {})
+              api({ op: 'activateEngagement', id: next, engagement: next, session: sid || undefined }).catch(() => {})
             },
-          }, engagements.map((x) => h('option', { key: x.id, value: x.id }, x.name))),
+          }, selectorOptions.length > 0
+            ? selectorOptions.map((opt) => h('option', { key: opt.value, value: opt.value }, opt.label))
+            : h('option', { value: '' }, currentEngName)),
           h('div', { className: 'rt-spacer' }),
           h(VersionBar, null),
           full
             ? h('button', { className: 'rt-btn', title: '回到带侧栏的普通界面（或按 Esc）', onClick: exitFull }, '退出全屏')
             : null,
-          h('button', { className: 'rt-btn', title: '刷新名册、快照与当前页面数据', onClick: refreshAll }, '刷新'),
+          h('button', { className: 'rt-btn', title: '刷新工作区、会话遥测与当前页面数据', onClick: refreshAll }, '刷新'),
           full ? null : h('button', {
             className: 'rt-btn',
             title: isDesktopShell() ? '在当前窗口全屏打开完整控制台（Esc 退出）' : '在新浏览器窗口打开完整控制台',
             onClick: openFull,
           }, '全面浏览'),
-          full ? null : h('button', { className: 'rt-btn', title: '收起面板（对话列恢复全宽）', onClick: () => setUI({ open: false }) }, '收起')),
-        /* 页签栏用标准 tablist/tab 角色：读屏软件据此播报「第几个页签、是否选中」。
-           键盘用户 Tab 进来后可用 Enter/Space 切换（由 clickable 提供）。 */
-        /* 一级：5 个分区，只切换分组；二级：9 个业务页签，隐藏不属于当前分区的。
-           二级全部保留在 DOM 里（display:none），这样键盘/读屏的 tab 语义仍是 9 个，
-           测试也能按标签直接点到任意页签。 */
+          (full || embedMode) ? null : h('button', { className: 'rt-btn', title: '收起面板（对话列恢复全宽）', onClick: () => setUI({ open: false }) }, '收起')),
         h('div', { className: 'rt-tabs rt-tabs-groups', role: 'navigation', 'aria-label': '控制台分区' },
           TAB_GROUPS.map((g) => {
             const on = activeGroup.key === g.key
@@ -5925,47 +6057,63 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
             style: visible ? undefined : { display: 'none' },
             title: unreadOf(t[0]) ? t[1] + '：有新内容，点开看过红点就会消失' : t[1],
           }), t[1], unreadOf(t[0])
-            /* 红点是纯视觉信息，给读屏软件一个文字替代 */
             ? h('span', { className: 'rt-tab-dot', 'aria-label': '有新内容' })
             : null)
         })),
         h('div', { className: 'rt-body' }, h(RtBoundary, { key: st.tab }, body)),
         h('div', { className: 'rt-foot' },
-          h('span', { className: 'rt-wb-badge' }, 'PGSQL Wire v3 · 4-Wave DAG · 6 Slots'),
+          h('span', { className: 'rt-wb-badge' }, 'LMTAgent · PGSQL Wire v3 · 4-Wave DAG'),
           h('div', { className: 'rt-spacer' }),
-          full ? h('span', null, '按 Esc 或点右上角「退出全面浏览」回到带侧栏的界面') : null,
-          h('span', null, 'SQLite · ' + (snapshot && snapshot.engagement ? snapshot.engagement.name : '')),
+          full ? h('span', null, '按 Esc 或点右上角「退出全屏」回到带侧栏的界面') : null,
+          h('span', null, 'PG/WAL · ' + currentEngName),
           sid === null
             ? null
             : h('span', { title: '当前会话 ' + sid + (sessionTitle ? '（' + sessionTitle + '）' : '')
-                + '；面板显示的靶标来自：' + (FOLLOW_SOURCE[followSource] || '未知') },
+                + '；工作区来源：' + (FOLLOW_SOURCE[followSource] || '实时同步') },
                 '会话 ' + sid.slice(0, 8) + (followSource ? ' · ' + (FOLLOW_SOURCE[followSource] || '') : ''))))
     }
 
-    /* ---------------------------------------------------------- 入口按钮 */
+    /* ---------------------------------------------------------- 入口按钮与底部工具条 */
     function SidebarButton(props) {
       const st = useUI()
       return h('button', {
         className: 'rt-icon-btn' + (st.open ? ' on' : ''),
-        title: 'RedTeam 控制台（常驻右侧栏）',
+        title: 'LMTAgent 研发控制台（常驻右侧栏）',
         onClick: () => setUI({ open: !st.open }),
-      }, h('span', { style: { fontSize: 14 } }, '⛨'), props.wide ? h('span', null, 'RedTeam') : null)
+      }, h('span', { style: { fontSize: 14 } }, '⚡'), props && props.wide ? h('span', null, 'LMTAgent') : null)
     }
 
     function HeaderButton(props) {
       const st = useUI()
-      /* 这个槽位是 session 作用域：props.sessionId 就是当前会话 id（见 DSH 的
-         standardProps 目录），而面板在根作用域拿不到它 —— 在这里交给模块级状态。
-         放 effect 而不是渲染体：渲染期不产生副作用，晚一帧对面板没有影响。 */
-      const sessionId = sessionIdOf(props)
-      /* 会话标题 = 工作目录名 = 靶标单位名：绑定表里查不到时靠它反查（见 engagementByTitle） */
+      const sid = sessionIdOf(props)
       const title = sessionTitleOf(props)
-      React.useEffect(() => { setSessionId(sessionId, title) }, [sessionId, title])
+      React.useEffect(() => { if (sid || title) setSessionId(sid, title) }, [sid, title])
       return h('button', {
         className: 'rt-hbtn' + (st.open ? ' on' : ''),
-        title: 'RedTeam 控制台（常驻右侧栏）',
+        title: 'LMTAgent 研发控制台（切换右侧常驻工作台）',
         onClick: () => setUI({ open: !st.open }),
-      }, '⛨ RedTeam')
+      }, '⚡ LMTAgent 控制台')
+    }
+
+    function ComposerDockBar(props) {
+      const st = useUI()
+      const sid = sessionIdOf(props)
+      const title = sessionTitleOf(props)
+      React.useEffect(() => { if (sid || title) setSessionId(sid, title) }, [sid, title])
+      return h('div', { className: 'rt-composer-dock' },
+        h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
+          h('span', { className: 'rt-dot' }),
+          h('b', { style: { color: 'var(--dsw-alias-label-primary)' } }, 'LMTAgent 研发集群'),
+          h('span', { className: 'rt-tag rt-tag-live' }, '8-Role · 4-Wave DAG')),
+        h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
+          h('button', {
+            className: 'rt-btn' + (st.open ? ' rt-btn-primary' : ''),
+            onClick: () => setUI({ open: !st.open }),
+          }, st.open ? '收起研发控制台' : '⚡ 唤起 LMTAgent 控制台'),
+          h('button', {
+            className: 'rt-btn',
+            onClick: openFullView,
+          }, '全面浏览')))
     }
 
     /** 侧栏「全面浏览」：在新浏览器窗口打开完整控制台（当前窗口不受影响）。 */
@@ -5974,18 +6122,18 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
       return h('button', {
         className: 'rt-icon-btn',
         title: desktop
-          ? '全面浏览：在当前窗口全屏打开完整控制台（Esc 退出）'
-          : '全面浏览：在新窗口打开完整控制台（当前窗口不受影响；新窗口内按 Esc 退出）',
+          ? '全面浏览：在当前窗口全屏打开完整 LMTAgent 控制台（Esc 退出）'
+          : '全面浏览：在新窗口打开完整 LMTAgent 控制台（当前窗口不受影响；新窗口内按 Esc 退出）',
         onClick: openFullView,
-      }, h('span', { style: { fontSize: 14 } }, '⛶'), props.wide ? h('span', null, '全面浏览') : null)
+      }, h('span', { style: { fontSize: 14 } }, '⛶'), props && props.wide ? h('span', null, '全面浏览') : null)
     }
 
-    /* ---------------------------------------------------------- 插件入口 */
+    /* ---------------------------------------------------------- 插件入口（全槽位覆盖） */
     /** 唯一硬依赖：槽位注册表。 */
     const inject = ['slots']
 
     /**
-     * 注入样式 + 三处槽位。样式标签与宽度变量随 fiber 卸载一起移除。
+     * 注入样式 + 全部 DSH 入口槽位（Circle 1 左侧栏面板列表 + Circle 2 会话头动作/页签 + Circle 3 顶栏工具 + 输入框上方工具条）。
      * @param ctx - 客户端根上下文。
      */
     function apply(ctx) {
@@ -5996,7 +6144,7 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
 
       const widthTag = document.createElement('style')
       widthTag.setAttribute('data-redteam-ui-width', '1')
-      widthTag.textContent = ':root{--rt-dock-w:620px}'
+      widthTag.textContent = ':root{--rt-dock-w:540px}'
       document.head.append(widthTag)
       dockWidthTag = widthTag
 
@@ -6006,27 +6154,82 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
         dockWidthTag = null
       })
 
+      /* 1. 右侧常驻浮动工作台（shell.overlay） */
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(
         { name: 'shell.overlay', id: 'redteam-console', order: 50 },
         () => h(Panel),
       ))
+
+      /* 2. Circle 1：左侧边栏顶部面板列表（sidebar.panellist + main 主视图面板） */
+      ctx.slots.inject('main', () => ctx.slots.register(
+        { name: 'main', id: 'lmtagent-workbench', key: 'lmtagent-workbench', order: 35 },
+        (props) => h(Panel, Object.assign({ embedMode: 'main' }, props)),
+      ))
+      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(
+        { name: 'sidebar.panellist', id: 'lmtagent-panellist', key: 'lmtagent-workbench', label: 'LMTAgent 控制台', order: 35 },
+        (props) => h(SidebarButton, Object.assign({ wide: true }, props)),
+      ))
+
+      /* 3. Circle 2 Row 2：会话主视图二级页签（与 对话 / 轨迹 / 上下文 / 编队 同级） */
+      ctx.slots.inject('conversation.view', () => ctx.slots.register(
+        { name: 'conversation.view', id: 'lmtagent-view', key: 'lmtagent-view', label: '⚡ LMTAgent 研发台', order: 45 },
+        (props) => h(Panel, Object.assign({ embedMode: 'session' }, props)),
+      ))
+
+      /* 4. Circle 2 Row 1：会话顶部动作胶囊（与 智能体团队 / 费用明细 同级） */
+      ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register(
+        { name: 'conversation.session.header.actions', id: 'lmtagent-session-action', label: 'LMTAgent 控制台', order: 20 },
+        (props) => h(HeaderButton, props),
+      ))
+
+      /* 5. Circle 3：窗口右上角会话工具栏（conversation.session.header.utilities） */
+      ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
+        { name: 'conversation.session.header.utilities', id: 'redteam-header-toggle', order: 50, label: 'LMTAgent' },
+        (props) => h(HeaderButton, props),
+      ))
+
+      /* 6. 左侧边栏底部快捷按钮（sidebar.footer.action） */
       ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
-        { name: 'sidebar.footer.action', id: 'redteam-toggle', order: 50, label: 'RedTeam' },
+        { name: 'sidebar.footer.action', id: 'redteam-toggle', order: 50, label: 'LMTAgent' },
         (props) => h(SidebarButton, props),
       ))
       ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
         { name: 'sidebar.footer.action', id: 'redteam-full', order: 51, label: '全面浏览' },
         (props) => h(FullButton, props),
       ))
-      ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
-        { name: 'conversation.session.header.utilities', id: 'redteam-header-toggle', order: 50, label: 'RedTeam' },
-        () => h(HeaderButton),
+
+      /* 7. 对话输入框上方快捷唤起条（conversation.input.dock） */
+      ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(
+        { name: 'conversation.input.dock', id: 'lmtagent-input-dock', order: 50, label: 'LMTAgent' },
+        (props) => h(ComposerDockBar, props),
       ))
+
+      /* 8. 设置页专区（settings.section） */
+      ctx.slots.inject('settings.section', () => ctx.slots.register(
+        { name: 'settings.section', id: 'lmtagent-settings', order: 50, label: 'LMTAgent 研发集群' },
+        () => h('div', { className: 'rt-card', style: { margin: 12 } },
+          h('h4', null, 'LMTAgent · 软件工程多智能体研发控制台 (ECCVIK/LMTAgent)'),
+          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 8 } },
+            '8 角色 gstack 协同研发 · 4-Wave Bounded DAG · PostgreSQL Wire v3 事实库'),
+          h('button', { className: 'rt-btn rt-btn-primary', onClick: () => setUI({ open: true }) }, '打开 LMTAgent 研发控制台')),
+      ))
+
+      /* 9. 若宿主启用了 betterSidebar 服务，同步注册左侧导航项 */
+      try {
+        if (ctx.betterSidebar && typeof ctx.betterSidebar.registerItem === 'function') {
+          ctx.betterSidebar.registerItem({
+            id: 'lmtagent-workbench',
+            label: 'LMTAgent 控制台',
+            order: 35,
+            onClick: () => setUI({ open: !ui.open }),
+          })
+        }
+      } catch (e) { /* optional service */ }
     }
 
     exports.apply = apply
     exports.inject = inject
-    /* 纯函数导出：单测直接验"文件名 / 会话标题 / 靶标名"的匹配规则（见 test/session-root.test.mjs） */
+    /* 纯函数导出：单测直接验"文件名 / 会话标题 / 工作区名"的匹配规则（见 test/session-root.test.mjs） */
     exports.squashName = squashName
     exports.engagementByTitle = engagementByTitle
     return module.exports

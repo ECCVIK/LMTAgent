@@ -1,2 +1,2 @@
-name: 红队执行角色
-description: 红队主会话派活时自动选用的执行角色预设（信息收集 / 资产梳理 / 漏洞发现 / 漏洞利用 / 内网渗透）。不含任何委派工具，请不要手动选择。
+name: LMTAgent 研发执行节点
+description: LMTAgent 主会话派发任务时自动选用的软件工程执行角色预设（CEO / Designer / Eng Manager / Builder / Reviewer & CSO / QA Lead / Doc & Release），支持 maxDepth: 3 递归拆解子任务。请不要手动选择。

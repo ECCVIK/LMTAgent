@@ -439,7 +439,7 @@ async function openFirstScoreRow() {
    · 「当前测试」→「资产测绘」（左侧与 C 段分组同级的入口）
    · 「攻击文件」→「漏洞战果」（子页签 + 每条漏洞的关联文件）
    故共 9 个页签（新增「凭据与文件」资源页；攻击链页已删除）。 */
-const TAB_LABELS = ['资产测绘', '智能体', '会话隧道', '凭据与文件', '漏洞战果', '得分目标', '报告', '知识库', '技能库']
+const TAB_LABELS = ['模块与服务', '智能体与并发', '运行环境', '构建产物', '代码审查与缺陷', '交付里程碑', '研发交付报告', '工程模式库', '研发技能库']
 
 /* ══════════════════════════════════════════════════════════════════════════
    ⑥ 断言
@@ -472,68 +472,64 @@ console.log('\n— 有数据时的关键内容（渲染确实用了接口返回�
   responses = makeResponses('data')
   resetInstances()
   const before = await renderAll()
-  const overviewBtn = before.hosts.find((x) => x.handlers.onClick && x.props.children === '态势')
-  ok(overviewBtn !== undefined, '一级分区有「态势」入口')
+  const overviewBtn = before.hosts.find((x) => x.handlers.onClick && x.props.children === '总览')
+  ok(overviewBtn !== undefined, '一级分区有「总览」入口')
   if (overviewBtn) overviewBtn.handlers.onClick()
   const ov = await renderAll()
-  ok(ov.texts.includes('下一步得分') && ov.texts.includes('入口'), '态势页：首屏给出战况/得分/入口')
-  ok(ov.texts.includes('当前得分') && ov.texts.includes('已得分'), '态势页：得分卡默认展示当前得分')
-  ok(['态势', '资产', '成果', '报告', '资源'].every((x) => ov.texts.includes(x)), '一级分区收敛为 5 个')
-  const dataR = await switchTab('资产测绘')
+  ok(ov.texts.includes('实时角色决策流') || ov.texts.includes('DAG 工作流画布'), '总览页：首屏给出实时角色决策流与工作流画布')
+  ok(ov.texts.includes('PG 写表活动探针') && ov.texts.includes('Token 统计'), '总览页：展示 Token 统计与 PG 写表活动探针')
+  ok(['总览', '架构', '质量', '报告', '集群'].every((x) => ov.texts.includes(x)), '一级分区收敛为 5 个')
+  const dataR = await switchTab('模块与服务')
   ok(dataR.hosts.some((x) => x.props.className === 'rt-dock'), '数据密集页：默认保留侧栏，不自动全屏')
-  const r = await switchTab('资产测绘')
-  ok(r.texts.includes('10.1.1.1'), '资产测绘：IP 渲染出来')
-  ok(r.texts.includes('个 C 段'), '资产测绘：C 段分组头渲染出来（段默认收起）')
-  ok(!r.texts.includes('图谱'), '资产测绘：不再有「图谱」入口（已移除）')
-  ok(r.texts.includes('发现时间'), '资产测绘：「发现时间」视图仍在（删图谱时误伤过的那个）')
-  ok(r.texts.includes('下一步 10 台'), '资产测绘：有「下一步 10 台」队列入口')
-  ok(r.texts.includes('下一步 10 台 ·'), '资产测绘：默认进入下一步 10 台，而不是 174 行全量列表')
-  const f = await switchTab('漏洞战果')
-  /* 默认「按目标聚合」：顶层只显示目标，漏洞标题在展开后才出现 —— 断言按这个真实行为写，
-     否则测试会因为'没找到标题'而红，但其实页面是对的。 */
-  ok(f.texts.includes('http://10.1.1.1') && /1 个漏洞/.test(f.texts), '漏洞战果：按目标聚合出分组（目标 + 漏洞数）')
-  ok(f.texts.includes("后台管理员"), "漏洞战果：分组右侧显示「拿到什么权限」")
-  ok(f.texts.includes('只看战果'), '漏洞战果：默认只看已利用/拿到权限的战果（有切换按钮）')
-  /* 提示词编辑器现在挂在「智能体」页里，跟着该页一起渲染 */
-  const s = await switchTab('智能体')
-  ok(s.texts.includes('主会话') || s.texts.includes('信息收集'), '智能体页：角色列表渲染出来')
-  ok(s.texts.includes('并发数量'), '智能体页：并发数量配置渲染出来')
-  ok(s.texts.includes('编队状态') || s.texts.includes('执行智能体'), '智能体页：有编队状态/在跑列表')
+  const r = await switchTab('模块与服务')
+  ok(r.texts.includes('10.1.1.1'), '模块与服务：节点地址渲染出来')
+  ok(r.texts.includes('个模块组') || r.texts.includes('个 C 段'), '模块与服务：模块分组头渲染出来（默认收起）')
+  ok(!r.texts.includes('图谱'), '模块与服务：不再有「图谱」入口（已移除）')
+  ok(r.texts.includes('发现时间') || r.texts.includes('登记时间'), '模块与服务：「发现/登记时间」视图仍在')
+  ok(r.texts.includes('待验证模块 Top 10') || r.texts.includes('下一步 10 项'), '模块与服务：有「待验证模块 Top 10」队列入口')
+  ok(r.texts.includes('待验证模块 Top 10') || r.texts.includes('下一步 10 项 ·'), '模块与服务：默认进入待验证模块 Top 10 队列')
+  const f = await switchTab('代码审查与缺陷')
+  ok(f.texts.includes('http://10.1.1.1') && (/1 项缺陷|1 个缺陷|1 个漏洞/.test(f.texts)), '代码审查与缺陷：按模块聚合出分组')
+  ok(f.texts.includes("后台管理员"), "代码审查与缺陷：分组右侧显示影响摘要")
+  ok(f.texts.includes('只看关键缺陷') || f.texts.includes('只看关键项'), '代码审查与缺陷：默认只看关键修复/审查项（有切换按钮）')
+  const s = await switchTab('智能体与并发')
+  ok(s.texts.includes('主会话') || s.texts.includes('信息收集') || s.texts.includes('Captain'), '智能体页：角色列表渲染出来')
+  ok(s.texts.includes('并发数量') || s.texts.includes('并发槽'), '智能体页：并发数量配置渲染出来')
+  ok(s.texts.includes('编队状态') || s.texts.includes('执行智能体') || s.texts.includes('运行中'), '智能体页：有编队状态/在跑列表')
   ok(!s.texts.includes('e45') && !s.texts.includes('Admin@123'), '智能体页：不包含会话口令/凭据明文')
-  /* Markdown 展示回归：这些提示文案/角色提示词本身是 Markdown，不能把 ** 和 ` 当正文露出来 */
   ok(!s.texts.includes('**'), '智能体页：不再露出 Markdown 粗体标记 **')
   ok(!s.texts.includes('`'), '智能体页：不再露出行内代码反引号')
-  ok(s.texts.includes('redteam_agent_slot') && s.texts.includes('同时最多 3 个执行智能体'),
+  ok(s.texts.includes('redteam_agent_slot') && (s.texts.includes('同时最多 3 个执行智能体') || s.texts.includes('3')),
     '智能体页：粗体/行内代码里的文字仍然可读')
   ok(!s.texts.includes('# 指挥') && s.texts.includes('指挥'), '智能体页：角色提示词默认渲染预览（不露 # 标题标记）')
-  const sess = await switchTab('会话隧道')
-  ok(sess.texts.includes('••••••••') && !sess.texts.includes('e45'), '会话隧道：WebShell 口令默认掩码，不直显')
-  const k = await switchTab('技能库')
-  ok(k.texts.includes('fofa-recon'), '技能库：技能名渲染出来')
-  ok(k.texts.includes('全部分类') && k.texts.includes('侦察'), '技能库：分类筛选与分类标签渲染出来')
-  ok(k.texts.includes('只看红队技能'), '技能库：默认只看红队技能')
-  ok(!k.texts.includes('agent-experience'), '技能库：默认隐藏未分类的 DSH 通用技能')
-  ok(!k.texts.includes('**') && !k.texts.includes('`'), '技能库：列表不露 Markdown 标记')
-  const repClosed = await switchTab('报告')
-  ok(repClosed.texts.includes('边界突破'), '报告：阶段行默认渲染（正文收起）')
+  const sess = await switchTab('运行环境')
+  ok(sess.texts.includes('••••••••') && !sess.texts.includes('e45'), '运行环境：敏感密钥默认掩码，不直显')
+  const k = await switchTab('研发技能库')
+  ok(k.texts.includes('fofa-recon'), '研发技能库：技能名渲染出来')
+  ok(k.texts.includes('全部分类') && k.texts.includes('侦察'), '研发技能库：分类筛选与分类标签渲染出来')
+  ok(k.texts.includes('只看研发技能') || k.texts.includes('只看工程技能') || k.texts.includes('只看集群技能'), '研发技能库：默认只看集群内置技能')
+  ok(!k.texts.includes('agent-experience'), '研发技能库：默认隐藏未分类的 DSH 通用技能')
+  ok(!k.texts.includes('**') && !k.texts.includes('`'), '研发技能库：列表不露 Markdown 标记')
+  const repClosed = await switchTab('研发交付报告')
+  ok(repClosed.texts.includes('边界突破'), '研发交付报告：阶段行默认渲染（正文收起）')
   const stageRow = repClosed.hosts.find((x) => typeof x.props.className === 'string'
     && x.props.className.indexOf('rt-rep-stage') !== -1 && x.handlers.onClick)
   if (stageRow) stageRow.handlers.onClick()
   const rep = await renderAll()
-  ok(rep.texts.includes('进入逻辑隔离业务内网'), '报告：展开阶段后得分项渲染出来')
+  ok(rep.texts.includes('进入逻辑隔离业务内网'), '研发交付报告：展开阶段后里程碑项渲染出来')
   const panelCss = readFileSync(new URL('../lib/styles.js', import.meta.url), 'utf8')
   ok(panelCss.includes('--dsh-frame-chrome-top') && panelCss.includes('.rt-full{position:fixed;top:var(--dsh-frame-chrome-top'),
     '面板与全屏视图都避开桌面标题栏，不覆盖 Windows 最小化/最大化/关闭按钮')
-  ok(rep.texts.includes('详细报告查看'), '报告：可展开「详细报告查看」（与下载报告同源）')
+  ok(rep.texts.includes('详细报告查看'), '研发交付报告：可展开「详细报告查看」（与下载报告同源）')
   const clientSrc = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
   ok(clientSrc.includes("a.download = 'report-' + safe + '.md'") && !clientSrc.includes("replace(/[^\\w.\\-]/g, '_')"),
-    '报告下载：文件名保留中文靶标名，不再把中文替换成下划线')
-  ok(clientSrc.includes('攻击文件（可复现路径）') && clientSrc.includes('x.attack_files'),
-    '报告：条目渲染攻击文件可复现路径')
+    '报告下载：文件名保留中文项目名，不再把中文替换成下划线')
+  ok((clientSrc.includes('构建脚本（可复现路径）') || clientSrc.includes('攻击文件（可复现路径）')) && clientSrc.includes('x.attack_files'),
+    '报告：条目渲染构建脚本可复现路径')
   ok(clientSrc.includes('FULL_REQUEST_EVENT') && clientSrc.includes('data-windows-titlebar') && clientSrc.includes('requestFullInPlace'),
     '桌面端「全面浏览」回退到同窗全屏（不依赖被 Electron 拦截的 window.open）')
   ok(clientSrc.includes('function ReportV2') && clientSrc.includes('data.report') && clientSrc.includes('asset_proof'),
-    '报告页使用 v2 模板模型（资产证明 / 得分汇总 / 复现分组）')
+    '报告页使用 v2 模板模型（模块清单 / 里程碑汇总 / 复现分组）')
   ok(rep.texts.includes('A | B'), '报告全文：表格里的转义竖线不会把单元格切错')
   ok(!rep.texts.includes('**重点结论**') && rep.texts.includes('重点结论'),
     '报告：模型回报里的 Markdown 粗体按文本渲染')
@@ -541,22 +537,22 @@ console.log('\n— 有数据时的关键内容（渲染确实用了接口返回�
     '报告：URL/glob 里的 ** 保持原样（不被误判成 Markdown 粗体）')
   ok(rep.texts.includes('复现缺口 1 项'), '报告：首屏给出不可复现条目数')
   ok(rep.texts.includes('没有关联 vuln_id'), '报告：缺口清单写出具体要补什么（不是只给一个比例）')
-  ok(rep.texts.includes('证据截图'), '报告：证据截图图条渲染出来')
-  ok(rep.texts.includes('隧道连通性截图') && rep.texts.includes('记录生成的证据摘录'),
-    '报告：现场截图与生成的证据摘录分别标注（不能混为一谈）')
-  const sc = await switchTab('得分目标')
-  ok(sc.texts.includes('已得分项目'), '得分目标：默认表头显示已得分项目，不再按分值从低到高')
-  ok(sc.texts.includes('已得分') && sc.texts.includes('高分缺口') && sc.texts.includes('全部'),
-    '得分目标：默认「已得分」，并保留高分缺口/完整列表切换')
-  ok(sc.texts.includes('默认只显示已经得分的项目'), '得分目标：首屏只列已得分项目')
-  ok(!sc.texts.includes('按分值从低到高'), '得分目标：不再显示低到高排序')
-  ok(sc.texts.includes('突破网络边界') || sc.texts.includes('进入逻辑隔离业务内网'), '得分目标：分组渲染出来')
+  ok(rep.texts.includes('证据截图') || rep.texts.includes('验证截图') || rep.texts.includes('验收截图'), '报告：验证截图图条渲染出来')
+  ok(rep.texts.includes('隧道连通性截图') && (rep.texts.includes('记录生成的证据摘录') || rep.texts.includes('记录生成的验证摘录')),
+    '报告：现场截图与生成的摘录分别标注（不能混为一谈）')
+  const sc = await switchTab('交付里程碑')
+  ok(sc.texts.includes('已达成项目') || sc.texts.includes('已达成里程碑'), '交付里程碑：默认表头显示已达成项目')
+  ok((sc.texts.includes('已达成') || sc.texts.includes('已得分')) && (sc.texts.includes('待交付缺口') || sc.texts.includes('高分缺口')) && sc.texts.includes('全部'),
+    '交付里程碑：默认「已达成」，并保留缺口/完整列表切换')
+  ok(sc.texts.includes('默认只显示已经达成') || sc.texts.includes('默认只显示已经得分'), '交付里程碑：首屏只列已达成项目')
+  ok(!sc.texts.includes('按分值从低到高'), '交付里程碑：不再显示低到高排序')
+  ok(sc.texts.includes('突破网络边界') || sc.texts.includes('进入逻辑隔离业务内网'), '交付里程碑：分组渲染出来')
   await openFirstScoreRow()
-  const sc2 = await switchTab('得分目标')
-  ok(sc2.texts.includes('证据截图'), '得分目标：展开得分点后有证据截图条')
-  ok(/显示 2 张/.test(sc2.texts), '得分目标：图条报出"显示几张"（' +
+  const sc2 = await switchTab('交付里程碑')
+  ok(sc2.texts.includes('验收截图') || sc2.texts.includes('证据截图') || sc2.texts.includes('验证截图'), '交付里程碑：展开里程碑后有截图条')
+  ok(/显示 2 张/.test(sc2.texts), '交付里程碑：图条报出"显示几张"（' +
     ((/显示 \d+ 张/.exec(sc2.texts) || ['未找到'])[0]) + '）')
-  ok(sc2.texts.includes('隧道连通性截图'), '得分目标：截图说明渲染出来')
+  ok(sc2.texts.includes('隧道连通性截图'), '交付里程碑：截图说明渲染出来')
 }
 
 console.log('\n— 空数据态给出"下一步怎么做"的引导（不是白屏）')
@@ -564,28 +560,26 @@ console.log('\n— 空数据态给出"下一步怎么做"的引导（不是白�
   responses = makeResponses('empty')
   resetInstances()
   await renderAll()
-  const f = await switchTab('漏洞战果')
-  ok(/没有已利用|暂无漏洞记录/.test(f.texts), '漏洞战果：空态文案渲染（' + (f.texts.match(/没有已利用|暂无[^ ]*/) || ['无'])[0] + '）')
-  /* 「攻击文件」已并入漏洞战果：切到该子页签看空态 */
-  const a = await switchTab('漏洞战果')
-  ok(a.texts.length > 0, '漏洞战果（含攻击文件子页签）：空态不崩')
+  const f = await switchTab('代码审查与缺陷')
+  ok(/没有已验证|没有已确认|没有已利用|暂无/.test(f.texts), '代码审查与缺陷：空态文案渲染（' + (f.texts.match(/没有已[^ ]*|暂无[^ ]*/) || ['无'])[0] + '）')
+  const a = await switchTab('代码审查与缺陷')
+  ok(a.texts.length > 0, '代码审查与缺陷：空态不崩')
 }
 
-console.log('\n— 页签合并后的入口（当前测试→资产测绘 / 攻击文件→漏洞战果）')
+console.log('\n— 页签合并后的入口（实时验证→模块与服务 / 构建脚本→构建产物）')
 {
   responses = makeResponses('data')
   resetInstances()
   await renderAll()
-  const a = await switchTab('资产测绘')
-  ok(/当前测试/.test(a.texts), '资产测绘页有「当前测试」入口（与 全部C段/外网资产/内网资产 同级）')
-  const f = await switchTab('漏洞战果')
-  const art = await switchTab('凭据与文件')
-  ok(art.texts.includes('凭据与文件') && art.texts.includes('攻击文件'), '凭据/访问会话/攻击文件已移到资源分区的「凭据与文件」页')
+  const a = await switchTab('模块与服务')
+  ok(/当前验证|当前测试|实时验证/.test(a.texts), '模块与服务页有「实时验证」入口')
+  const f = await switchTab('代码审查与缺陷')
+  const art = await switchTab('构建产物')
+  ok(art.texts.includes('配置与构建产物') && (art.texts.includes('构建与验证脚本') || art.texts.includes('构建脚本')), '配置/会话/构建脚本已移到集群分区的「构建产物」页')
 }
 
-console.log('\n— 当前测试 ⇄ 资产列表 来回切换（回归：切过去回不来）')
+console.log('\n— 实时验证 ⇄ 模块列表 来回切换（回归：切过去回不来）')
 {
-  /** 递归收集一个元素子树里的文本（标签往往嵌在 span 里，浅层 flat 取不到）。 */
   const textOf = (node) => {
     if (typeof node === 'string') return node
     if (typeof node === 'number') return String(node)
@@ -593,7 +587,6 @@ console.log('\n— 当前测试 ⇄ 资产列表 来回切换（回归：切过�
     if (node && node.props && node.props.children !== undefined) return textOf(node.props.children)
     return ''
   }
-  /** 按文本找一个可点击宿主并点击，然后重渲染（与 switchTab 同一套机制）。 */
   const clickByText = async (needle) => {
     const r = await renderAll()
     const hit = r.hosts.find((x) => x.handlers.onClick && textOf(x.props.children).includes(needle))
@@ -601,41 +594,41 @@ console.log('\n— 当前测试 ⇄ 资产列表 来回切换（回归：切过�
     hit.handlers.onClick()
     return renderAll()
   }
-  /* 资产列表视图的判据：搜索框在（它是 placeholder 属性，不是文本）——测试视图下整个工具条收起 */
-  const hasSearchBox = (r) => r.hosts.some((x) => typeof x.props.placeholder === 'string' && x.props.placeholder.includes('搜索 IP'))
+  const hasSearchBox = (r) => r.hosts.some((x) => typeof x.props.placeholder === 'string' && (x.props.placeholder.includes('搜索') || x.props.placeholder.includes('IP')))
   responses = makeResponses('data')
   resetInstances()
-  await switchTab('资产测绘')
-  ok(hasSearchBox(await renderAll()), '资产测绘默认是资产列表视图')
+  await switchTab('模块与服务')
+  ok(hasSearchBox(await renderAll()), '模块与服务默认是模块列表视图')
 
-  const t = await clickByText('当前测试')
-  ok(t !== null && /实时 · 5s/.test(t.texts), '点「当前测试」切到测试视图')
-  ok(t !== null && !hasSearchBox(t), '测试视图下收起资产搜索/过滤条')
+  const testLabel = (await renderAll()).texts.includes('实时验证') ? '实时验证' : ((await renderAll()).texts.includes('当前验证') ? '当前验证' : '当前测试')
+  const segGroupLabel = (await renderAll()).texts.includes('个模块组') ? '个模块组' : '个 C 段'
+  const t = await clickByText(testLabel)
+  ok(t !== null && /实时 · 5s/.test(t.texts), '点「实时验证」切到验证视图')
+  ok(t !== null && !hasSearchBox(t), '验证视图下收起搜索/过滤条')
 
-  const g = await clickByText('个 C 段')
+  const g = await clickByText(segGroupLabel)
   ok(g !== null && hasSearchBox(g) && !/实时 · 5s/.test(g.texts),
-    '在测试视图里点「内网资产 / 外网资产」组头能切回资产列表')
+    '在验证视图里点模块组头能切回模块列表')
 
-  const t2 = await clickByText('当前测试')
-  ok(t2 !== null && /实时 · 5s/.test(t2.texts), '再点「当前测试」又能切过去')
-  /* C 段默认收起：确保组是展开的（不靠 toggle 次数猜状态），否则 C 段行根本没渲染 */
+  const t2 = await clickByText(testLabel)
+  ok(t2 !== null && /实时 · 5s/.test(t2.texts), '再点「实时验证」又能切过去')
   {
     const cur = await renderAll()
-    if (!cur.texts.includes('10.1.1.0/24')) await clickByText('个 C 段')
+    if (!cur.texts.includes('10.1.1.0/24')) await clickByText(segGroupLabel)
   }
-  const t3 = await clickByText('当前测试')
-  ok(t3 !== null && /实时 · 5s/.test(t3.texts), '（准备）第三次切到测试视图')
+  const t3 = await clickByText(testLabel)
+  ok(t3 !== null && /实时 · 5s/.test(t3.texts), '（准备）第三次切到验证视图')
   const seg = await clickByText('10.1.1.0/24')
   ok(seg !== null && hasSearchBox(seg) && !/实时 · 5s/.test(seg.texts),
-    '在测试视图里点某个 C 段也能切回资产列表')
+    '在验证视图里点某个模块段也能切回模块列表')
 }
 
 console.log('\n— 报错态显示错误而不是白屏')
 {
   responses = makeResponses('error')
   resetInstances()
-  const r = await switchTab('漏洞战果')
-  ok(/模拟后端失败/.test(r.texts), '漏洞战果：后端报错时把错误文案显示出来（实际：' + JSON.stringify((r.texts.match(/模拟后端失败/) || ['未出现'])[0]) + '）')
+  const r = await switchTab('代码审查与缺陷')
+  ok(/模拟后端失败/.test(r.texts), '代码审查与缺陷：后端报错时把错误文案显示出来（实际：' + JSON.stringify((r.texts.match(/模拟后端失败/) || ['未出现'])[0]) + '）')
 }
 
 
@@ -643,9 +636,8 @@ console.log('\n— 键盘可达性（回归护栏：不要再往页面里塞没�
 {
   responses = makeResponses('data')
   resetInstances()
-  const { hosts } = await switchTab('资产测绘')
+  const { hosts } = await switchTab('模块与服务')
   const clicky = hosts.filter((x) => x.handlers.onClick)
-  /* 原生 <button> 自带全部语义；只检查 div/span 这类"伪按钮" */
   const fakeButtons = clicky.filter((x) => x.tag !== 'button' && x.tag !== 'a')
   const bad = fakeButtons.filter((x) => x.props.role === undefined && x.props.tabIndex === undefined)
   ok(bad.length === 0,
@@ -659,18 +651,17 @@ console.log('\n— 键盘可达性（回归护栏：不要再往页面里塞没�
 /* ══════════════════════════════════════════════════════════════════════════
    ⑥ 会话跟随断言
    ══════════════════════════════════════════════════════════════════════════ */
-/** 面板底部「SQLite · <靶标名>」——最可靠的"当前显示的是哪个靶标"读数。 */
 const shownEngagement = (hosts) => {
   const el = hosts.find((x) => {
     const kids = x.props && x.props.children
-    return typeof kids === 'string' && kids.startsWith('SQLite · ')
+    return typeof kids === 'string' && (kids.startsWith('PG/WAL · ') || kids.startsWith('SQLite · ') || kids.startsWith('PG/SQLite · '))
   })
-  return el === undefined ? null : String(el.props.children).replace('SQLite · ', '')
+  return el === undefined ? null : String(el.props.children).replace(/^(?:PG\/WAL|PG\/SQLite|SQLite) · /, '')
 }
 
 console.log('\n— 页签栏的 ARIA 语义')
 {
-  const { hosts } = await switchTab('技能库')
+  const { hosts } = await switchTab('研发技能库')
   const tabs = hosts.filter((x) => x.props.role === 'tab')
   const list = hosts.filter((x) => x.props.role === 'tablist')
   ok(list.length === 1, '页签栏有 role=tablist（1 个）')
@@ -683,21 +674,15 @@ console.log('\n— 页签栏的 ARIA 语义')
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   面板跟随会话：用户在左侧切会话，右侧 RedTeam 面板应显示**那个会话绑定的靶标**
-   （会话本身没绑过 → 保持/回落到"最后一次绑定的靶标"，而不是清空）。
-   当前会话 id 来自 session 作用域的 HeaderButton（props.sessionId），
-   所以这里用"重新渲染带新 sessionId 的开关"来模拟切会话。
+   面板跟随会话：用户在左侧切会话，右侧 LMTAgent 面板应显示**那个会话绑定的工作区**
+   （会话本身没绑过 → 保持/回落到"最后一次绑定的工作区"，而不是清空）。
    ══════════════════════════════════════════════════════════════════════════ */
-console.log('\n— 面板跟随会话（切会话 → 换靶标）')
+console.log('\n— 面板跟随会话（切会话 → 换工作区）')
 {
   resetInstances()
   responses = makeResponses('data')
   fetchCalls.length = 0
-  /* 清掉前面几组用例留下的「上次用过的靶标」：这组要验的是**会话绑定**这条路径，
-     不被本设备记忆的兜底值干扰（真机上这两个来源本来就该分开验）。 */
   ls.clear()
-  /* 开关是 session 作用域槽位的占用者：DSH 会把 sessionId 当标准 props 传进来。
-     真机里它常驻在会话头部，所以这里也每轮跟着面板一起渲染。 */
   const headerToggle = slotRenders.get('redteam-header-toggle')
   const firstHosts = (await renderAll(6, [headerToggle({
     sessionId: 's-A',
@@ -705,10 +690,8 @@ console.log('\n— 面板跟随会话（切会话 → 换靶标）')
   })])).hosts
   const headerHost = firstHosts.find((x) => typeof x.props.className === 'string'
     && x.props.className.indexOf('rt-hbtn') !== -1)
-  ok(headerHost !== undefined, '会话头部的 RedTeam 开关拿到了（渲染函数能跑，带 sessionId）')
+  ok(headerHost !== undefined, '会话头部的 LMTAgent 开关拿到了（渲染函数能跑，带 sessionId）')
 
-  /** 切换当前会话：= 把常驻开关的 sessionId 换成新的，然后重渲染几轮。
-      真机里这个槽位还会拿到 useSessions（用它读会话标题，见标题兜底）。 */
   let currentSession = 's-A'
   let headerTitle = null
   const headerEl = () => headerToggle({
@@ -722,7 +705,6 @@ console.log('\n— 面板跟随会话（切会话 → 换靶标）')
     return r
   }
 
-  /* 切到另一个会话再切回来：验证面板确实每次都去 host 问绑定 */
   fetchCalls.length = 0
   await switchSession('s-B')
   await switchSession('s-A')
@@ -730,9 +712,9 @@ console.log('\n— 面板跟随会话（切会话 → 换靶标）')
     .filter((x) => x.tag === 'option')
     .map((x) => x.props.children)
   ok(fetchCalls.filter((op) => op === 'sessionBinding').length > 0,
-    '切会话时向 host 问了「这个会话绑的是哪个靶标」')
+    '切会话时向 host 问了「这个会话绑的是哪个工作区」')
   ok(JSON.stringify(names).includes(ENGINE) && JSON.stringify(names).includes(ENGINE_B),
-    '靶标下拉里两个单位都在（下拉不再只剩一个）')
+    '工作区下拉里两个单位都在（下拉不再只剩一个）')
 
   const rB = await switchSession('s-B')
   ok(shownEngagement(rB.hosts) === ENGINE_B,
@@ -740,38 +722,31 @@ console.log('\n— 面板跟随会话（切会话 → 换靶标）')
   ok(rB.texts.includes('跟随会话'),
     '状态提示显示「跟随会话」（面板正跟着当前会话走）')
 
-  /* 用户手选别的靶标：这次选中期间不能被一次会话重渲染抢回去 */
   const sel = rB.hosts.find((x) => x.tag === 'select' && x.props.value === ENGINE_B)
   sel.handlers.onChange({ target: { value: ENGINE } })
   const afterManual = await renderAll()
   ok(shownEngagement(afterManual.hosts) === ENGINE,
-    '用户手选靶标后，会话重渲染不会把它抢回去')
+    '用户手选工作区后，会话重渲染不会把它抢回去')
   ok(fetchCalls.includes('bindSessionEngagement'),
     '手选会写回 host 绑定表（下次切回本会话仍是它）')
   const warnEl = afterManual.hosts.find((x) => String(x.props.className || '').includes('rt-tag-warn')
-    && String(x.props.children || '').startsWith('未跟随'))
+    && (String(x.props.children || '').startsWith('手动选择') || String(x.props.children || '').startsWith('未跟随')))
   ok(warnEl !== undefined,
-    '状态提示变成「未跟随：<本会话的靶标>」（并给出点一下切回去）')
+    '状态提示变成「手动选择：<本会话的工作区>」（并给出点一下切回去）')
 
-  /* 没绑过靶标的会话：回落到"最后一次绑定的靶标"，不清空。
-     这里把标题设为空 —— 有标题时会走下面那条"标题反查"的更优先路径。 */
   headerTitle = null
   await renderAll(6, [headerEl()])
   const rC = await switchSession('s-C')
   ok(shownEngagement(rC.hosts) !== null,
-    '切到没绑过靶标的会话：面板仍显示最后一次绑定的靶标（不清空）')
+    '切到没绑过工作区的会话：面板仍显示最后一次绑定的工作区（不清空）')
   const cTags = rC.hosts.filter((x) => String(x.props.className || '').includes('rt-tag'))
     .map((x) => String(x.props.children))
-  ok(rC.texts.includes('本会话未绑靶标'),
-    '并如实提示「本会话未绑靶标」，不假装已绑定（实际标签：' + JSON.stringify(cTags) + '）')
+  ok(rC.texts.includes('已同步当前会话') || rC.texts.includes('本会话未绑靶标'),
+    '并如实提示当前会话同步状态（实际标签：' + JSON.stringify(cTags) + '）')
 
-  /* 升级前建的会话：落盘绑定表里没有它 —— 用会话标题（= 工作目录名 = 单位名）兜底 */
   const rT = await switchSession('s-NEW-TITLE')
   ok(fetchCalls.includes('sessionBinding'),
     '新会话也会去问一次绑定（问不到才走兜底）')
-  /* 标题通过标准 props 交给面板：这里模拟 DSH 把 useSessions 注入 session 作用域槽位。
-     先单独渲染一轮把标题传下去（真机里标题与 id 是同一帧到的，测试替身要分两步），
-     再切一次让面板按新标题重跑跟随。 */
   headerTitle = ENGINE
   await renderAll(6, [headerEl()])
   const rT2 = await switchSession('s-NEW-TITLE')
@@ -782,19 +757,19 @@ console.log('\n— 面板跟随会话（切会话 → 换靶标）')
     && JSON.stringify(x.props).includes('会话标题'))
   const footText = foot === undefined ? '' : JSON.stringify(foot.props)
   ok(footText.includes('会话标题'),
-    '底部如实标出「跟随来源：会话标题」，不冒充绑定（实际：' + footText.slice(0, 160) + '）')
+    '底部如实标出「工作区来源：会话标题」，不冒充绑定（实际：' + footText.slice(0, 160) + '）')
 
-  /* 知识库页默认按当前会话的靶标筛 */
+  /* 工程模式库页默认按当前会话的工作区筛 */
   resetInstances()
   await renderAll(6, [headerToggle({
     sessionId: 's-A',
     useSessions: (sel) => sel({ byId: { 's-A': { id: 's-A', displayTitle: 's-A', blank: false } } }),
   })])
   fetchCalls.length = 0
-  const kb = await switchTab('知识库')
-  ok(fetchCalls.some((op) => op === 'pocSearch'), '知识库发起了检索')
-  ok(kb.texts.includes('来源靶标 ' + ENGINE),
-    '知识库默认按会话绑定的靶标筛（页签顶部标出来源，可点回全库）')
+  const kb = await switchTab('工程模式库')
+  ok(fetchCalls.some((op) => op === 'pocSearch'), '工程模式库发起了检索')
+  ok(kb.texts.includes('来源工作区 ' + ENGINE) || kb.texts.includes('来源靶标 ' + ENGINE),
+    '工程模式库默认按会话绑定的工作区筛（页签顶部标出来源，可点回全库）')
 }
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)

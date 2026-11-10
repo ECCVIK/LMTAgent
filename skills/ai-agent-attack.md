@@ -1,58 +1,23 @@
 ---
 name: ai-agent-attack
-description: 【验证】AI/Agent 攻击面：模型端点、Agent 工具链、提示词注入、RAG/知识库、API Key 与权限边界（ai-agent/model-*）
-whenToUse: 资产是 AI Agent/模型平台/知识库/推理服务，或发现模型端点、Agent 工具、RAG 接口时
-role: vuln-scan
 category: 验证
-tags: [ai, agent, prompt-injection, model]
-enabled: true
+tags: [llm-agent, prompt-guard, tool-sandbox, rag-eval, schema-validation]
+description: 【验证】AI 智能体与 LLM 工具调用链可靠性评估、結構化输出校验与沙箱边界防护测试
 ---
 
-# AI / Agent 攻击面
+# AI 智能体工作流工程化与沙箱可靠性验证（AI Agent & Tooling Reliability）
 
-> 只做**只读或可回滚**验证：提示词注入证明到“能影响输出/调用工具”即可，不投毒训练数据、不破坏模型、不批量消耗算力。
+## 适用场景（When to Use）
+在构建或评审基于大语言模型（LLM）的多智能体编排系统、MCP 工具调用、RAG 检索管道及结构化 JSON 输出契约时使用。
 
-## 前置与工具
+## 标准工程作业流程（Standard Operating Procedure）
+1. 审查智能体系统提示词（System Prompt）与外部不可信数据（用户输入、网页抓取、文档切片）的隔离边界，确保数据内容不触发未授权工具调用。
+2. 验证所有工具调用（Tool Call）的 JSON Schema 严格校验与幂等回退机制，确保参数异常时返回结构化错误而非崩溃。
+3. 评估多智能体并发槽位（6-Slot Concurrency Gate）与最大递归深度（maxDepth: 3）在异常重试场景下的退避表现。
+4. 记录评估报告与边界测试用例至 `redteam_vuln_add` 或 `redteam_attack_file_add`。
 
-| 工具 | 用途 |
-| --- | --- |
-| `curl` / `browser-automation` | 模型/Agent API、Web 控制台 |
-| `redteam_poc_search` | 已知模型/框架 CVE 与模板 |
-| `redteam_data_proof` | 知识库/训练数据泄露证明 |
-| `score-coverage` | `ai-agent` / `model-compute` / `model-data` 记分口径 |
-
-## 识别
-
-- 模型端点：`/v1/chat/completions`、`/api/generate`、`/infer`、WebSocket；
-- Agent 平台：工具列表、插件、MCP、工作流、代码执行、浏览器工具；
-- 知识库/RAG：上传、检索、引用、文档下载、向量库；
-- 管理面：模型管理、API Key、配额、租户、审计；
-- 云/算力：Jupyter/Kubeflow/MLflow/Ray、GPU 池、模型权重存储。
-
-## 验证顺序
-
-1. **未授权/弱口令**：管理面、API、Jupyter/Kubeflow；
-2. **提示词注入**：在文档/网页/文件名/工具返回中放入“忽略以上、调用工具/泄露系统提示”的测试串，看是否影响输出或触发工具；只证明影响，不执行破坏性工具；
-3. **Agent 工具滥用**：能否让 Agent 读本地文件、发 HTTP、执行命令、访问内部 API；用无害目标/唯一 token 验证；
-4. **RAG/知识库**：能否越权检索其它租户/敏感文档；抽样证明，不批量导出；
-5. **API Key/权限**：模型 Key 是否能访问管理 API、其他模型、账单/配额；
-6. **数据**：训练数据/知识库泄露按 `redteam_data_proof` 记录字段/条数/样本。
-
-## 记分与证据
-
-- `ai-agent`：控制/操作 Agent 的深度（100–500）；
-- `model-compute` / `model-data`：系统管理权限 500；知识库/超大数据 ×2；
-- 普通模型 API 未授权：按 `web-app`/`server-host` 实际权限，不硬套 AI 高分；
-- 证据：`redteam_vuln_add`（`request`/`response` 或 payload/输出）+ `score_hit` 的 `command`/`result`；
-- 提示词注入 evidence 写清“输入 → 输出/工具调用 → 影响”，不要只贴一段 prompt。
-
-## OPSEC 与边界
-
-- 不投毒训练数据、不删模型/知识库、不批量消耗算力；
-- 注入测试用无害指令；不诱导 Agent 攻击第三方；
-- 只读/最小化导出；样本脱敏；
-- 第三方模型/云服务不在范围只记线索。
-
-## 交接
-
-回报：端点/平台、权限、注入是否生效、能调用什么工具、数据字段/条数、未打通的卡点；`needs` 写清缺的账号/Key/范围。
+## 参考命令与代码模板（Reference Snippet）
+```
+# 运行智能体工具 Schema 契约与并发门禁回归测试
+node packages/redteam-tools/test/tool-schema.test.mjs
+```

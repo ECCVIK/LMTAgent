@@ -96,10 +96,10 @@ function pluginIdentity(ctx) {
   const store = ctx.redteam
   const info = store && store.plugin ? store.plugin : null
   return {
-    name: (info && info.name) || 'dsh-redteam-mode',
+    name: (info && info.name) || 'ECCVIK/LMTAgent',
     version: (info && info.version) || null,
-    description: (info && info.description) || '',
-    homepage: (info && info.homepage) || null,
+    description: (info && info.description) || 'LMTAgent · 多智能体软件工程研发与架构交付控制台',
+    homepage: (info && info.homepage) || 'https://github.com/ECCVIK/LMTAgent',
   }
 }
 
@@ -615,9 +615,115 @@ async function readSkillOp(ctx, request, scope) {
  * @param request - `{ op: 'agentsStatus' }`。
  * @returns JSON 结果，或 undefined 表示不是这个 op。
  */
+/**
+ * 发现宿主 DSH 当前打开的所有根会话与子智能体，并在 store 尚未创建/绑定工作区时自动同步建立绑定，
+ * 避免用户在已有会话（如 Greeting / dblmt）中打开控制台时看到空白的「未选择工作区」。
+ */
+async function discoverHostSessions(ctx, store, options = {}) {
+  let sessions = null
+  let subagents = null
+  try { sessions = ctx.get('sessions') } catch { sessions = null }
+  try { subagents = ctx.get('subagents') } catch { subagents = null }
+  if (!sessions || typeof sessions.list !== 'function') return []
+  let rawList = []
+  try { rawList = sessions.list() } catch { rawList = [] }
+  if (!Array.isArray(rawList) || rawList.length === 0) return []
+
+  const roots = rawList.filter((s) => {
+    const header = s && s.header
+    return s && (!header || header.parentSession === undefined || header.parentSession === null)
+  })
+  const items = []
+  for (const root of roots) {
+    const sid = root && root.id !== undefined ? String(root.id) : ''
+    if (!sid) continue
+    const header = (root && root.header) || {}
+    const title = String(header.title || header.name || root.displayTitle || root.title || sid).trim() || sid
+    const cwd = String(header.cwd || header.workspace || header.projectDir || root.cwd || '').trim()
+    const workspace = cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() || '' : ''
+    const displayLabel = workspace && !title.includes(workspace) ? (workspace + ' · ' + title) : title
+    const usage = (root && (root.usage || root.tokenUsage || root.stats || header.usage)) || {}
+    const tokens = Number(
+      usage.totalTokens ?? usage.tokens ?? usage.inputTokens
+      ?? root.totalTokens ?? root.tokens ?? header.tokens ?? 0
+    ) || 0
+    const rounds = Number(
+      usage.rounds ?? usage.turns ?? root.rounds
+      ?? (Array.isArray(root.turns) ? root.turns.length : (Array.isArray(root.messages) ? Math.ceil(root.messages.length / 2) : 0))
+    ) || 0
+    const steps = Number(usage.steps ?? root.steps ?? header.steps ?? 0) || 0
+    const kids = []
+    if (subagents && typeof subagents.listChildren === 'function') {
+      try {
+        const list = await subagents.listChildren(root.id)
+        for (const k of Array.isArray(list) ? list : []) {
+          if (k && k.kind === 'child') {
+            kids.push({
+              id: String(k.id || ''),
+              parent: sid,
+              label: k.label || String(k.id || ''),
+              activity: k.activity || 'idle',
+              mode: k.mode || '',
+            })
+          }
+        }
+      } catch { /* 单个会话子智能体读取失败不阻断 */ }
+    }
+    items.push({
+      id: sid,
+      title,
+      cwd,
+      workspace,
+      displayLabel,
+      tokens,
+      rounds,
+      steps,
+      children: kids,
+      running_children: kids.filter((c) => c.activity === 'running').length,
+    })
+  }
+
+  /* 若宿主已有根会话，但 store 尚无任何工作区或当前会话未绑定工作区，则自动创建/绑定对应工作区 */
+  if (options.autoBind !== false && store && items.length > 0) {
+    try {
+      const listed = dispatch(store, { op: 'listEngagements' })
+      const engagements = (listed && Array.isArray(listed.items)) ? listed.items : []
+      const targetSid = options.sessionId ? resolveRootSessionId(ctx, options.sessionId) : items[0].id
+      const targetSession = items.find((x) => x.id === targetSid) || items[0]
+      if (engagements.length === 0 && targetSession) {
+        const opened = dispatch(store, {
+          op: 'openEngagement',
+          name: targetSession.displayLabel || targetSession.title || 'LMTAgent 默认工作区',
+          note: targetSession.cwd ? ('自动同步自 DSH 会话工作目录 ' + targetSession.cwd) : '自动同步自 DSH 当前会话',
+        })
+        if (opened && opened.ok && opened.engagement && opened.engagement.id) {
+          dispatch(store, { op: 'bindSessionEngagement', session: targetSession.id, id: opened.engagement.id })
+        }
+      } else if (targetSession) {
+        const binding = dispatch(store, { op: 'sessionBinding', session: targetSession.id })
+        if (!binding || !binding.engagement) {
+          const matched = engagements.find((e) => e.name === targetSession.displayLabel || e.name === targetSession.title) || engagements[0]
+          if (matched && matched.id) {
+            dispatch(store, { op: 'bindSessionEngagement', session: targetSession.id, id: matched.id })
+          }
+        }
+      }
+      /* 为每个宿主会话附带其绑定的工作区 ID */
+      for (const item of items) {
+        try {
+          const b = dispatch(store, { op: 'sessionBinding', session: item.id })
+          item.engagementId = (b && b.engagement && b.engagement.id) || null
+          item.engagementName = (b && b.engagement && b.engagement.name) || null
+        } catch { /* ignore */ }
+      }
+    } catch { /* 自动绑定异常不影响会话发现 */ }
+  }
+  return items
+}
+
 async function handleAgentsOp(ctx, request) {
   const AGENT_OPS = [
-    'agentsStatus', 'setAgentsMax', 'setClusterConfig', 'setPgUrl', 'probePg',
+    'agentsStatus', 'hostSessions', 'setAgentsMax', 'setClusterConfig', 'setPgUrl', 'probePg',
     'pgWriteProbe', 'workflowDag', 'workflowAction', 'dagCheckpoint', 'feishuNotify',
   ]
   if (!AGENT_OPS.includes(request.op)) return undefined
@@ -628,6 +734,15 @@ async function handleAgentsOp(ctx, request) {
   const activeEngagement = request.engagement
     || (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null)
     || 'default'
+
+  if (request.op === 'hostSessions') {
+    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true })
+    return {
+      ok: true,
+      items: hostSessions,
+      active_engagement: store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : activeEngagement,
+    }
+  }
 
   if (request.op === 'pgWriteProbe') {
     const probe = store && typeof store.pgWriteProbe === 'function'
@@ -726,6 +841,7 @@ async function handleAgentsOp(ctx, request) {
   const pgProbe = store && typeof store.pgWriteProbe === 'function'
     ? store.pgWriteProbe(activeEngagement)
     : getPgWriteProbe(activeEngagement)
+  const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true })
   const subagents = ctx.get('subagents')
   const sessions = ctx.get('sessions')
   if (subagents === undefined || subagents === null || sessions === undefined || sessions === null || typeof sessions.list !== 'function') {
@@ -739,6 +855,7 @@ async function handleAgentsOp(ctx, request) {
       maxDepth,
       db_engine: dbEngine,
       pg_probe: pgProbe,
+      host_sessions: hostSessions,
     }
   }
   const children = []
@@ -766,12 +883,14 @@ async function handleAgentsOp(ctx, request) {
       maxDepth,
       db_engine: dbEngine,
       pg_probe: pgProbe,
+      host_sessions: hostSessions,
     }
   }
   const running = children.filter((c) => c.activity === 'running')
   return {
     ok: true, max, used: running.length, free: Math.max(max - running.length, 0),
     running: running.slice(0, 20), total_children: children.length,
+    host_sessions: hostSessions,
     source: maxAgentsSourceOf(root, process.env),
     limit: MAX_AGENTS_LIMIT,
     default_max: DEFAULT_MAX_AGENTS,
@@ -785,7 +904,7 @@ async function handleAgentsOp(ctx, request) {
     max_depth_limit: MAX_DEPTH_LIMIT,
     db_engine: dbEngine,
     pg_probe: pgProbe,
-    note: '同一会话（项目/靶标）同时最多 ' + max + ' 个执行智能体；按 4-Wave Bounded DAG 并发调度。',
+    note: '同一会话（工程工作区）同时最多 ' + max + ' 个执行智能体；按 4-Wave Bounded DAG 并发调度。',
   }
 }
 
@@ -956,6 +1075,17 @@ export function apply(ctx) {
           return
         }
         const skillResult = await handleSkillOp(ctx, request)
+        if (skillResult !== undefined) {
+          sendJson(res, 200, skillResult)
+          return
+        }
+        /* bootstrap / sessionBinding 时同步发现宿主 DSH 会话并确保当前会话已绑定工作区 */
+        let hostSessions = null
+        if (request.op === 'bootstrap' || request.op === 'sessionBinding') {
+          try {
+            hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true })
+          } catch { hostSessions = [] }
+        }
         /* 会话类 op 需要"沿 parentSession 走到根会话"：绑定表只记根会话键，
            而界面里点开的可能是子智能体的会话（见 resolveRootSessionId）。
            其他 op 不受影响 —— 只是多带一个函数，dispatch 只在 sessionBinding* 用它。 */
@@ -963,7 +1093,11 @@ export function apply(ctx) {
           ? Object.assign({}, request, { resolveRoot: (sid) => resolveRootSessionId(ctx, sid) })
           : request
         /* dispatchAsync 只多处理 probeSessions（连通性探测需要真实发起连接） */
-        sendJson(res, 200, skillResult === undefined ? await dispatchAsync(store, withRoot) : skillResult)
+        const result = await dispatchAsync(store, withRoot)
+        if (hostSessions !== null && result && typeof result === 'object') {
+          result.host_sessions = hostSessions
+        }
+        sendJson(res, 200, result)
       } catch (error) {
         sendJson(res, 400, { ok: false, error: error && error.message ? error.message : String(error) })
       }

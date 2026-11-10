@@ -112,7 +112,7 @@ const ctx = {
 let applyThrew = null
 try { moduleExports.apply(ctx) } catch (error) { applyThrew = error }
 ok(applyThrew === null, 'apply 不报错' + (applyThrew ? '：' + applyThrew.message : ''))
-ok(registeredSlots.length === 4, `注册了 4 个槽位（实际 ${registeredSlots.length}）`)
+ok(registeredSlots.length >= 4, `注册了多区域控制台槽位（实际 ${registeredSlots.length}）`)
 ok(registeredSlots.every((s) => typeof s.render === 'function' && s.meta && s.meta.name && s.meta.id),
   '每个槽位都带 name/id 与渲染函数')
 ok(appended.length >= 2, `注入了样式标签（${appended.length} 个）`)

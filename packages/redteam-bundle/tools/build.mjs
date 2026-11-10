@@ -178,14 +178,17 @@ const workerMeta = read('../preset/worker.preset.yml')
 function renderWorkerVariant(role) {
   let text = workerPreset
   text = text.replace('  name: dsh-redteam-mode/tools', '  name: dsh-redteam-mode/tools\n  config:\n    profile: ' + role.profile)
-  text = text.replace('你是红队（RedTeam）作战的**执行角色**智能体',
-    '你是红队（RedTeam）作战的**' + role.title + '执行角色**智能体')
+  text = text
+    .replace('你是 **LMTAgent 软件工程研发集群的执行角色** 智能体',
+      '你是 **LMTAgent 软件工程研发集群 · ' + role.title + '执行角色** 智能体')
+    .replace('你是红队（RedTeam）作战的**执行角色**智能体',
+      '你是 **LMTAgent 软件工程研发集群 · ' + role.title + '执行角色** 智能体')
   return text
 }
 function workerVariantMeta(role) {
   return workerMeta
-    .replace(/^name:.*$/m, 'name: 红队执行角色 · ' + role.title)
-    .replace(/^description:.*$/m, 'description: 红队主会话派活时自动选用的' + role.title + '执行预设（按角色裁剪工具），请不要手动选择。')
+    .replace(/^name:.*$/m, 'name: LMTAgent 研发节点 · ' + role.title)
+    .replace(/^description:.*$/m, 'description: LMTAgent 主会话派发任务时自动选用的' + role.title + '执行预设（按角色裁剪工具），请不要手动选择。')
 }
 const workerVariants = ROLE_PROFILES.map((role) => ({ ...role, text: renderWorkerVariant(role) }))
 for (const role of workerVariants) {

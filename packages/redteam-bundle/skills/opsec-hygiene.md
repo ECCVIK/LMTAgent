@@ -1,63 +1,24 @@
 ---
 name: opsec-hygiene
-description: 【基础设施】OPSEC 与收口：噪声预算、账号锁定、基础设施分离、日志边界、载荷/隧道/账号清理与交付前核对
-whenToUse: 开工前定噪声与时间盒、出现封禁/锁定、长时间扫描后、交付前确认没有遗留入口时
-role: internal
 category: 基础设施
-tags: [opsec, cleanup, noise, lockout]
-enabled: true
+tags: [env-hygiene, secret-sanitization, git-clean, cleanup-ledger, audit-log]
+description: 【基础设施】研发工程操作卫生规范：严禁明文密钥入库、非破坏性测试底线与发布前环境清理台账核销
 ---
 
-# OPSEC 与收口
+# 工程环境卫生与安全交付合规规范（Engineering Hygiene & Safe Delivery）
 
-> 目标不是“更隐蔽”，而是**不把演练打成事故**：不锁死账号、不打断业务、不留下不可控入口，交付时能说清放了什么、清了什么。
+## 适用场景（When to Use）
+贯穿整个 LMTAgent 研发周期的工程安全底线：管理 API 密钥、保护生产数据安全、清理临时联调探针并确保代码仓库零敏感信息泄露。
 
-## 开工前
+## 标准工程作业流程（Standard Operating Procedure）
+1. 密钥隔离：所有第三方 API Key、数据库口令与私钥必须通过环境变量或 `.env`（已加入 `.gitignore`）注入，严禁写进命令行参数、源码注释或提交历史。
+2. 非破坏性原则：在预发或存量数据库上验证迁移与查询时，坚持只读抽样或事务回滚（`BEGIN ... ROLLBACK`），严禁执行未备份的 `DROP` / `TRUNCATE`。
+3. 清理台账闭环：联调期间创建的临时测试账号、运行态探针端点与端口转发通道必须登记至 `redteam_cleanup`，交付前逐项核销为 `done`。
+4. 发版前运行敏感信息扫描测试，确保打包产物干净可复现。
 
-- 噪声预算：每目标每秒请求数、并发、爆破次数、允许的扫描窗口；
-- 账号锁定策略：先确认阈值/观察窗，在线尝试严格限流；同一账号失败 5 次停；
-- 基础设施分离：C2/扫描/回调/代理不复用目标单位域名或 IP；
-- 时间盒与停止条件：什么情况立即停（业务异常、被封、触发告警、越界）；
-- 记录用户确认的范围/供应商/云服务。
-
-## 运行中
-
-- 先只读、后写入；写操作先备份/记录原值；
-- WAF/封禁：降速、换 UA、必要时换出口（`cn-proxy-pool` / `egress-ip-rotate`），不要无限重试；
-- 同一目标累计被封 >3 次放弃并写清剩余面；
-- 不做删除/加密/重启/批量改密/清日志；
-- 第三方/供应商不在范围只记线索。
-
-## 清理台账
-
-用 `redteam_cleanup` 登记：
-
-```text
-redteam_cleanup op=add kind=webshell target=... location=/upload/x.jsp
-redteam_cleanup op=add kind=account target=... detail=临时账号
-redteam_cleanup op=add kind=tunnel target=... location=127.0.0.1:1080
-redteam_cleanup op=list status=open
-redteam_cleanup op=update id=... status=done
+## 参考命令与代码模板（Reference Snippet）
 ```
-
-交付前 **open 必须为 0**，或逐条写明 kept 及原因（用户要求保留的入口）。
-
-## 清理顺序
-
-1. 关闭/删除自己创建的隧道、WebShell、计划任务、上传文件；
-2. 停用/删除临时账号，恢复改过的配置（按备份原值）；
-3. 关闭本地监听、回调服务、C2 listener；
-4. 清理 `runs/` 中的敏感数据（按用户要求保留证据的除外）；
-5. 不清理目标日志；只清理自己放在目标上的东西。
-
-## 证据与交接
-
-- 清理记录进 `redteam_cleanup`；报告/交付说明写清“保留/清理”；
-- 不把凭据/密钥写进清理 detail；
-- 交接回报：噪声/封禁、锁定、清理 open 数、未清理原因、需要用户确认的保留项。
-
-## 红线
-
-- 不清理目标日志、不删除目标数据、不破坏业务；
-- 不把“清理”当成“掩盖痕迹”；演练记录要可审计；
-- 用户要求保留的入口必须书面确认并登记 kept。
+# 检查 Git 工作区状态与敏感信息零泄露测试
+git status --short
+node packages/redteam-bundle/test/no-confidential.test.mjs
+```

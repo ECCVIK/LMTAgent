@@ -162,15 +162,15 @@ const SHELL_CSS = `
     flex-shrink: 0;
   }
 
-  /* p2: Bottom-Left PostgreSQL Write Activity Probe Widget */
+  /* p2 & p4: Theme-Adaptive PostgreSQL Write Activity Probe Widget */
   .wb-pg-probe {
     padding: 8px 9px;
     border-radius: 10px;
-    background: #0F172A;
-    border: 1px solid #1E293B;
-    color: #E2E8F0;
+    background: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    color: #0F172A;
     font-size: 10px;
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.14);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
   }
   .wb-pg-probe-head {
     display: flex;
@@ -181,7 +181,7 @@ const SHELL_CSS = `
   .wb-pg-probe-title {
     font-weight: 700;
     font-size: 10.8px;
-    color: #F8FAFC;
+    color: #0F172A;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -189,9 +189,9 @@ const SHELL_CSS = `
   .wb-pg-live-badge {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 9.2px;
-    color: #34D399;
-    background: rgba(16, 185, 129, 0.14);
-    border: 1px solid rgba(16, 185, 129, 0.35);
+    color: #059669;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.32);
     padding: 1px 6px;
     border-radius: 999px;
     font-weight: 600;
@@ -204,11 +204,11 @@ const SHELL_CSS = `
     align-items: center;
     gap: 3px;
     padding: 2.5px 0;
-    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    border-top: 1px solid #E2E8F0;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 9px;
   }
-  .wb-pg-tbl { color: #93C5FD; font-weight: 600; white-space: nowrap; }
+  .wb-pg-tbl { color: #2563EB; font-weight: 600; white-space: nowrap; }
   .wb-pg-op {
     font-size: 8.5px;
     padding: 0 3px;
@@ -217,16 +217,16 @@ const SHELL_CSS = `
     font-weight: 700;
     white-space: nowrap;
   }
-  .wb-pg-op.ins { background: rgba(77, 107, 254, 0.25); color: #93C5FD; }
-  .wb-pg-op.upd { background: rgba(14, 165, 233, 0.25); color: #7DD3FC; }
-  .wb-pg-op.spw { background: rgba(16, 185, 129, 0.24); color: #6EE7B7; }
-  .wb-pg-op.ups { background: rgba(139, 92, 246, 0.25); color: #C4B5FD; }
-  .wb-pg-role { color: #CBD5E1; font-size: 8.8px; white-space: nowrap; }
-  .wb-pg-lat { color: #38BDF8; text-align: right; font-size: 8.8px; white-space: nowrap; }
+  .wb-pg-op.ins { background: rgba(77, 107, 254, 0.12); color: #2563EB; }
+  .wb-pg-op.upd { background: rgba(14, 165, 233, 0.14); color: #0284C7; }
+  .wb-pg-op.spw { background: rgba(16, 185, 129, 0.14); color: #059669; }
+  .wb-pg-op.ups { background: rgba(139, 92, 246, 0.14); color: #6D28D9; }
+  .wb-pg-role { color: #475569; font-size: 8.8px; white-space: nowrap; }
+  .wb-pg-lat { color: #0284C7; text-align: right; font-size: 8.8px; white-space: nowrap; }
   .wb-pg-bar {
     grid-column: 1 / -1;
     height: 2.5px;
-    background: rgba(148, 163, 184, 0.15);
+    background: #E2E8F0;
     border-radius: 2px;
     overflow: hidden;
     margin-top: 1px;
@@ -527,12 +527,13 @@ const SHELL_CSS = `
   }
   .bento-pg-stream-grid > * { min-width: 0; }
   .bento-sql-feed {
-    background: #0F172A;
+    background: #F8FAFC;
+    border: 1px solid #CBD5E1;
     border-radius: 8px;
     padding: 8px 10px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 9.6px;
-    color: #CBD5E1;
+    color: #334155;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -678,23 +679,23 @@ const SHELL_CSS = `
 
 function renderWorkbenchShell({ activeGroup, activeTab, bodyHtml, chatHtml }) {
   const groups = [
-    ['overview', '态势'],
-    ['assets', '资产'],
-    ['results', '交付'],
+    ['overview', '总览'],
+    ['assets', '架构'],
+    ['results', '质量'],
     ['report', '报告'],
-    ['resources', '资源'],
+    ['resources', '集群'],
   ]
   const subTabsByGroup = {
-    overview: [['overview', '全局态势']],
-    assets: [['assets', '分片与写表探针']],
-    results: [['deliverables', '构建产物'], ['gates', '质量门禁']],
-    report: [['report', '文稿主从墙']],
+    overview: [['overview', '全局总览']],
+    assets: [['assets', '模块与服务']],
+    results: [['findings', '代码审查与缺陷'], ['scores', '交付里程碑']],
+    report: [['report', '研发交付报告']],
     resources: [
-      ['agents', '智能体编排'],
-      ['sessions', '工作流通道'],
-      ['artifacts', '契约与配置'],
-      ['knowledge', '知识库'],
-      ['skills', '技能库'],
+      ['agents', '智能体与并发'],
+      ['sessions', '运行环境'],
+      ['artifacts', '构建产物'],
+      ['knowledge', '工程模式库'],
+      ['skills', '研发技能库'],
     ],
   }
   const subTabs = subTabsByGroup[activeGroup] || []
@@ -711,42 +712,43 @@ function renderWorkbenchShell({ activeGroup, activeTab, bodyHtml, chatHtml }) {
     <div class="wb-titlebar">
       <div class="wb-traffic"><span class="c-red"></span><span class="c-amber"></span><span class="c-green"></span></div>
       <div class="wb-brand">
-        <span class="wb-brand-logo">D</span>
-        <span>DSH Desktop · LMTAgent Multi-Agent Software Factory</span>
+        <span class="wb-brand-logo">L</span>
+        <span>DSH Desktop · LMTAgent Multi-Agent Software Engineering Cluster</span>
       </div>
       <span class="wb-pill">WorkBuddy × DSH Blue UI</span>
-      <span class="wb-pill wb-pill-pg">PostgreSQL 16 Wire v3 · Live Probe</span>
+      <span class="wb-pill wb-pill-pg">PostgreSQL 16 Wire v3 · Theme-Adaptive Probe</span>
       <span class="wb-pill">dsh-harness-one · 递归子代理 (thinking: low)</span>
       <div style="flex:1"></div>
-      <span style="font-size:11.5px;color:#94A3B8;font-family:monospace">ECCVIK/lmtagent · v0.15.1</span>
+      <span style="font-size:11.5px;color:#94A3B8;font-family:monospace">ECCVIK/LMTAgent · v0.16.0</span>
     </div>
 
     <div class="wb-workspace">
       <div class="wb-sidebar">
-        <div class="wb-side-sec">DSH 研发工作空间</div>
-        <div class="wb-side-item active"><span class="wb-side-dot"></span>dsh-desktop 核心插件集群</div>
+        <div class="wb-side-sec">DSH 研发工作空间 (实时会话同步)</div>
+        <div class="wb-side-item active"><span class="wb-side-dot"></span>LMTAgent 核心插件集群</div>
         <div class="wb-side-item"><span>📦</span>dsh-harness-one 编排引擎</div>
-        <div class="wb-side-item"><span>🛡️</span>pg-wire-v3 存储内核</div>
+        <div class="wb-side-item"><span>🗄️</span>pg-wire-v3 存储内核</div>
+        <div class="wb-side-item" style="background:rgba(77,107,254,0.1);color:#2563EB;font-weight:700"><span>⚡</span>LMTAgent 研发控制台</div>
 
-        <div class="wb-side-sec" style="margin-top:4px">8-Role gstack 编队</div>
+        <div class="wb-side-sec" style="margin-top:4px">实际参与角色实时决策流</div>
         <div class="wb-side-item active"><span class="wb-side-dot"></span>⓪ plan · Captain 主控</div>
         <div class="wb-side-item"><span>①</span>recon · CEO 需求规划</div>
         <div class="wb-side-item"><span>②</span>designer · UI 规范</div>
         <div class="wb-side-item"><span>③</span>assess · Eng Manager</div>
-        <div class="wb-side-item"><span>④</span>vuln-scan · CSO 审查</div>
+        <div class="wb-side-item"><span>④</span>vuln-scan · 审查与安全</div>
         <div class="wb-side-item active"><span class="wb-side-dot"></span>⑤ exploit · 6× Builder + Sub</div>
         <div class="wb-side-item"><span>⑥</span>qa · QA Lead 门禁</div>
         <div class="wb-side-item"><span>⑦</span>internal · Release 文稿</div>
 
         <div style="flex:1"></div>
 
-        <!-- p2: Live PostgreSQL Write Activity Probe in Bottom-Left Sidebar -->
+        <!-- p2 & p4: Theme-Adaptive PostgreSQL Write Activity Probe in Bottom-Left Sidebar -->
         <div class="wb-pg-probe">
           <div class="wb-pg-probe-head">
             <span class="wb-pg-probe-title">⚡ PG 写表活动探针</span>
-            <span style="font-family:monospace;font-size:9px;color:#94A3B8">rt_dsh</span>
+            <span style="font-family:monospace;font-size:9px;color:#64748B">rt_lmtagent</span>
           </div>
-          <div class="wb-pg-live-badge">● LIVE · 42 writes/min · 0.4ms</div>
+          <div class="wb-pg-live-badge">● 实时监控 · 42 writes/min · 0.4ms</div>
 
           <div class="wb-pg-row">
             <span class="wb-pg-tbl">modules</span>
@@ -789,23 +791,23 @@ function renderWorkbenchShell({ activeGroup, activeTab, bodyHtml, chatHtml }) {
       <div class="wb-chat">
         <div class="wb-chat-head">
           <span>💬 主会话 · Captain (plan) 递归 DAG 调度</span>
-          <span class="rt-icon-btn on"><span style="font-size:12px">⛨</span><span>Cluster</span></span>
+          <span class="rt-hbtn on">⚡ LMTAgent 控制台</span>
         </div>
         <div class="wb-chat-body">
           ${chatHtml}
         </div>
       </div>
 
-      <div class="rt-dock" data-open="1">
+      <div class="rt-dock" data-open="1" style="width:796px;max-width:none">
         <div class="rt-head">
-          <div class="rt-title"><span class="rt-dot"></span>DSH 研发集群控制台</div>
+          <div class="rt-title"><span class="rt-dot"></span>LMTAgent 研发控制台</div>
           <span class="rt-tag rt-tag-live">跟随会话</span>
-          <select class="rt-input" style="max-width:170px"><option>dsh-desktop 核心插件集群</option></select>
+          <select class="rt-input" style="max-width:170px"><option>LMTAgent 核心插件集群</option></select>
           <div class="rt-spacer"></div>
-          <span class="rt-tag">v0.15.1</span>
+          <span class="rt-tag">v0.16.0</span>
           <button class="rt-btn">并发 6/12</button>
           <button class="rt-btn">刷新</button>
-          <button class="rt-btn">文稿墙</button>
+          <button class="rt-btn">全面浏览</button>
         </div>
 
         <div class="rt-tabs rt-tabs-groups">
@@ -820,10 +822,10 @@ function renderWorkbenchShell({ activeGroup, activeTab, bodyHtml, chatHtml }) {
         </div>
 
         <div class="rt-foot">
-          <span class="rt-wb-badge">PGSQL Wire v3 · 6+4 Recursive Slots (thinking: low)</span>
+          <span class="rt-wb-badge">LMTAgent · PGSQL Wire v3 · 4-Wave DAG</span>
           <div class="rt-spacer"></div>
-          <span>Schema: rt_dsh_desktop · 1,480 TX</span>
-          <span>飞书 Webhook 已就绪</span>
+          <span>PG/WAL · LMTAgent 核心插件集群</span>
+          <span>会话 9f8a2c1e · 跟随会话</span>
         </div>
       </div>
     </div>
@@ -834,34 +836,34 @@ function renderWorkbenchShell({ activeGroup, activeTab, bodyHtml, chatHtml }) {
 
 const DEFAULT_CHAT_HTML = `
   <div class="wb-msg-user">
-    重构 dsh-desktop 研发集群控制台：升级模块化 Bento 统计面板、左下角 PG 实时写表探针、可调节 6/12 并发槽与 thinking: low 递归子代理，并生成主从文稿墙与飞书群聊战报。
+    重构 LMTAgent 软件研发集群控制台：实现当前会话实时同步切换、实际应用角色实时决策流预览、主题自适应 PG 写表活动探针、可调节 6/12 并发槽与 thinking: low 递归子代理。
   </div>
   <div class="wb-msg-agent">
     <div class="wb-msg-agent-head">
       <span class="rt-dot"></span>
-      <span>Captain (plan) · Workflow One 调度器</span>
+      <span>Captain (plan) · LMTAgent 架构主控</span>
       <span class="rt-tag rt-tag-live" style="margin-left:auto">Wave 3 · 6+4 槽</span>
     </div>
-    <div>已完成 <b>Wave 1</b>（CEO PRD + Designer UI 令牌）与 <b>Wave 2</b>（Eng Manager 6 分片契约），当前调度 <b>6 个主 Builder 槽 + 4 个递归子代理 (thinking: low)</b>：</div>
+    <div>已同步当前会话 <b>LMTAgent 核心插件集群</b>，完成 <b>Wave 1</b>（CEO PRD + Designer UI 令牌）与 <b>Wave 2</b>（Eng Manager 6 分片契约），当前调度 <b>6 个主 Builder 槽 + 4 个递归子代理 (thinking: low)</b>：</div>
     <div class="wb-tool-call"><span><b>redteam_agent_slot</b>(action="set_limit", max=6)</span><span style="color:#2563EB;font-weight:600">✓ 6/12 槽生效</span></div>
     <div class="wb-tool-call"><span><b>subagent_spawn</b>(role="exploit#1", think="low")</span><span style="color:#0284C7;font-weight:600">↳ Sub #1a</span></div>
-    <div class="wb-tool-call"><span><b>pg_write_probe</b>(schema="rt_dsh", wal="0.4ms")</span><span style="color:#10B981;font-weight:600">● 42 w/min</span></div>
+    <div class="wb-tool-call"><span><b>pg_write_probe</b>(schema="rt_lmtagent", wal="0.4ms")</span><span style="color:#10B981;font-weight:600">● 42 w/min</span></div>
   </div>
   <div class="wb-msg-agent">
     <div class="wb-msg-agent-head">
       <span class="rt-dot" style="background:#0EA5E9"></span>
-      <span>PostgreSQL Wire v3 事实库写表探针流</span>
+      <span>实时角色决策流 &amp; PostgreSQL 写表探针</span>
       <span class="rt-tag rt-tag-passive" style="margin-left:auto">0.4ms WAL</span>
     </div>
     <div style="font-size:11px;color:#475569;line-height:1.55">
       · <b>modules / file_shards</b>：6 个无交集分片锁全部校验通过（零写冲突）<br/>
       · <b>subagents</b>：4 个递归子代理以 <code>thinking: low</code> 轻量模式完成辅助编码<br/>
-      · <b>qa_runs / doc_wall</b>：18 套件 888 断言全绿，文稿墙与飞书通知已同步归档。
+      · <b>qa_runs / doc_wall</b>：18 套件 888 断言全绿，交付报告与飞书通知已同步归档。
     </div>
   </div>
 `
 
-// 1. Shot 1: Overview Tab — p1 Software Dev Cluster + p4 Modular Bento Dashboard (Token & Latency Ring Gauges)
+// 1. Shot 1: Overview Tab — Real Session Telemetry + Active Role Decision Preview + Theme-Adaptive PG Write Probe
 const overviewBody = `
   <div class="bento-wrap">
     <!-- Top Bento Card: 集群上下文与编队统计 -->
@@ -869,10 +871,10 @@ const overviewBody = `
       <div class="bento-head">
         <div class="bento-title">
           <span class="rt-dot"></span>
-          <span>集群上下文与编队统计</span>
-          <span class="rt-tag rt-tag-live">Software Dev Cluster · Zero-Conflict Shards</span>
+          <span>当前会话上下文与角色决策流总览</span>
+          <span class="rt-tag rt-tag-live">已同步会话 · LMTAgent 核心插件集群</span>
         </div>
-        <span style="font-size:10.5px;color:#64748B;font-family:monospace">Session #9f8a2c1e · 4-Wave DAG</span>
+        <span style="font-size:10.5px;color:#64748B;font-family:monospace">Session #9f8a2c1e · 42.8K tok</span>
       </div>
 
       <div class="bento-top-grid">
@@ -883,12 +885,12 @@ const overviewBody = `
               <div class="bento-kpi-lbl">18 轮次 · 主从交互</div>
             </div>
             <div class="bento-kpi">
-              <div class="bento-kpi-val">312 <span style="font-size:10px;font-weight:600;color:#475569">步</span></div>
-              <div class="bento-kpi-lbl">312 DAG 步数</div>
+              <div class="bento-kpi-val">8 <span style="font-size:10px;font-weight:600;color:#475569">角色</span></div>
+              <div class="bento-kpi-lbl">实际参与角色决策</div>
             </div>
             <div class="bento-kpi">
               <div class="bento-kpi-val">29 <span style="font-size:10px;font-weight:600;color:#475569">项</span></div>
-              <div class="bento-kpi-lbl">29 技能加载 (gstack)</div>
+              <div class="bento-kpi-lbl">29 研发技能加载</div>
             </div>
             <div class="bento-kpi" style="border-color:rgba(14,165,233,0.35);background:#F0F9FF">
               <div class="bento-kpi-val" style="color:#0284C7">6 + 4 <span style="font-size:9.5px;font-weight:700">low</span></div>
@@ -903,8 +905,8 @@ const overviewBody = `
           <div class="bento-bars-grid">
             <div class="bento-bar-box">
               <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:700;color:#0F172A;margin-bottom:4px">
-                <span>上下文载荷结构</span>
-                <span style="color:#2563EB">128K Window · 76%</span>
+                <span>当前会话上下文载荷</span>
+                <span style="color:#2563EB">42.8K / 128K Window</span>
               </div>
               <div class="bento-bar-track">
                 <div style="width:68%;background:#4D6BFE"></div>
@@ -916,13 +918,13 @@ const overviewBody = `
                 <span><b style="color:#4D6BFE">■</b> 代码分片读写 68%</span>
                 <span><b style="color:#0EA5E9">■</b> 架构契约 14%</span>
                 <span><b style="color:#10B981">■</b> 测试门禁 11%</span>
-                <span><b style="color:#8B5CF6">■</b> 文稿产物 7%</span>
+                <span><b style="color:#8B5CF6">■</b> 交付文稿 7%</span>
               </div>
             </div>
 
             <div class="bento-bar-box">
               <div style="display:flex;justify-content:space-between;font-size:10px;font-weight:700;color:#0F172A;margin-bottom:4px">
-                <span>多智能体算力占比</span>
+                <span>实际应用角色算力占比</span>
                 <span style="color:#0284C7">6 主槽 + 4 递归槽</span>
               </div>
               <div class="bento-bar-track">
@@ -934,7 +936,7 @@ const overviewBody = `
               <div class="bento-legend-grid">
                 <span><b style="color:#4D6BFE">■</b> exploit (Builder) 54%</span>
                 <span><b style="color:#0EA5E9">■</b> Sub-Worker (low) 22%</span>
-                <span><b style="color:#10B981">■</b> qa / cso 16%</span>
+                <span><b style="color:#10B981">■</b> qa / review 16%</span>
                 <span><b style="color:#6366F1">■</b> plan / assess 8%</span>
               </div>
             </div>
@@ -944,11 +946,11 @@ const overviewBody = `
         <!-- Right-side Plugin & Orchestrator Info Card -->
         <div class="bento-plugin-box">
           <div style="font-weight:800;color:#0F172A;font-size:10.8px;margin-bottom:3px;display:flex;align-items:center;justify-content:space-between">
-            <span>集群与引擎信息</span>
-            <span class="rt-tag rt-tag-live" style="font-size:8.8px;padding:1px 5px">ONLINE</span>
+            <span>LMTAgent 集群引擎</span>
+            <span class="rt-tag rt-tag-live" style="font-size:8.8px;padding:1px 5px">SYNCED</span>
           </div>
-          <div class="bento-plugin-row"><span style="color:#64748B">插件</span><b style="color:#0F172A">dsh-redteam-mode v0.15.1</b></div>
-          <div class="bento-plugin-row"><span style="color:#64748B">引擎</span><b style="color:#2563EB">Workflow One DAG</b></div>
+          <div class="bento-plugin-row"><span style="color:#64748B">仓库</span><b style="color:#0F172A">ECCVIK/LMTAgent v0.16.0</b></div>
+          <div class="bento-plugin-row"><span style="color:#64748B">引擎</span><b style="color:#2563EB">4-Wave 角色决策流</b></div>
           <div class="bento-plugin-row"><span style="color:#64748B">递归</span><b style="color:#0284C7">递归派发 maxDepth: 3</b></div>
           <div class="bento-plugin-row"><span style="color:#64748B">思考</span><b style="color:#10B981">默认思考: low</b></div>
           <div class="bento-plugin-row"><span style="color:#64748B">并发槽</span><b style="color:#0F172A">6 / 12 自适应调节</b></div>
@@ -961,29 +963,23 @@ const overviewBody = `
       <!-- Left Card: Token 统计 -->
       <div class="bento-card">
         <div class="bento-head">
-          <div class="bento-title">Token 统计</div>
+          <div class="bento-title">Token 统计（实时读取当前会话）</div>
           <span class="rt-tag rt-tag-live">缓存命中 97.8%</span>
         </div>
         <div class="bento-donut-layout">
           <div class="bento-donut-svg-wrap">
             <svg width="104" height="104" viewBox="0 0 108 108" style="transform:rotate(-90deg)">
               <circle cx="54" cy="54" r="42" fill="none" stroke="#F1F5F9" stroke-width="13" />
-              <!-- 44.0% Builder (#4D6BFE) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#4D6BFE" stroke-width="13" stroke-dasharray="116.11 263.89" stroke-dashoffset="0" />
-              <!-- 19.4% Recursive Subagent low (#0EA5E9) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#0EA5E9" stroke-width="13" stroke-dasharray="51.20 263.89" stroke-dashoffset="-116.11" />
-              <!-- 16.5% Tools & Skills (#6366F1) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#6366F1" stroke-width="13" stroke-dasharray="43.54 263.89" stroke-dashoffset="-167.31" />
-              <!-- 8.1% Captain & Design (#8B5CF6) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#8B5CF6" stroke-width="13" stroke-dasharray="21.38 263.89" stroke-dashoffset="-210.85" />
-              <!-- 7.8% QA & CSO (#10B981) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#10B981" stroke-width="13" stroke-dasharray="20.58 263.89" stroke-dashoffset="-232.23" />
-              <!-- 4.2% System & Contract (#F59E0B) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#F59E0B" stroke-width="13" stroke-dasharray="11.08 263.89" stroke-dashoffset="-252.81" />
             </svg>
             <div class="bento-donut-center">
-              <div class="bento-donut-big">38.6M</div>
-              <div class="bento-donut-sub">总用量</div>
+              <div class="bento-donut-big">42.8K</div>
+              <div class="bento-donut-sub">当前会话</div>
             </div>
           </div>
           <div class="bento-donut-list">
@@ -992,7 +988,7 @@ const overviewBody = `
             <div class="bento-donut-item"><span><i class="bento-sq" style="background:#8B5CF6"></i>主控与设计规划</span><b>8.1%</b></div>
             <div class="bento-donut-item"><span><i class="bento-sq" style="background:#4D6BFE"></i>6× Builder 并发编码</span><b>44.0%</b></div>
             <div class="bento-donut-item"><span><i class="bento-sq" style="background:#0EA5E9"></i>递归子代理 (thinking: low)</span><b>19.4%</b></div>
-            <div class="bento-donut-item"><span><i class="bento-sq" style="background:#10B981"></i>QA 与安全门禁</span><b>7.8%</b></div>
+            <div class="bento-donut-item"><span><i class="bento-sq" style="background:#10B981"></i>QA 与代码审查</span><b>7.8%</b></div>
           </div>
         </div>
       </div>
@@ -1007,17 +1003,13 @@ const overviewBody = `
           <div class="bento-donut-svg-wrap">
             <svg width="104" height="104" viewBox="0 0 108 108" style="transform:rotate(-90deg)">
               <circle cx="54" cy="54" r="42" fill="none" stroke="#F1F5F9" stroke-width="13" />
-              <!-- 64.8% Wave 3 (#4D6BFE) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#4D6BFE" stroke-width="13" stroke-dasharray="171.00 263.89" stroke-dashoffset="0" />
-              <!-- 17.6% Wave 4 (#10B981) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#10B981" stroke-width="13" stroke-dasharray="46.45 263.89" stroke-dashoffset="-171.00" />
-              <!-- 11.2% Wave 1 (#0EA5E9) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#0EA5E9" stroke-width="13" stroke-dasharray="29.56 263.89" stroke-dashoffset="-217.45" />
-              <!-- 6.4% Wave 2 (#6366F1) -->
               <circle cx="54" cy="54" r="42" fill="none" stroke="#6366F1" stroke-width="13" stroke-dasharray="16.89 263.89" stroke-dashoffset="-247.01" />
             </svg>
             <div class="bento-donut-center">
-              <div class="bento-donut-big">42m 18s</div>
+              <div class="bento-donut-big">12m 40s</div>
               <div class="bento-donut-sub">活跃总时长</div>
             </div>
           </div>
@@ -1025,7 +1017,7 @@ const overviewBody = `
             <div class="bento-donut-item"><span><i class="bento-sq" style="background:#0EA5E9"></i>Wave 1 双轨立项</span><b>11.2%</b></div>
             <div class="bento-donut-item"><span><i class="bento-sq" style="background:#6366F1"></i>Wave 2 架构分片锁</span><b>6.4%</b></div>
             <div class="bento-donut-item"><span><i class="bento-sq" style="background:#4D6BFE"></i>Wave 3 6槽+递归构建</span><b>64.8%</b></div>
-            <div class="bento-donut-item"><span><i class="bento-sq" style="background:#10B981"></i>Wave 4 QA/CSO/发布</span><b>17.6%</b></div>
+            <div class="bento-donut-item"><span><i class="bento-sq" style="background:#10B981"></i>Wave 4 QA/审查/发布</span><b>17.6%</b></div>
             <div style="margin-top:3px">
               <div style="font-size:9px;color:#64748B;margin-bottom:2px;display:flex;justify-content:space-between">
                 <span>4-Wave 并发时序流水线</span>
@@ -1043,12 +1035,12 @@ const overviewBody = `
       </div>
     </div>
 
-    <!-- Bottom Bento Card: PG 事实库实时写表活动探针 · Live Table Write Stream -->
+    <!-- Bottom Bento Card: 主题自适应 PG 写表活动探针 · Theme-Adaptive Live Table Write Stream -->
     <div class="bento-card" style="flex:1;display:flex;flex-direction:column;gap:6px">
       <div class="bento-head" style="margin-bottom:0">
         <div class="bento-title">
           <span style="color:#10B981">●</span>
-          <span>PG 事实库实时写表活动探针 · Live Table Write Stream</span>
+          <span>PG 写表活动探针（主题自适应 · 明暗色无缝适配）</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           <span class="rt-tag rt-tag-live">42 writes/min · 0.4ms mmap WAL</span>
@@ -1059,49 +1051,49 @@ const overviewBody = `
       <div class="bento-pg-stream-grid">
         <div style="display:flex;flex-direction:column;justify-content:space-between;gap:4px;font-size:9.6px">
           <div style="padding:4.5px 8px;border-radius:6px;background:#F8FAFC;border:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;white-space:nowrap">
-            <span><b style="color:#2563EB">rt_dsh.modules</b> · <code>exploit#2</code></span><span class="rt-mono" style="color:#10B981;font-weight:700">INSERT · 0.3ms</span>
+            <span><b style="color:#2563EB">rt_lmtagent.modules</b> · <code>exploit#2</code></span><span class="rt-mono" style="color:#059669;font-weight:700">INSERT · 0.3ms</span>
           </div>
           <div style="padding:4.5px 8px;border-radius:6px;background:#F8FAFC;border:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;white-space:nowrap">
-            <span><b style="color:#2563EB">rt_dsh.dag_nodes</b> · <code>plan</code></span><span class="rt-mono" style="color:#0284C7;font-weight:700">UPDATE · 0.4ms</span>
+            <span><b style="color:#2563EB">rt_lmtagent.dag_nodes</b> · <code>plan</code></span><span class="rt-mono" style="color:#0284C7;font-weight:700">UPDATE · 0.4ms</span>
           </div>
           <div style="padding:4.5px 8px;border-radius:6px;background:#F0F9FF;border:1px solid rgba(14,165,233,0.3);display:flex;justify-content:space-between;align-items:center;white-space:nowrap">
-            <span><b style="color:#0284C7">rt_dsh.subagents</b> · <code>sub#1a(low)</code></span><span class="rt-mono" style="color:#0284C7;font-weight:700">SPAWN · 0.5ms</span>
+            <span><b style="color:#0284C7">rt_lmtagent.subagents</b> · <code>sub#1a(low)</code></span><span class="rt-mono" style="color:#0284C7;font-weight:700">SPAWN · 0.5ms</span>
           </div>
           <div style="padding:4.5px 8px;border-radius:6px;background:#F8FAFC;border:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;white-space:nowrap">
-            <span><b style="color:#2563EB">rt_dsh.file_shards</b> · <code>assess</code></span><span class="rt-mono" style="color:#10B981;font-weight:700">UPSERT · 0.3ms</span>
+            <span><b style="color:#2563EB">rt_lmtagent.file_shards</b> · <code>assess</code></span><span class="rt-mono" style="color:#059669;font-weight:700">UPSERT · 0.3ms</span>
           </div>
           <div style="padding:4.5px 8px;border-radius:6px;background:#F8FAFC;border:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;white-space:nowrap">
-            <span><b style="color:#2563EB">rt_dsh.qa_runs</b> · <code>qa (888✓)</code></span><span class="rt-mono" style="color:#10B981;font-weight:700">INSERT · 0.4ms</span>
+            <span><b style="color:#2563EB">rt_lmtagent.qa_runs</b> · <code>qa (888✓)</code></span><span class="rt-mono" style="color:#059669;font-weight:700">INSERT · 0.4ms</span>
           </div>
           <div style="padding:4.5px 8px;border-radius:6px;background:#F8FAFC;border:1px solid #E2E8F0;display:flex;justify-content:space-between;align-items:center;white-space:nowrap">
-            <span><b style="color:#2563EB">rt_dsh.doc_wall</b> · <code>internal</code></span><span class="rt-mono" style="color:#8B5CF6;font-weight:700">UPSERT · 0.6ms</span>
+            <span><b style="color:#2563EB">rt_lmtagent.doc_wall</b> · <code>internal</code></span><span class="rt-mono" style="color:#6D28D9;font-weight:700">UPSERT · 0.6ms</span>
           </div>
         </div>
 
         <div class="bento-sql-feed">
           <div class="bento-sql-line">
-            <span><b style="color:#38BDF8">[11:21:04.12]</b> <span style="color:#93C5FD">INSERT INTO rt_dsh.modules</span> VALUES ('pg-engine', 'VERIFIED')</span>
-            <span style="color:#34D399;flex-shrink:0">0.3ms</span>
+            <span><b style="color:#0284C7">[11:21:04.12]</b> <span style="color:#2563EB;font-weight:600">INSERT INTO rt_lmtagent.modules</span> VALUES ('pg-engine', 'VERIFIED')</span>
+            <span style="color:#059669;font-weight:700;flex-shrink:0">0.3ms</span>
           </div>
           <div class="bento-sql-line">
-            <span><b style="color:#38BDF8">[11:21:04.29]</b> <span style="color:#93C5FD">UPDATE rt_dsh.dag_nodes</span> SET status='RUN' WHERE wave=3</span>
-            <span style="color:#34D399;flex-shrink:0">0.4ms</span>
+            <span><b style="color:#0284C7">[11:21:04.29]</b> <span style="color:#2563EB;font-weight:600">UPDATE rt_lmtagent.dag_nodes</span> SET status='RUN' WHERE wave=3</span>
+            <span style="color:#059669;font-weight:700;flex-shrink:0">0.4ms</span>
           </div>
           <div class="bento-sql-line">
-            <span><b style="color:#38BDF8">[11:21:04.48]</b> <span style="color:#6EE7B7">INSERT INTO rt_dsh.subagents</span> VALUES ('exploit#1', 1, 'low')</span>
-            <span style="color:#34D399;flex-shrink:0">0.5ms</span>
+            <span><b style="color:#0284C7">[11:21:04.48]</b> <span style="color:#059669;font-weight:600">INSERT INTO rt_lmtagent.subagents</span> VALUES ('exploit#1', 1, 'low')</span>
+            <span style="color:#059669;font-weight:700;flex-shrink:0">0.5ms</span>
           </div>
           <div class="bento-sql-line">
-            <span><b style="color:#38BDF8">[11:21:05.02]</b> <span style="color:#C4B5FD">UPSERT INTO rt_dsh.file_shards</span> VALUES ('shard-3', 'LOCKED')</span>
-            <span style="color:#34D399;flex-shrink:0">0.3ms</span>
+            <span><b style="color:#0284C7">[11:21:05.02]</b> <span style="color:#6D28D9;font-weight:600">UPSERT INTO rt_lmtagent.file_shards</span> VALUES ('shard-3', 'LOCKED')</span>
+            <span style="color:#059669;font-weight:700;flex-shrink:0">0.3ms</span>
           </div>
           <div class="bento-sql-line">
-            <span><b style="color:#38BDF8">[11:21:05.39]</b> <span style="color:#93C5FD">INSERT INTO rt_dsh.qa_runs</span> VALUES (18, 888, 'PASS_100%')</span>
-            <span style="color:#34D399;flex-shrink:0">0.4ms</span>
+            <span><b style="color:#0284C7">[11:21:05.39]</b> <span style="color:#2563EB;font-weight:600">INSERT INTO rt_lmtagent.qa_runs</span> VALUES (18, 888, 'PASS_100%')</span>
+            <span style="color:#059669;font-weight:700;flex-shrink:0">0.4ms</span>
           </div>
           <div class="bento-sql-line">
-            <span><b style="color:#38BDF8">[11:21:05.84]</b> <span style="color:#C4B5FD">UPSERT INTO rt_dsh.doc_wall</span> VALUES ('v2_report', 'FEISHU_OK')</span>
-            <span style="color:#34D399;flex-shrink:0">0.6ms</span>
+            <span><b style="color:#0284C7">[11:21:05.84]</b> <span style="color:#6D28D9;font-weight:600">UPSERT INTO rt_lmtagent.doc_wall</span> VALUES ('v2_report', 'FEISHU_OK')</span>
+            <span style="color:#059669;font-weight:700;flex-shrink:0">0.6ms</span>
           </div>
         </div>
       </div>
