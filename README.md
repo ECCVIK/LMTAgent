@@ -11,7 +11,7 @@
 [![Tests Passing](https://img.shields.io/badge/Tests-18_Suites_·_888_Assertions_PASS-6366F1?style=for-the-badge)](#6-质量门禁与测试验证)
 
 <p align="center">
-  <b>主代理（Captain）意图拆解 · 7 位 <code>gstack</code> 专家子代理协同 · 支持子代理递归派发微任务（<code>maxDepth: 3</code>，默认 <code>thinking: low</code>） · <code>1–12</code> 并发槽在线调节（默认 6） · 当前会话实时同步与自由切换 · 实际参与角色实时决策流预览 · 主题自适应 PG 写表活动探针</b>
+  <b>本项目诞生宗旨优化许愿式编程的体验和可控，目的是让即使无编程语言基础也可以通过此项目作为流水线标准开发得到想要的软件，加上此项目，你的提示词不再会因为模型各种幻觉问题自我误导偏离你想要的开发方向，而是规划润色你的提示词，并拆解成目标并派发子代理去尝试开发...</b>
 </p>
 
 </div>
