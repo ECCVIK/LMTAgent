@@ -162,5 +162,44 @@ for (const category of ENGINEERING_PATTERN_CATEGORIES) {
   ok(source.includes(category), `client.js 包含工程模式分类「${category}」`)
 }
 
+/* ── 5. v0.18.0 全宽画布架构、二维坐标树与泳道矩阵契约 ──────────────────── */
+console.log('— 冒烟五：v0.18.0 全宽画布架构、二维坐标树与泳道矩阵契约')
+ok(
+  /\.rt-p4-workbench\s*\{[^}]*flex-direction\s*:\s*column/s.test(PANEL_CSS)
+    && /\.rt-p4-workbench\s*\{[^}]*grid-column\s*:\s*1\s*\/\s*-1/s.test(PANEL_CSS),
+  'styles.js 定义 .rt-p4-workbench 为 flex-direction:column 与 grid-column:1 / -1（外层卡片不陷于双列网格）',
+)
+
+const V018_CSS_SELECTORS = [
+  '.rt-p4-split-grid',
+  '.rt-bento-row-canvas',
+  '.rt-analytics-trio',
+  '.rt-p5-tree-stage',
+  '.rt-p5-branches-grid',
+  '.rt-node-handle',
+]
+for (const selector of V018_CSS_SELECTORS) {
+  ok(PANEL_CSS.includes(selector), `styles.js 包含 v0.18.0 布局选择器「${selector}」`)
+}
+
+const FORBIDDEN_BRACKET_BADGES = ['[主代理]', '[子代理]', '[可续接]']
+for (const badge of FORBIDDEN_BRACKET_BADGES) {
+  ok(!source.includes(badge), `client.js 已移除方括号硬编码徽章「${badge}」`)
+}
+
+ok(
+  /rt-bento-row-canvas[\s\S]{0,400}HarnessWorkflowDeck/.test(source),
+  'client.js 在 .rt-bento-row-canvas 中渲染全宽 HarnessWorkflowDeck 画布',
+)
+ok(
+  /rt-analytics-trio[\s\S]*Token 统计[\s\S]*耗时与并发吞吐统计[\s\S]*PgWriteProbeCard/.test(source),
+  'client.js 在 .rt-analytics-trio 中聚合 Token / Latency / PgWriteProbeCard',
+)
+ok(
+  source.includes('activeSlots') && /Math\.min\(\s*max\s*,/.test(source),
+  'client.js 通过 Math.min(max, ...) 截断 activeSlots 防止并发槽按钮溢出上限',
+)
+
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)
+

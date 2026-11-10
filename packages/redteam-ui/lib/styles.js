@@ -905,11 +905,13 @@ body[data-ds-dark-theme] .rt-btn-primary{filter:none}
    ══════════════════════════════════════════════════════════════════ */
 /* Dock 侧边栏（默认 540px）中采用宽敞单列流式布局，仅在全面浏览（.rt-full）大屏下并排分栏 */
 .rt-bento-stack{display:flex;flex-direction:column;gap:14px;margin-bottom:14px}
-.rt-bento-row-1,.rt-bento-row-2,.rt-bento-row-3{display:grid;grid-template-columns:1fr;gap:14px}
+.rt-bento-row-1,.rt-bento-row-2,.rt-bento-row-3,.rt-bento-row-canvas,.rt-analytics-trio{display:grid;grid-template-columns:1fr;gap:14px}
 @media(min-width:1180px){
-  .rt-full .rt-bento-row-1{grid-template-columns:minmax(0,1.65fr) minmax(260px,1fr)}
+  .rt-full .rt-bento-row-1{grid-template-columns:minmax(0,1.6fr) minmax(300px,1fr)}
   .rt-full .rt-bento-row-2{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .rt-full .rt-bento-row-3{grid-template-columns:minmax(0,1.45fr) minmax(300px,1fr)}
+  .rt-full .rt-bento-row-3{grid-template-columns:1fr}
+  .rt-full .rt-bento-row-canvas{grid-template-columns:1fr}
+  .rt-full .rt-analytics-trio{grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch}
 }
 .rt-bento-card{border:1px solid var(--dsw-alias-border-l1);border-radius:14px;padding:16px 18px;
   background:linear-gradient(180deg,color-mix(in srgb,var(--dsw-alias-bg-layer-1) 96%,transparent),var(--dsw-alias-bg-layer-1));
@@ -1071,26 +1073,35 @@ body[data-ds-dark-theme] .rt-scorepts{
    v0.17.0 — p4 Three-Pane Agent Collaboration Workbench + Swimlane + p5 Zoomable Tree Canvas
    ══════════════════════════════════════════════════════════════════ */
 
-/* 1. p4 Three-Pane Agent Collaboration Workbench Layout */
+/* 1. Full-Width Workbench Outer Card & p4 Inner Split Grid */
 .rt-p4-workbench{
-  display:grid;
-  grid-template-columns:minmax(280px,1.05fr) minmax(300px,1.15fr);
-  gap:12px;
-  align-items:start;
-  margin:10px 0 14px;
-}
-.rt-full .rt-p4-workbench{
-  grid-template-columns:minmax(340px,1.05fr) minmax(380px,1.15fr);
+  display:flex;
+  flex-direction:column;
   gap:14px;
+  grid-column:1 / -1;
+  width:100%;
+  box-sizing:border-box;
+  margin:0;
+}
+.rt-p4-split-grid{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:14px;
+  align-items:stretch;
+  width:100%;
+}
+@media(min-width:960px){
+  .rt-p4-split-grid{
+    grid-template-columns:minmax(380px,0.94fr) minmax(440px,1.06fr);
+    gap:16px;
+    align-items:start;
+  }
 }
 .rt-p4-right,.rt-p4-right-col{
   display:flex;
   flex-direction:column;
-  gap:12px;
+  gap:14px;
   min-width:0;
-}
-@media(max-width:680px){
-  .rt-p4-workbench{grid-template-columns:1fr}
 }
 
 /* Left Pane — Agent 网络 (.rt-net-pane) */
@@ -1837,6 +1848,77 @@ body[data-ds-dark-theme] .rt-p5-status.done{
   background:var(--dsw-alias-bg-layer-2);
   border-color:var(--dsw-alias-border-l1);
   color:#4d6bfe;
+}
+.rt-p5-tree-stage{
+  width:760px;
+  max-width:100%;
+  margin:0 auto;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  position:relative;
+  transform-origin:top center;
+  transition:transform .16s cubic-bezier(.22,1,.36,1);
+}
+.rt-p5-root-wrap{
+  width:360px;
+  max-width:92%;
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+}
+.rt-p5-branches-grid{
+  width:760px;
+  max-width:100%;
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,360px));
+  justify-content:space-between;
+  gap:40px;
+  align-items:start;
+  position:relative;
+}
+@media(max-width:680px){
+  .rt-p5-branches-grid{
+    grid-template-columns:1fr;
+    gap:20px;
+  }
+}
+.rt-node-handle{
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  background:var(--dsw-alias-bg-layer-1);
+  border:2px solid #3b82f6;
+  position:absolute;
+  left:50%;
+  transform:translateX(-50%);
+  z-index:3;
+  box-shadow:0 0 0 2px var(--dsw-alias-bg-base);
+}
+.rt-node-handle-top{
+  top:-5px;
+}
+.rt-node-handle-bottom{
+  bottom:-5px;
+}
+.rt-p5-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  padding:2px 8px;
+  border-radius:999px;
+  font-size:10.5px;
+  font-weight:700;
+  line-height:1.3;
+  letter-spacing:0.01em;
+}
+.rt-swim-matrix-wrap{
+  position:relative;
+  border:1px solid var(--dsw-alias-border-l1);
+  border-radius:10px;
+  background:var(--dsw-alias-bg-layer-1);
+  overflow:hidden;
 }
 
 /* 3. Concurrency Slot Matrix & Pattern Drawer Styles */
