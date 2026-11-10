@@ -2212,4 +2212,121 @@ export function apply(ctx, config = {}) {
       }, null, 2)
     },
   })))
+
+  /* ================================================================== lmtex（1 Plan + N Workers）4-Wave DAG 闭环工作流编排 */
+
+  registerTool(withStructuredErrors(defineTool({
+    name: 'redteam_workflow',
+    description: 'LMTAgent 软件工程 4-Wave DAG 与 `lmtex`（`1 Plan + N Workers`）闭环工作流编排工具：支持 `decompose`（拿到 User Prompt 即刻拆分为结构化 `plan_goals` 与 `worker_tasks`）、`submit_digest`（Worker 完成分片后将执行过程压缩 80%+ 写回 `worker_digest`）、`approve_worker`（主控 Plan 审批 Worker 摘要并下达 `next_goal`）、`sync_workers`（同步宿主活跃 Worker 与 `ui_priority` 状态到 PostgreSQL 事实库），以及 `status` / `advance` / `seed` / `reset` 波次状态机管理。',
+    parameters: {
+      engagement: { type: 'string', description: '项目工作区 id；省略则用当前会话绑定的项目' },
+      engagement_id: { type: 'string', description: '项目工作区 id（engagement 的兼容别名）' },
+      action: {
+        type: 'string',
+        required: true,
+        enum: ['status', 'advance', 'seed', 'reset', 'decompose', 'submit_digest', 'approve_worker', 'sync_workers'],
+        description: '工作流动作：status | advance | seed | reset | decompose | submit_digest | approve_worker | sync_workers',
+      },
+      wave: { type: 'number', description: '波次编号（1..4，用于 status / advance / seed）' },
+      user_prompt: { type: 'string', description: '用户原始软件工程需求提示词（action=decompose 时传入）' },
+      goals: {
+        type: 'array',
+        description: '拆分出的结构化目标与 Worker 任务分片列表（action=decompose 时传入）',
+        items: { type: 'object', additionalProperties: true },
+      },
+      worker_name: { type: 'string', description: 'Worker 子智能体名称，如 Wave3 exploit 分片构建 #1（action=submit_digest / approve_worker 时传入）' },
+      worker_task_id: { type: 'string', description: '关联的 Worker 任务 ID（action=submit_digest / approve_worker 时传入）' },
+      role: { type: 'string', description: 'Worker 角色标识（recon / designer / assess / exploit / vuln-scan / qa / internal）' },
+      what_was_done: { type: 'string', description: 'Worker 完成工作的核心结构化摘要（action=submit_digest 时传入，实现约 80%+ 上下文压缩）' },
+      files_touched: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Worker 在本分片实际修改或验证的文件路径列表（action=submit_digest 时传入）',
+      },
+      key_decisions: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Worker 在本分片做出的关键技术决策（action=submit_digest 时传入）',
+      },
+      verification: { type: 'string', description: '构建门禁与单元测试实测验证回显（action=submit_digest 时传入）' },
+      raw_tokens_estimate: { type: 'number', description: '原始执行上下文估算 Token 数（可选）' },
+      digest_tokens_estimate: { type: 'number', description: '压缩后摘要估算 Token 数（可选）' },
+      decision: {
+        type: 'string',
+        enum: ['approved', 'revision_requested', 'rejected'],
+        description: '主控 Plan 对 Worker 压缩摘要的审批结论（action=approve_worker 时传入，默认 approved）',
+      },
+      next_goal: { type: 'string', description: '主控 Plan 审批通过后下达的新阶段目标或后续波次任务（action=approve_worker 时传入）' },
+      review_note: { type: 'string', description: '主控 Plan 审批备注说明（可选）' },
+      ui_priority: {
+        type: 'string',
+        enum: ['P0', 'P1', 'P2', 'P3'],
+        description: '工作台 UI 渲染优先级标签：P0（阻塞焦点/待审批）、P1（活跃并发分片）、P2（已审批压缩归档）、P3（历史基准）',
+      },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '领域标签列表，如 ["#core-arch", "#ui-canvas", "#pg-store", "#qa-gate"]',
+      },
+      workers: {
+        type: 'array',
+        items: { type: 'object', additionalProperties: true },
+        description: '宿主活跃 Worker 列表（action=sync_workers 时传入）',
+      },
+    },
+    output: { schema: { type: 'string' }, render: (_args, value) => text(value) },
+    async execute(args, exec) {
+      const rawAction = String(args.action || 'status').trim()
+      let engagementId = args.engagement_id || args.engagement
+      if (!engagementId) {
+        try {
+          engagementId = resolveEngagement(store, exec, undefined)
+        } catch {
+          engagementId = undefined
+        }
+      }
+      const payload = Object.assign({}, args, engagementId ? { engagement: engagementId, engagement_id: engagementId } : {})
+      let out
+      if (rawAction === 'decompose') {
+        if (typeof store.decomposeUserPrompt === 'function') {
+          out = await store.decomposeUserPrompt(payload)
+        } else if (typeof store.workflowAction === 'function') {
+          out = await store.workflowAction(Object.assign({}, payload, { action: 'decompose' }))
+        }
+      } else if (rawAction === 'submit_digest') {
+        if (typeof store.submitWorkerDigest === 'function') {
+          out = await store.submitWorkerDigest(payload)
+        } else if (typeof store.workflowAction === 'function') {
+          out = await store.workflowAction(Object.assign({}, payload, { action: 'submit_digest' }))
+        }
+      } else if (rawAction === 'approve_worker') {
+        if (typeof store.approveWorkerAndDispatchNext === 'function') {
+          out = await store.approveWorkerAndDispatchNext(payload)
+        } else if (typeof store.workflowAction === 'function') {
+          out = await store.workflowAction(Object.assign({}, payload, { action: 'approve_worker' }))
+        }
+      } else if (rawAction === 'sync_workers') {
+        if (typeof store.syncHostWorkersToPg === 'function') {
+          out = await store.syncHostWorkersToPg(payload.engagement_id, payload.workers || [], payload)
+        } else if (typeof store.workflowAction === 'function') {
+          out = await store.workflowAction(Object.assign({}, payload, { action: 'sync_workers' }))
+        }
+      } else if (typeof store.workflowAction === 'function') {
+        out = await store.workflowAction(Object.assign({}, payload, { action: rawAction }))
+      } else if (rawAction === 'status' && typeof store.getWorkflowBoard === 'function') {
+        out = await store.getWorkflowBoard(engagementId, payload)
+      } else if (rawAction === 'advance' && typeof store.advanceWorkflow === 'function') {
+        out = await store.advanceWorkflow(engagementId, payload)
+      } else if (rawAction === 'seed' && typeof store.seedWorkflow === 'function') {
+        out = await store.seedWorkflow(engagementId, payload)
+      } else if (rawAction === 'reset' && typeof store.resetWorkflow === 'function') {
+        out = await store.resetWorkflow(engagementId, payload)
+      }
+      if (out === undefined) {
+        out = { ok: true, action: rawAction, engagement_id: engagementId ?? null }
+      }
+      if (typeof out === 'string') return out
+      return JSON.stringify(Object.assign({ ok: true, action: rawAction, engagement: engagementId ?? null }, out), null, 2)
+    },
+  })))
 }

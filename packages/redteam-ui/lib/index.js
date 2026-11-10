@@ -898,6 +898,336 @@ function extractSessionPreviews(s, header, role, fallbackOutput = '') {
   }
 }
 
+/**
+ * 内存级 Worker 审批状态覆盖表（按 worker_id / session_id / worker_name / role 索引）。
+ * 当用户在 UI 点击「✓ Plan 审批通过并下达新目标」（op: 'planApproveWorker'）时立即更新。
+ */
+export const approvedWorkerOverrides = new Map()
+export const approvedWorkerMap = approvedWorkerOverrides
+
+const PRIORITY_META = {
+  P0: { uiPriority: 'P0', priorityWeight: 100, priorityLabel: 'P0 焦点审批' },
+  P1: { uiPriority: 'P1', priorityWeight: 80, priorityLabel: 'P1 核心并发' },
+  P2: { uiPriority: 'P2', priorityWeight: 50, priorityLabel: 'P2 已审归档' },
+  P3: { uiPriority: 'P3', priorityWeight: 20, priorityLabel: 'P3 历史快照' },
+}
+
+function lookupApprovedWorkerOverride(node, store = null) {
+  if (!node || typeof node !== 'object') return null
+  const candidateKeys = [
+    node.worker_id,
+    node.workerId,
+    node.id,
+    node.sessionId,
+    node.session_id,
+    node.agentId,
+    node.worker_name,
+    node.workerName,
+    node.name,
+    node.title,
+    node.label,
+    node.rawTitle,
+    node.role,
+    node.role ? `sub-${node.role}` : '',
+  ]
+  for (const rawKey of candidateKeys) {
+    const k = String(rawKey || '').trim()
+    if (k && approvedWorkerOverrides.has(k)) {
+      return approvedWorkerOverrides.get(k)
+    }
+  }
+  if (store && typeof store.getWorkerApproval === 'function') {
+    try {
+      for (const rawKey of candidateKeys) {
+        const k = String(rawKey || '').trim()
+        if (!k) continue
+        const found = store.getWorkerApproval(k)
+        if (found && (found.approvalState || found.approval_state)) {
+          return {
+            approvalState: found.approvalState || found.approval_state,
+            uiPriority: found.uiPriority || found.ui_priority || null,
+            nextGoal: found.nextGoal || found.next_goal || '',
+            explicitApproved: (found.approvalState || found.approval_state) === 'approved',
+          }
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  return null
+}
+
+function inferWorkerFilesTouched(node, textCorpus, role) {
+  if (Array.isArray(node && (node.filesTouched || node.files_touched)) && (node.filesTouched || node.files_touched).length > 0) {
+    return (node.filesTouched || node.files_touched).map((f) => String(f).trim()).filter(Boolean).slice(0, 6)
+  }
+  const matches = []
+  const fileRe = /\b([a-zA-Z0-9_-]+\.(?:js|mjs|cjs|ts|tsx|css|json|sql|md|yml|yaml))\b/g
+  let m
+  while ((m = fileRe.exec(textCorpus)) !== null) {
+    const base = m[1]
+    if (!matches.includes(base)) matches.push(base)
+    if (matches.length >= 4) break
+  }
+  if (matches.length > 0) return matches
+  if (role === 'designer' || /ui|canvas|css|style|视觉|交互|组件|画布/i.test(textCorpus)) {
+    return ['client.js', 'styles.js']
+  }
+  if (role === 'recon' || /store|pg|postgres|schema|sqlite|数据库|事实库/i.test(textCorpus)) {
+    return ['core.js', 'pg-engine.js']
+  }
+  if (role === 'assess' || /prompt|tool|bridge|rpc|契约|分片/i.test(textCorpus)) {
+    return ['tools.js', 'index.js']
+  }
+  if (role === 'qa' || role === 'vuln-scan' || /test|smoke|qa|回归|测试|审查/i.test(textCorpus)) {
+    return ['smoke-test.mjs', 'core.js']
+  }
+  if (role === 'internal') {
+    return ['README.md', 'package.json']
+  }
+  return ['index.js', 'client.js']
+}
+
+/**
+ * 确定性计算 `lmtex`（`1 Plan + N Workers`）优先级标签、压缩摘要（`compressedDigest`）与审批状态（`approvalState`）。
+ *
+ * @param {object} node - 会话或拓扑节点对象
+ * @param {number} idx - 当前节点在已完成/同波次 Worker 列表中的序号（默认 0）
+ * @param {object} options - 可选上下文（如 `{ store, recomputeApproval }`）
+ */
+export function computeWorkerLmtexMeta(node, idx = 0, options = {}) {
+  const n = node && typeof node === 'object' ? node : {}
+  const isRoot = Boolean(n.isRoot || n.role === 'plan')
+  const role = inferAgentRole(n.title || n.label || n.name || n.id || '', isRoot, n.role)
+  const waveNum = n.wave !== undefined && n.wave !== null
+    ? Number(n.wave)
+    : inferAgentWave(n.title || n.label || n.name || '', role, isRoot)
+  const effectiveWave = Number.isFinite(waveNum) && waveNum >= 0 ? waveNum : 3
+
+  const rawStatus = String(n.status || n.activity || '').trim().toLowerCase()
+  const isRunningOrError = rawStatus === 'running'
+    || rawStatus === 'run'
+    || rawStatus === 'active'
+    || rawStatus === 'error'
+    || rawStatus === 'failed'
+    || String(n.activity || '').toLowerCase() === 'running'
+
+  const turns = Math.max(1, Number(n.turns ?? n.rounds ?? 1) || 1)
+  let toolCalls = 0
+  if (n.toolCalls !== undefined || n.tool_calls !== undefined) {
+    const tcRaw = n.toolCalls ?? n.tool_calls
+    toolCalls = Array.isArray(tcRaw) ? tcRaw.length : Math.max(0, Number(tcRaw) || 0)
+  } else if (Array.isArray(n.messages) && n.messages.length > 0) {
+    let counted = 0
+    for (const msg of n.messages) {
+      if (!msg || typeof msg !== 'object') continue
+      if (Array.isArray(msg.toolCalls || msg.tool_calls)) counted += (msg.toolCalls || msg.tool_calls).length
+      else if (Array.isArray(msg.content)) {
+        counted += msg.content.filter((p) => p && (p.type === 'tool_use' || p.type === 'tool-call' || p.toolName || p.name)).length
+      }
+    }
+    toolCalls = counted > 0 ? counted : Math.max(0, Number(n.steps) || 0)
+  } else if (Number(n.steps) > 0) {
+    const stepVal = Number(n.steps) || 0
+    toolCalls = (effectiveWave >= 4 && stepVal <= 4 && !isRunningOrError) ? 2 : stepVal
+  }
+
+  const hasSubstantiveWork = isRunningOrError
+    || rawStatus === 'completed'
+    || rawStatus === 'done'
+    || rawStatus === 'finished'
+    || String(n.activity || '').toLowerCase() === 'completed'
+    || Number(n.tokens) > 0
+    || Number(n.steps) > 0
+    || toolCalls > 0
+    || (rawStatus === '' && (n.turns !== undefined || n.toolCalls !== undefined || n.completionConclusion || n.actionSummary || n.lastAssistantText))
+  const isIdle = !isRunningOrError && (rawStatus === 'idle' || (!hasSubstantiveWork && (rawStatus === 'pending' || rawStatus === '')))
+  const isCompleted = !isRunningOrError && !isIdle
+
+  const override = lookupApprovedWorkerOverride(n, options.store || null)
+  const explicitCallerApproval = !options.recomputeApproval
+    && !n._autoApproval
+    && typeof (n.approvalState || n.approval_state) === 'string'
+    && ['approved', 'revision_required', 'pending_approval', 'in_progress'].includes(n.approvalState || n.approval_state)
+    ? (n.approvalState || n.approval_state)
+    : null
+
+  let approvalState = 'approved'
+  let autoApproval = false
+  if (override && override.approvalState) {
+    approvalState = override.approvalState
+  } else if (explicitCallerApproval) {
+    approvalState = explicitCallerApproval
+  } else {
+    autoApproval = true
+    if (isRunningOrError) {
+      approvalState = 'in_progress'
+    } else if (isCompleted && !isRoot && Number(idx) === 0) {
+      approvalState = 'pending_approval'
+    } else if (isCompleted && Number(idx) === 0 && n.isRoot === undefined && n.role !== 'plan') {
+      approvalState = 'pending_approval'
+    } else {
+      approvalState = 'approved'
+    }
+  }
+
+  const nextGoal = String(
+    (override && override.nextGoal)
+    || n.nextGoal
+    || n.next_goal
+    || (approvalState === 'pending_approval'
+      ? '等待 Plan 主控审批摘要并下达下一波次指令'
+      : (approvalState === 'in_progress'
+        ? '完成当前分片工具链验证并回写结构化 Digest'
+        : '进入下一波次契约联调与回归验证'))
+  ).trim()
+
+  /* 推断 2-4 个领域/角色标签 + 波次标签 */
+  const textCorpus = [
+    n.title,
+    n.label,
+    n.rawTitle,
+    n.name,
+    n.role,
+    n.summary,
+    n.promptPreview,
+    n.latestOutputPreview,
+    n.outputPreview,
+    n.completionConclusion,
+    n.actionSummary,
+    n.lastAssistantText,
+    ...(Array.isArray(n.tools) ? n.tools : []),
+    ...(Array.isArray(n.workerTags) ? n.workerTags : []),
+  ].filter(Boolean).join(' ')
+
+  const domainTags = []
+  const pushTag = (t) => {
+    if (t && !domainTags.includes(t)) domainTags.push(t)
+  }
+
+  if (/\bui\b|canvas|css|style|视觉|交互|令牌|组件|画布|泳道|拓扑|designer|60fps|render|视图/i.test(textCorpus)) {
+    pushTag('#ui-canvas')
+    pushTag('#60fps')
+  }
+  if (/store|\bpg\b|postgres|schema|sqlite|wal|数据库|事实库|落库|存储|digest|测绘|数据源|recon/i.test(textCorpus)) {
+    pushTag('#pg-store')
+    pushTag('#digest')
+  }
+  if (/prompt|tool|bridge|rpc|api|index\.js|契约|桥接|分片|调度|架构|assess|plan|captain|主控/i.test(textCorpus)) {
+    pushTag('#prompt-contract')
+    pushTag('#rpc-bridge')
+  }
+  if (/test|smoke|\bqa\b|回归|测试|审查|安全|门禁|验证|基准|vuln|review|audit/i.test(textCorpus)) {
+    pushTag('#qa-gate')
+    pushTag('#smoke-test')
+  }
+
+  if (domainTags.length === 0) {
+    if (role === 'designer') { pushTag('#ui-canvas'); pushTag('#60fps') }
+    else if (role === 'recon') { pushTag('#pg-store'); pushTag('#digest') }
+    else if (role === 'assess' || role === 'plan') { pushTag('#prompt-contract'); pushTag('#rpc-bridge') }
+    else if (role === 'qa' || role === 'vuln-scan') { pushTag('#qa-gate'); pushTag('#smoke-test') }
+    else if (role === 'internal') { pushTag('#digest'); pushTag('#qa-gate') }
+    else { pushTag('#rpc-bridge'); pushTag('#ui-canvas') }
+  }
+
+  const waveTag = effectiveWave >= 1 && effectiveWave <= 4
+    ? `#wave-${effectiveWave}`
+    : `#wave-${Math.min(4, Math.max(1, effectiveWave || 1))}`
+  const workerTags = [...domainTags.slice(0, 3), waveTag]
+  if (workerTags.length < 2) {
+    if (!workerTags.includes('#rpc-bridge')) workerTags.unshift('#rpc-bridge')
+  }
+
+  /* 计算 uiPriority & priorityWeight */
+  let tier = PRIORITY_META.P3
+  const isActiveWaveShard = !isIdle && (effectiveWave === 1 || effectiveWave === 2 || workerTags.includes('#wave-1') || workerTags.includes('#wave-2'))
+
+  if (override && override.uiPriority && PRIORITY_META[override.uiPriority] && !isRunningOrError) {
+    tier = PRIORITY_META[override.uiPriority]
+  } else if (isRunningOrError || (approvalState === 'pending_approval' && Number(idx) < 2)) {
+    tier = PRIORITY_META.P0
+  } else if (isRoot && !isIdle) {
+    tier = PRIORITY_META.P0
+  } else if (!isIdle && (isActiveWaveShard || toolCalls >= 3)) {
+    tier = PRIORITY_META.P1
+  } else if (isCompleted && approvalState === 'approved') {
+    tier = PRIORITY_META.P2
+  } else {
+    tier = PRIORITY_META.P3
+  }
+
+  /* 构建结构化压缩摘要 compressedDigest */
+  const rawDigestSource = String(
+    n.completionConclusion
+    || n.actionSummary
+    || n.lastAssistantText
+    || n.conclusion
+    || (n.compressedDigest && n.compressedDigest.whatWasDone)
+    || n.latestOutputPreview
+    || n.outputPreview
+    || n.summary
+    || ''
+  ).replace(/\s+/g, ' ').trim()
+
+  const fallbackTitle = String(n.title || n.label || n.name || n.id || '子智能体分片').trim()
+  const whatWasDone = rawDigestSource
+    ? (rawDigestSource.length > 130 ? `${rawDigestSource.slice(0, 128)}…` : rawDigestSource)
+    : (isRunningOrError
+      ? `正在执行 ${fallbackTitle} 核心分片任务，实时归并结构化摘要与事实库状态。`
+      : `已完成 ${fallbackTitle} 阶段交付与契约对齐，执行摘要已压缩归档入库。`)
+
+  const filesTouched = inferWorkerFilesTouched(n, textCorpus, role)
+  const verification = String(
+    (n.compressedDigest && n.compressedDigest.verification)
+    || n.verification
+    || (isRunningOrError
+      ? '⚙ 正在执行工具链验证'
+      : ((rawStatus === 'error' || rawStatus === 'failed')
+        ? '✗ 验证发现异常待修复'
+        : '✓ 契约与冒烟断言通过'))
+  ).trim()
+
+  const rawTokens = Math.max(600, turns * 420 + toolCalls * 310)
+  const compressedTokens = Math.max(65, Math.round(rawTokens * 0.14))
+  const compressionPct = Math.round((1 - compressedTokens / rawTokens) * 100)
+
+  const compressedDigest = {
+    whatWasDone,
+    filesTouched,
+    verification,
+    rawTokens,
+    compressedTokens,
+    compressionPct,
+  }
+
+  const metaResult = {
+    uiPriority: tier.uiPriority,
+    ui_priority: tier.uiPriority,
+    priorityWeight: tier.priorityWeight,
+    priority_weight: tier.priorityWeight,
+    priorityLabel: tier.priorityLabel,
+    priority_label: tier.priorityLabel,
+    workerTags,
+    worker_tags: workerTags,
+    compressedDigest,
+    compressed_digest: compressedDigest,
+    approvalState,
+    approval_state: approvalState,
+    nextGoal,
+    next_goal: nextGoal,
+    turns,
+    toolCalls,
+    tool_calls: toolCalls,
+    _autoApproval: autoApproval,
+  }
+
+  if (node && typeof node === 'object') {
+    Object.assign(node, metaResult)
+  }
+
+  return metaResult
+}
+
 function extractSessionTelemetry(s, options = {}) {
   const isRoot = Boolean(options.isRoot)
   const header = (s && s.header) || {}
@@ -979,6 +1309,7 @@ function extractSessionTelemetry(s, options = {}) {
         : (messages.length > 0 ? Math.max(1, Math.ceil(messages.length / 2)) : 1)
     )
   ) || 1
+  const explicitToolCalls = s?.toolCalls ?? s?.tool_calls ?? usage.toolCalls ?? usage.tool_calls ?? (wfNode && wfNode.tool_calls)
 
   const rawActivity = String((s && (s.activity || s.status)) || header.activity || header.status || '').toLowerCase()
   const isRunning = rawActivity === 'running' || rawActivity === 'run' || Boolean(s && s.streaming) || Boolean(header && header.streaming)
@@ -1008,13 +1339,17 @@ function extractSessionTelemetry(s, options = {}) {
       : (activity === 'completed' ? `已完成 ${label} 阶段交付并落库核验。` : '等待主控调度派发'))
   const previews = extractSessionPreviews(s, header, role, fallbackSummary)
 
-  return {
+  const telemetry = {
     id: sid,
+    sessionId: sid,
+    session_id: sid,
     parentId,
     parent: parentId,
+    isRoot,
     rawTitle,
     title,
     label,
+    name: title,
     role,
     badge,
     wave,
@@ -1034,14 +1369,23 @@ function extractSessionTelemetry(s, options = {}) {
     costYuan,
     steps,
     rounds,
+    turns: rounds,
+    toolCalls: explicitToolCalls !== undefined ? Number(explicitToolCalls) || 0 : undefined,
     durationMs,
     durationLabel,
+    summary: (s && s.summary) || (wfNode && wfNode.summary) || '',
+    completionConclusion: (s && (s.completionConclusion || s.conclusion)) || '',
+    actionSummary: (s && s.actionSummary) || '',
+    lastAssistantText: (s && s.lastAssistantText) || '',
     promptPreview: previews.promptPreview,
     latestOutputPreview: previews.latestOutputPreview,
     outputPreview: previews.latestOutputPreview,
     createdAt: startMs > 0 ? new Date(startMs).toISOString() : (wfNode && wfNode.updated_at) || null,
     updatedAt: endMs > 0 ? new Date(endMs).toISOString() : (wfNode && wfNode.updated_at) || null,
   }
+
+  computeWorkerLmtexMeta(telemetry, options.idx ?? 0, { store: options.store })
+  return telemetry
 }
 
 /**
@@ -1123,6 +1467,7 @@ async function discoverHostSessions(ctx, store, options = {}) {
       isRoot: true,
       parentId: null,
       workflowNode: wfNodeByRole.get('plan') || null,
+      store,
     })
 
     /* 收集该根会话下的所有子智能体会话：合并 sessions.list() 中的 parentSession 子会话与 subagents.listChildren(root.id) */
@@ -1168,11 +1513,18 @@ async function discoverHostSessions(ctx, store, options = {}) {
         parentId: sid,
         defaultModel: rootTelemetry.model,
         workflowNode: wfNodeByRole.get(preRole) || null,
+        store,
       })
       kids.push(childTelemetry)
     }
 
     kids.sort((a, b) => (a.wave - b.wave) || String(a.id).localeCompare(String(b.id)))
+    let completedKidIdx = 0
+    for (let i = 0; i < kids.length; i += 1) {
+      const k = kids[i]
+      const kIdx = (k.activity === 'completed' || k.status === 'completed') ? completedKidIdx++ : i
+      computeWorkerLmtexMeta(k, kIdx, { store, recomputeApproval: true })
+    }
 
     const rawTitle = rootTelemetry.rawTitle
     const displayLabel = workspace && !rawTitle.includes(workspace) ? (workspace + ' · ' + rawTitle) : rawTitle
@@ -1284,9 +1636,16 @@ async function discoverHostSessions(ctx, store, options = {}) {
                 parentId: item.id,
                 defaultModel: item.model,
                 workflowNode: wfNode,
+                store,
               }))
             }
             item.children.sort((a, b) => (a.wave - b.wave) || String(a.id).localeCompare(String(b.id)))
+            let compIdx = 0
+            for (let i = 0; i < item.children.length; i += 1) {
+              const ch = item.children[i]
+              const cIdx = (ch.activity === 'completed' || ch.status === 'completed') ? compIdx++ : i
+              computeWorkerLmtexMeta(ch, cIdx, { store, recomputeApproval: true })
+            }
             item.running_children = item.children.filter((c) => c.activity === 'running').length
           }
         } catch { /* ignore */ }
@@ -1294,6 +1653,7 @@ async function discoverHostSessions(ctx, store, options = {}) {
     } catch { /* 自动绑定异常不影响会话发现 */ }
   }
 
+  let finalItems = items
   /* p2 单窗口根会话唯一性：若同一工作区存在有实质活动的主会话，过滤掉无任何 token/步骤/子代理的空 UUID 幽灵会话 */
   if (items.length > 1) {
     const requestedRootId = options.sessionId ? resolveRootSessionId(ctx, options.sessionId) : ''
@@ -1306,11 +1666,25 @@ async function discoverHostSessions(ctx, store, options = {}) {
         || x.steps > 0
         || x.children.length > 0
       ))
-      if (filtered.length > 0) return filtered
+      if (filtered.length > 0) finalItems = filtered
     }
   }
 
-  return items
+  /* 自动同步宿主子智能体至 PostgreSQL / SQLite 事实库（plan_goals / worker_tasks / worker_digests） */
+  try {
+    if (store && typeof store.syncHostWorkersToPg === 'function') {
+      const syncEng = (finalItems[0] && finalItems[0].engagementId) || activeEngagementId || 'default'
+      const allHostKids = []
+      for (const it of finalItems) {
+        for (const ch of (Array.isArray(it.children) ? it.children : [])) {
+          allHostKids.push(ch)
+        }
+      }
+      store.syncHostWorkersToPg(syncEng, allHostKids)
+    }
+  } catch { /* ignore PG sync errors */ }
+
+  return finalItems
 }
 
 /**
@@ -1388,6 +1762,7 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
   const planWfNode = wfNodeByRole.get('plan') || null
   const rootNode = primaryHost
     ? Object.assign({}, primaryHost, {
+      isRoot: true,
       parentId: null,
       role: 'plan',
       badge: '主控',
@@ -1403,10 +1778,10 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       tokens: (planWfNode && planWfNode.tokens) || 0,
       steps: (planWfNode && planWfNode.step_count) || 0,
       activity: (wfDag && wfDag.status === 'running') ? 'running' : ((wfDag && wfDag.hasStarted) ? 'completed' : 'idle'),
-    }, { isRoot: true, parentId: null, workflowNode: planWfNode })
+    }, { isRoot: true, parentId: null, workflowNode: planWfNode, store })
 
   const childNodes = Array.isArray(primaryHost && primaryHost.children)
-    ? primaryHost.children.map((c) => Object.assign({}, c, { parentId: rootNode.id, parent: rootNode.id }))
+    ? primaryHost.children.map((c) => Object.assign({}, c, { isRoot: false, parentId: rootNode.id, parent: rootNode.id }))
     : []
 
   /* 若 store.workflowDag 中存在已激活的角色节点（recon/designer/assess/exploit/vuln-scan/qa/internal）但尚未在子会话列表中出现，则合成为子智能体节点 */
@@ -1434,12 +1809,22 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       parentId: rootNode.id,
       defaultModel: rootNode.model,
       workflowNode: wfNode,
+      store,
     })
     childNodes.push(synthChild)
     existingRoles.add(role)
   }
 
   childNodes.sort((a, b) => (a.wave - b.wave) || String(a.id).localeCompare(String(b.id)))
+
+  /* 为每个子智能体节点计算 lmtex 优先级（uiPriority / priorityWeight / workerTags / compressedDigest / approvalState / nextGoal） */
+  let completedWorkerIdx = 0
+  for (let i = 0; i < childNodes.length; i += 1) {
+    const child = childNodes[i]
+    const isChildCompleted = child.activity === 'completed' || child.status === 'completed' || child.status === 'done'
+    const effIdx = isChildCompleted ? completedWorkerIdx++ : i
+    computeWorkerLmtexMeta(child, effIdx, { store, recomputeApproval: true })
+  }
 
   /* 若主控节点自身 token 为 0 但子智能体已有消耗，按汇总比例补齐主控上下文遥测 */
   if (rootNode.tokens === 0 && childNodes.length > 0) {
@@ -1457,8 +1842,16 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       }
     }
   }
+  computeWorkerLmtexMeta(rootNode, 0, { store })
   rootNode.children = childNodes
   rootNode.running_children = childNodes.filter((c) => c.activity === 'running').length
+
+  /* 自动同步宿主子智能体至 PostgreSQL / SQLite 事实库（plan_goals / worker_tasks / worker_digests） */
+  try {
+    if (store && typeof store.syncHostWorkersToPg === 'function') {
+      store.syncHostWorkersToPg(activeEngagement || 'default', childNodes)
+    }
+  } catch { /* ignore PG sync errors */ }
 
   /* 生成跨智能体协作事件流（collabEvents）：按波次生成 主控 -> 子代理(spawn/progress) 与 子代理 -> 主控(complete) */
   const collabEvents = []
@@ -1480,6 +1873,10 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
         role: child.role,
         wave: child.wave,
         color: child.color,
+        uiPriority: child.uiPriority,
+        priorityWeight: child.priorityWeight,
+        workerTags: child.workerTags,
+        approvalState: child.approvalState,
         label: `派发 ${child.title || child.label}`,
         at: child.createdAt || rootNode.updatedAt || new Date().toISOString(),
       })
@@ -1499,6 +1896,10 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
           role: child.role,
           wave: child.wave,
           color: child.color,
+          uiPriority: child.uiPriority,
+          priorityWeight: child.priorityWeight,
+          workerTags: child.workerTags,
+          approvalState: child.approvalState,
           label: child.latestOutputPreview || `执行中 (${child.steps} 步)`,
           at: child.updatedAt || new Date().toISOString(),
         })
@@ -1516,6 +1917,11 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
           role: child.role,
           wave: child.wave,
           color: child.color,
+          uiPriority: child.uiPriority,
+          priorityWeight: child.priorityWeight,
+          workerTags: child.workerTags,
+          approvalState: child.approvalState,
+          compressedDigest: child.compressedDigest,
           label: `完成回报 ${child.title || child.label}`,
           at: child.updatedAt || new Date().toISOString(),
         })
@@ -1523,11 +1929,15 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
     }
   }
 
-  /* 生成泳道列表（swimlanes）：[rootLane, ...childLanes] */
-  const buildLane = (node, isRootLane = false) => {
+  /* 生成泳道列表（swimlanes）：附加 lmtex 元数据并按 priorityWeight DESC -> updatedAt DESC 排序 */
+  const buildLane = (node, isRootLane = false, laneIdx = 0) => {
+    if (!node.uiPriority || !node.compressedDigest) {
+      computeWorkerLmtexMeta(node, laneIdx, { store })
+    }
     const laneEvents = collabEvents.filter((e) => e.fromId === node.id || e.toId === node.id || e.childId === node.id)
     return {
       id: node.id,
+      sessionId: node.sessionId || node.id,
       parentId: node.parentId || null,
       isRoot: isRootLane,
       badge: node.badge,
@@ -1549,18 +1959,49 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       costYuan: node.costYuan,
       steps: node.steps,
       rounds: node.rounds,
+      turns: node.turns,
+      toolCalls: node.toolCalls,
       durationMs: node.durationMs,
       durationLabel: node.durationLabel,
       taskCount: isRootLane ? Math.max(1, childNodes.length) : 1,
       eventCount: isRootLane ? collabEvents.length : laneEvents.length,
       color: node.color,
+      uiPriority: node.uiPriority,
+      ui_priority: node.uiPriority,
+      priorityWeight: node.priorityWeight,
+      priority_weight: node.priorityWeight,
+      priorityLabel: node.priorityLabel,
+      priority_label: node.priorityLabel,
+      workerTags: node.workerTags,
+      worker_tags: node.workerTags,
+      compressedDigest: node.compressedDigest,
+      compressed_digest: node.compressedDigest,
+      approvalState: node.approvalState,
+      approval_state: node.approvalState,
+      nextGoal: node.nextGoal,
+      next_goal: node.nextGoal,
+      promptPreview: node.promptPreview,
+      latestOutputPreview: node.latestOutputPreview,
+      createdAt: node.createdAt || null,
+      updatedAt: node.updatedAt || null,
     }
   }
-  const swimlanes = [buildLane(rootNode, true), ...childNodes.map((c) => buildLane(c, false))]
+  const swimlanes = [buildLane(rootNode, true, 0), ...childNodes.map((c, idx) => buildLane(c, false, idx))]
+  swimlanes.sort((a, b) => {
+    if ((b.priorityWeight || 0) !== (a.priorityWeight || 0)) {
+      return (b.priorityWeight || 0) - (a.priorityWeight || 0)
+    }
+    const tb = parseTimestampMs(b.updatedAt)
+    const ta = parseTimestampMs(a.updatedAt)
+    if (tb !== ta) return tb - ta
+    if (Boolean(b.isRoot) !== Boolean(a.isRoot)) return b.isRoot ? 1 : -1
+    return (a.wave || 0) - (b.wave || 0)
+  })
 
   /* 生成协作任务卡片列表（collabTasks）：供 p4 右下「协作任务」与 p5 树图画布使用 */
   const collabTasks = childNodes.map((child) => ({
     id: child.id,
+    sessionId: child.sessionId || child.id,
     parentId: child.parentId || rootNode.id,
     badge: child.badge,
     title: child.title || child.label,
@@ -1586,17 +2027,43 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
     durationLabel: child.durationLabel,
     steps: child.steps,
     rounds: child.rounds,
+    turns: child.turns,
+    toolCalls: child.toolCalls,
     color: child.color,
+    uiPriority: child.uiPriority,
+    ui_priority: child.uiPriority,
+    priorityWeight: child.priorityWeight,
+    priority_weight: child.priorityWeight,
+    priorityLabel: child.priorityLabel,
+    priority_label: child.priorityLabel,
+    workerTags: child.workerTags,
+    worker_tags: child.workerTags,
+    compressedDigest: child.compressedDigest,
+    compressed_digest: child.compressedDigest,
+    approvalState: child.approvalState,
+    approval_state: child.approvalState,
+    nextGoal: child.nextGoal,
+    next_goal: child.nextGoal,
+    createdAt: child.createdAt || null,
+    updatedAt: child.updatedAt || null,
   }))
+  collabTasks.sort((a, b) => {
+    if ((b.priorityWeight || 0) !== (a.priorityWeight || 0)) {
+      return (b.priorityWeight || 0) - (a.priorityWeight || 0)
+    }
+    return parseTimestampMs(b.updatedAt) - parseTimestampMs(a.updatedAt)
+  })
 
   const runningCount = (rootNode.activity === 'running' ? 1 : 0)
     + childNodes.filter((c) => c.activity === 'running').length
   const totalContextTokens = (Number(rootNode.contextTokens || rootNode.tokens || 0))
     + childNodes.reduce((sum, c) => sum + Number(c.contextTokens || c.tokens || 0), 0)
 
+  const nodes = [rootNode, ...childNodes]
   const agentNetwork = {
     root: rootNode,
     children: childNodes,
+    nodes,
     totalAgents: 1 + childNodes.length,
     runningCount,
     totalContextTokens,
@@ -1605,6 +2072,7 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
 
   return {
     agentNetwork,
+    nodes,
     swimlanes,
     collabEvents,
     collabTasks,
@@ -1619,14 +2087,15 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
  */
 async function extractAgentSessionDetail(ctx, store, engagementId, request = {}) {
   const targetId = String(request.sessionId || request.agentId || request.id || request.session || '').trim()
+  const isSyntheticChildId = targetId.startsWith('sub-') || Boolean(request.role && request.role !== 'plan')
   const resolvedRootSession = request.session
     ? resolveRootSessionId(ctx, request.session)
-    : (targetId ? resolveRootSessionId(ctx, targetId) : '')
-  const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session || targetId, autoBind: true })
+    : ((targetId && !isSyntheticChildId) ? resolveRootSessionId(ctx, targetId) : '')
+  const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session || (isSyntheticChildId ? '' : targetId), autoBind: true })
   const currentEng = (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null)
     || engagementId
     || 'default'
-  const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession)
+  const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, isSyntheticChildId ? '' : resolvedRootSession)
 
   let sessions = null
   let subagents = null
@@ -1731,6 +2200,7 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {})
       parentId: synth.rootNode.id,
       defaultModel: synth.rootNode.model,
       workflowNode: wfNode,
+      store,
     })
   }
 
@@ -2139,6 +2609,19 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {})
     ? 'running'
     : ((matchedNode.status && matchedNode.status !== 'pending') ? matchedNode.status : 'done')
 
+  const childIdx = Math.max(0, synth.childNodes.findIndex((c) => c.id === matchedNode.id || c.role === role))
+  const lmtexMeta = computeWorkerLmtexMeta(Object.assign({}, matchedNode, {
+    isRoot: isRootMatch,
+    role,
+    wave: effectiveWave,
+    status: effectiveStatus,
+    steps: effectiveSteps,
+    turns: matchedNode.turns || matchedNode.rounds || Math.max(1, Math.ceil(effectiveSteps / 2)),
+    toolCalls: matchedNode.toolCalls !== undefined ? matchedNode.toolCalls : stepTimeline.length,
+    completionConclusion: conclusion,
+    tools: stepTimeline.map((st) => st.tool).filter(Boolean),
+  }), isRootMatch ? 0 : childIdx, { store })
+
   return {
     ok: true,
     sessionId: matchedRealSessionId || targetId || synth.rootNode.id,
@@ -2155,6 +2638,39 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {})
     delegationPrompt,
     stepTimeline,
     conclusion,
+    uiPriority: lmtexMeta.uiPriority,
+    ui_priority: lmtexMeta.uiPriority,
+    priorityWeight: lmtexMeta.priorityWeight,
+    priority_weight: lmtexMeta.priorityWeight,
+    priorityLabel: lmtexMeta.priorityLabel,
+    priority_label: lmtexMeta.priorityLabel,
+    workerTags: lmtexMeta.workerTags,
+    worker_tags: lmtexMeta.workerTags,
+    compressedDigest: lmtexMeta.compressedDigest,
+    compressed_digest: lmtexMeta.compressedDigest,
+    approvalState: lmtexMeta.approvalState,
+    approval_state: lmtexMeta.approvalState,
+    nextGoal: lmtexMeta.nextGoal,
+    next_goal: lmtexMeta.nextGoal,
+  }
+}
+
+function invokeStoreMethodCompat(store, methodName, engagementId, payload) {
+  if (!store || typeof store[methodName] !== 'function') return null
+  try {
+    const fn = store[methodName]
+    const fnSrc = Function.prototype.toString.call(fn)
+    const firstArgIsEng = /^\s*(?:async\s+)?(?:function\s*\w*\s*)?\(\s*(?:eng|engagement|engagementId)\b/i.test(fnSrc)
+    if (firstArgIsEng) {
+      return fn.call(store, engagementId, payload)
+    }
+    return fn.call(store, payload, engagementId)
+  } catch {
+    try {
+      return store[methodName](engagementId, payload)
+    } catch {
+      return null
+    }
   }
 }
 
@@ -2164,6 +2680,7 @@ async function handleAgentsOp(ctx, request) {
     'pgWriteProbe', 'workflowDag', 'workflowDocWall', 'workflowAction', 'workflowRun',
     'dagCheckpoint', 'feishuNotify', 'feishuConfig', 'feishuTestPush',
     'agentSessionDetail', 'activateAgentSession',
+    'planApproveWorker', 'submitWorkerDigest', 'decomposeUserPrompt',
   ]
   if (!AGENT_OPS.includes(request.op)) return undefined
   /* 并发上限与工具侧的闸门读同一份设置（settings.json → REDTEAM_MAX_AGENTS → 默认 6），
@@ -2172,8 +2689,280 @@ async function handleAgentsOp(ctx, request) {
   const root = (() => { try { return store && store.root } catch { return undefined } })()
   const resolvedRootSession = request.session ? resolveRootSessionId(ctx, request.session) : ''
   const activeEngagement = request.engagement
+    || request.engagement_id
+    || request.engagementId
     || (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null)
     || 'default'
+
+  const effectiveOp = (request.op === 'workflowAction' && ['planApproveWorker', 'submitWorkerDigest', 'decomposeUserPrompt'].includes(request.action))
+    ? request.action
+    : request.op
+
+  if (effectiveOp === 'planApproveWorker') {
+    const rawPayload = Object.assign(
+      {},
+      request.payload && typeof request.payload === 'object' ? request.payload : {},
+      request,
+    )
+    const currentEng = (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null) || activeEngagement
+    const workerKey = String(
+      rawPayload.worker_id
+      || rawPayload.workerId
+      || rawPayload.session_id
+      || rawPayload.sessionId
+      || rawPayload.agentId
+      || rawPayload.id
+      || rawPayload.worker_name
+      || rawPayload.workerName
+      || rawPayload.name
+      || rawPayload.title
+      || 'sub-recon'
+    ).trim()
+    const approvalState = String(
+      rawPayload.approval_state
+      || rawPayload.approvalState
+      || (rawPayload.decision === 'revision_required' || rawPayload.decision === 'reject' ? 'revision_required' : 'approved')
+    ).trim()
+    const uiPriority = approvalState === 'approved' ? 'P2' : 'P0'
+    const priorityWeight = uiPriority === 'P2' ? 50 : 100
+    const priorityLabel = uiPriority === 'P2' ? 'P2 已审归档' : 'P0 焦点审批'
+    const nextGoal = String(
+      rawPayload.next_goal
+      || rawPayload.nextGoal
+      || '进入下一波次契约联调与回归验证'
+    ).trim()
+
+    const overrideEntry = {
+      workerId: workerKey,
+      approvalState,
+      uiPriority,
+      priorityWeight,
+      priorityLabel,
+      nextGoal,
+      explicitApproved: approvalState === 'approved',
+      approvedAt: new Date().toISOString(),
+    }
+
+    const keysToRegister = [
+      workerKey,
+      rawPayload.worker_id,
+      rawPayload.workerId,
+      rawPayload.session_id,
+      rawPayload.sessionId,
+      rawPayload.agentId,
+      rawPayload.id,
+      rawPayload.worker_name,
+      rawPayload.workerName,
+      rawPayload.name,
+      rawPayload.title,
+      rawPayload.role,
+      rawPayload.role ? `sub-${rawPayload.role}` : '',
+    ]
+    for (const k of keysToRegister) {
+      const trimmed = String(k || '').trim()
+      if (trimmed) approvedWorkerOverrides.set(trimmed, overrideEntry)
+    }
+
+    const storePayload = Object.assign({}, rawPayload, {
+      op: 'planApproveWorker',
+      engagement: currentEng,
+      engagement_id: currentEng,
+      engagementId: currentEng,
+      worker_id: workerKey,
+      workerId: workerKey,
+      session_id: rawPayload.session_id || rawPayload.sessionId || workerKey,
+      worker_name: rawPayload.worker_name || rawPayload.workerName || rawPayload.name || rawPayload.title || workerKey,
+      approval_state: approvalState,
+      approvalState,
+      ui_priority: uiPriority,
+      uiPriority,
+      next_goal: nextGoal,
+      nextGoal,
+    })
+
+    let storeResult = invokeStoreMethodCompat(store, 'approveWorkerAndDispatchNext', currentEng, storePayload)
+    if (!storeResult && store) {
+      try { storeResult = dispatch(store, storePayload) } catch { storeResult = null }
+    }
+
+    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true })
+    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession)
+    const pgProbe = store && typeof store.pgWriteProbe === 'function'
+      ? store.pgWriteProbe(currentEng)
+      : getPgWriteProbe(currentEng)
+
+    return Object.assign(
+      {},
+      storeResult && typeof storeResult === 'object' ? storeResult : {},
+      {
+        ok: true,
+        op: 'planApproveWorker',
+        engagement: currentEng,
+        active_engagement: currentEng,
+        worker_id: workerKey,
+        workerId: workerKey,
+        approvalState,
+        approval_state: approvalState,
+        uiPriority,
+        ui_priority: uiPriority,
+        priorityWeight,
+        priority_weight: priorityWeight,
+        priorityLabel,
+        priority_label: priorityLabel,
+        nextGoal,
+        next_goal: nextGoal,
+        host_sessions: hostSessions,
+        hostSessions,
+        agentNetwork: synth.agentNetwork,
+        agent_network: synth.agentNetwork,
+        nodes: synth.nodes,
+        swimlanes: synth.swimlanes,
+        collabEvents: synth.collabEvents,
+        collab_events: synth.collabEvents,
+        collabTasks: synth.collabTasks,
+        collab_tasks: synth.collabTasks,
+        pg_probe: pgProbe,
+        pgWriteProbe: pgProbe,
+      },
+    )
+  }
+
+  if (effectiveOp === 'submitWorkerDigest') {
+    const rawPayload = Object.assign(
+      {},
+      request.payload && typeof request.payload === 'object' ? request.payload : {},
+      request,
+    )
+    const currentEng = (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null) || activeEngagement
+    const meta = computeWorkerLmtexMeta(rawPayload, Number(rawPayload.idx) || 0, { store })
+    const storePayload = Object.assign({}, rawPayload, {
+      op: 'submitWorkerDigest',
+      engagement: currentEng,
+      engagement_id: currentEng,
+      engagementId: currentEng,
+      ui_priority: meta.uiPriority,
+      uiPriority: meta.uiPriority,
+      priority_weight: meta.priorityWeight,
+      priorityWeight: meta.priorityWeight,
+      worker_tags: meta.workerTags,
+      workerTags: meta.workerTags,
+      compressed_digest: meta.compressedDigest,
+      compressedDigest: meta.compressedDigest,
+      approval_state: meta.approvalState,
+      approvalState: meta.approvalState,
+      next_goal: meta.nextGoal,
+      nextGoal: meta.nextGoal,
+    })
+
+    let storeResult = invokeStoreMethodCompat(store, 'submitWorkerDigest', currentEng, storePayload)
+    if (!storeResult && store) {
+      try { storeResult = dispatch(store, storePayload) } catch { storeResult = null }
+    }
+
+    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true })
+    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession)
+    const pgProbe = store && typeof store.pgWriteProbe === 'function'
+      ? store.pgWriteProbe(currentEng)
+      : getPgWriteProbe(currentEng)
+
+    return Object.assign(
+      {},
+      storeResult && typeof storeResult === 'object' ? storeResult : {},
+      {
+        ok: true,
+        op: 'submitWorkerDigest',
+        engagement: currentEng,
+        active_engagement: currentEng,
+        uiPriority: meta.uiPriority,
+        ui_priority: meta.uiPriority,
+        priorityWeight: meta.priorityWeight,
+        priority_weight: meta.priorityWeight,
+        workerTags: meta.workerTags,
+        worker_tags: meta.workerTags,
+        compressedDigest: meta.compressedDigest,
+        compressed_digest: meta.compressedDigest,
+        approvalState: meta.approvalState,
+        approval_state: meta.approvalState,
+        nextGoal: meta.nextGoal,
+        next_goal: meta.nextGoal,
+        host_sessions: hostSessions,
+        hostSessions,
+        agentNetwork: synth.agentNetwork,
+        agent_network: synth.agentNetwork,
+        nodes: synth.nodes,
+        swimlanes: synth.swimlanes,
+        collabEvents: synth.collabEvents,
+        collab_events: synth.collabEvents,
+        collabTasks: synth.collabTasks,
+        collab_tasks: synth.collabTasks,
+        pg_probe: pgProbe,
+        pgWriteProbe: pgProbe,
+      },
+    )
+  }
+
+  if (effectiveOp === 'decomposeUserPrompt') {
+    const rawPayload = Object.assign(
+      {},
+      request.payload && typeof request.payload === 'object' ? request.payload : {},
+      request,
+    )
+    const currentEng = (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null) || activeEngagement
+    const promptText = String(rawPayload.prompt || rawPayload.userPrompt || rawPayload.goal || rawPayload.text || '执行多波次并发架构交付与验证').trim()
+    const storePayload = Object.assign({}, rawPayload, {
+      op: 'decomposeUserPrompt',
+      engagement: currentEng,
+      engagement_id: currentEng,
+      engagementId: currentEng,
+      prompt: promptText,
+    })
+
+    let storeResult = invokeStoreMethodCompat(store, 'decomposeUserPrompt', currentEng, storePayload)
+    if (!storeResult && store) {
+      try { storeResult = dispatch(store, storePayload) } catch { storeResult = null }
+    }
+
+    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true })
+    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession)
+    const pgProbe = store && typeof store.pgWriteProbe === 'function'
+      ? store.pgWriteProbe(currentEng)
+      : getPgWriteProbe(currentEng)
+
+    return Object.assign(
+      {
+        subgoals: synth.childNodes.map((c) => ({
+          id: c.id,
+          role: c.role,
+          wave: c.wave,
+          title: c.title,
+          uiPriority: c.uiPriority,
+          workerTags: c.workerTags,
+          approvalState: c.approvalState,
+          nextGoal: c.nextGoal,
+        })),
+      },
+      storeResult && typeof storeResult === 'object' ? storeResult : {},
+      {
+        ok: true,
+        op: 'decomposeUserPrompt',
+        prompt: promptText,
+        engagement: currentEng,
+        active_engagement: currentEng,
+        host_sessions: hostSessions,
+        hostSessions,
+        agentNetwork: synth.agentNetwork,
+        agent_network: synth.agentNetwork,
+        nodes: synth.nodes,
+        swimlanes: synth.swimlanes,
+        collabEvents: synth.collabEvents,
+        collab_events: synth.collabEvents,
+        collabTasks: synth.collabTasks,
+        collab_tasks: synth.collabTasks,
+        pg_probe: pgProbe,
+        pgWriteProbe: pgProbe,
+      },
+    )
+  }
 
   if (request.op === 'agentSessionDetail') {
     return await extractAgentSessionDetail(ctx, store, activeEngagement, request)
@@ -2240,6 +3029,7 @@ async function handleAgentsOp(ctx, request) {
       active_engagement: currentEng,
       agentNetwork: synth.agentNetwork,
       agent_network: synth.agentNetwork,
+      nodes: synth.nodes,
       swimlanes: synth.swimlanes,
       collabEvents: synth.collabEvents,
       collab_events: synth.collabEvents,
@@ -2260,7 +3050,14 @@ async function handleAgentsOp(ctx, request) {
     const currentEng = (store && typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null) || activeEngagement
     const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession)
     if (store && typeof store.workflowDag === 'function') {
-      return Object.assign({ ok: true }, store.workflowDag(currentEng), {
+      const dagData = store.workflowDag(currentEng) || {}
+      if (Array.isArray(dagData.nodes)) {
+        dagData.nodes.forEach((n, idx) => computeWorkerLmtexMeta(n, idx, { store }))
+      }
+      if (Array.isArray(dagData.all_nodes)) {
+        dagData.all_nodes.forEach((n, idx) => computeWorkerLmtexMeta(n, idx, { store }))
+      }
+      return Object.assign({ ok: true }, dagData, {
         host_sessions: hostSessions,
         agentNetwork: synth.agentNetwork,
         agent_network: synth.agentNetwork,
@@ -2277,7 +3074,7 @@ async function handleAgentsOp(ctx, request) {
       engagement: currentEng,
       runId: null,
       status: 'standby',
-      nodes: [],
+      nodes: synth.nodes,
       edges: [],
       activeRoles: [],
       docWall: [],

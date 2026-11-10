@@ -247,6 +247,44 @@ for (const token of V019_INSPECT_JUMP_TOKENS) {
   ok(source.includes(token), `client.js 包含双步透视与宿主聊天框跳转契约「${token}」`)
 }
 
+/* ── 7. v0.20.0 60FPS 零重绘拖拽、横向向右派生树与 lmtex Plan-Worker 闭环契约 ── */
+console.log('— 冒烟七：v0.20.0 60FPS 零重绘拖拽、横向向右派生树与 lmtex Plan-Worker 闭环契约')
+const V020_ZERO_RENDER_TOKENS = [
+  '_domTelemCache',
+  '_isCanvasDragging',
+  'applyStageTransform',
+  'stageDomRef',
+  'panRef',
+]
+for (const token of V020_ZERO_RENDER_TOKENS) {
+  ok(source.includes(token), `client.js 包含 60FPS 零 React 重绘拖拽与 DOM 遥测缓存标记「${token}」`)
+}
+
+const V020_TREE_AND_LMTEX_TOKENS = [
+  'rt-tree-layout-horizontal',
+  'rt-tree-layout-vertical',
+  'rt-tree-layout-setting',
+  '横向向右派生',
+  '纵向向下派生',
+  'rt-wave-horizontal-lane',
+  'rt-wave-right-children',
+  'rt-lower-process-deck',
+  'rt-pri-badge',
+  'rt-digest-box',
+  'rt-plan-approve-btn',
+  'planApproveWorker',
+]
+for (const token of V020_TREE_AND_LMTEX_TOKENS) {
+  ok(source.includes(token), `client.js 包含 v0.20.0 横向/纵向开发树切换、全宽底部流程区与 lmtex 闭环标记「${token}」`)
+}
+
+const bRowCanvasIdx = source.indexOf("className: 'rt-bento-row-canvas'")
+const bRowControlIdx = source.indexOf("className: 'rt-bento-row-1'")
+ok(
+  bRowCanvasIdx !== -1 && bRowControlIdx !== -1 && bRowCanvasIdx < bRowControlIdx,
+  'OverviewTab 中全宽 Workflow Tree 画布 (.rt-bento-row-canvas) 位于页面最上方（先于 .rt-bento-row-1 与 .rt-analytics-trio）',
+)
+
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)
 

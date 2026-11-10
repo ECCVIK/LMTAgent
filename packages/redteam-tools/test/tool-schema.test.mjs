@@ -192,7 +192,7 @@ const designerTools = collect('designer')
 const assessTools = collect('assess')
 const vulnTools = collect('vuln-scan')
 const qaTools = collect('qa')
-ok(allTools.size === 59, 'profile=all 不裁剪（59 个工具）')
+ok(allTools.size === 60 && allTools.has('redteam_workflow'), 'profile=all 不裁剪（60 个工具，含 redteam_workflow 闭环编排）')
 ok(reconTools.size < allTools.size && !reconTools.has('redteam_score_hit') && !reconTools.has('redteam_tunnel_add') && reconTools.has('redteam_asset_add'),
   'recon profile 裁掉记分/隧道等越界写操作，保留资产入库（' + reconTools.size + ' 个）')
 ok(designerTools.size < allTools.size && designerTools.has('redteam_asset_add') && designerTools.has('redteam_asset_assess') && !designerTools.has('redteam_tunnel_add'),

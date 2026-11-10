@@ -547,12 +547,24 @@ export function dispatch(store, req = {}) {
     if (op === 'pocStats') return { ok: true, stats: store.pocStats() }
 
     /* p2 PG 写表活动探针与 dsh-harness-one 工作流编排：允许未显式传 engagement 时回退当前活跃靶标 */
-    const fallbackId = req.engagement || (typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null) || 'default'
+    const fallbackId = req.engagement || req.engagement_id || (typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null) || 'default'
     if (op === 'pgWriteProbe') return Object.assign({ ok: true }, store.pgWriteProbe(fallbackId))
     if (op === 'workflowDag') return Object.assign({ ok: true }, store.workflowDag(fallbackId))
     if (op === 'workflowAction' || op === 'dagCheckpoint') return Object.assign({ ok: true }, store.workflowAction(fallbackId, req))
     if (op === 'feishuNotify') {
       return Object.assign({ ok: true }, store.workflowAction(fallbackId, Object.assign({ action: 'pushFeishuNotify' }, req)))
+    }
+    if (op === 'decomposeUserPrompt' || op === 'decompose') {
+      return Object.assign({ ok: true }, store.decomposeUserPrompt(Object.assign({ engagement_id: fallbackId }, req)))
+    }
+    if (op === 'submitWorkerDigest' || op === 'submit_digest') {
+      return Object.assign({ ok: true }, store.submitWorkerDigest(Object.assign({ engagement_id: fallbackId }, req)))
+    }
+    if (op === 'planApproveWorker' || op === 'approveWorkerAndDispatchNext' || op === 'approve_worker') {
+      return Object.assign({ ok: true }, store.approveWorkerAndDispatchNext(Object.assign({ engagement_id: fallbackId }, req)))
+    }
+    if (op === 'syncHostWorkersToPg' || op === 'sync_workers') {
+      return Object.assign({ ok: true }, store.syncHostWorkersToPg(fallbackId, req.workers || req.items || []))
     }
 
     const id = req.engagement
@@ -684,6 +696,8 @@ export class RedteamStore {
     this.root = root
     this.engagementsDir = join(root, 'engagements')
     this.handles = new Map()
+    this._syncedWorkerSig = new Map()
+    this._closedLoopSeq = 0
     mkdirSync(this.engagementsDir, { recursive: true })
   }
 
@@ -832,6 +846,7 @@ export class RedteamStore {
       handle.exec(HAS_FTS5 ? DDL + ASSET_FTS_DDL : DDL)
     }
     migrate(handle)
+    this.#ensureClosedLoopTables(handle)
     this.handles.set(id, handle)
     return handle
   }
@@ -1028,13 +1043,1183 @@ export class RedteamStore {
   }
 
   /**
+   * 确保 1 Plan + N Workers 闭环三张表在当前句柄中已创建且列齐全。
+   */
+  #ensureClosedLoopTables(db) {
+    if (!db) return
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS plan_goals (
+          id TEXT PRIMARY KEY,
+          engagement_id TEXT,
+          parent_goal_id TEXT,
+          prompt_hash TEXT,
+          user_prompt TEXT,
+          title TEXT,
+          objective TEXT,
+          wave TEXT,
+          ui_priority TEXT DEFAULT 'P1',
+          priority_weight INTEGER DEFAULT 80,
+          status TEXT DEFAULT 'planned',
+          approval_note TEXT,
+          approved_at TEXT,
+          created_at TEXT,
+          updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS worker_tasks (
+          id TEXT PRIMARY KEY,
+          engagement_id TEXT,
+          goal_id TEXT,
+          session_id TEXT,
+          worker_name TEXT,
+          worker_role TEXT,
+          wave TEXT,
+          ui_priority TEXT DEFAULT 'P1',
+          priority_weight INTEGER DEFAULT 80,
+          tags_json TEXT DEFAULT '[]',
+          assigned_goal TEXT,
+          status TEXT DEFAULT 'queued',
+          approval_state TEXT DEFAULT 'working',
+          next_goal TEXT,
+          tool_calls INTEGER DEFAULT 0,
+          turns INTEGER DEFAULT 0,
+          created_at TEXT,
+          updated_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS worker_digests (
+          id TEXT PRIMARY KEY,
+          engagement_id TEXT,
+          worker_task_id TEXT,
+          goal_id TEXT,
+          worker_name TEXT,
+          what_was_done TEXT,
+          files_touched_json TEXT DEFAULT '[]',
+          key_decisions_json TEXT DEFAULT '[]',
+          verification TEXT,
+          raw_tokens INTEGER DEFAULT 0,
+          compressed_tokens INTEGER DEFAULT 0,
+          compression_pct INTEGER DEFAULT 0,
+          approval_decision TEXT DEFAULT 'pending_approval',
+          followup_goal TEXT,
+          created_at TEXT
+        );
+      `)
+    } catch { /* 表已由 schema.js 创建或句柄不支持时忽略 */ }
+  }
+
+  #nextClosedLoopUid(prefix) {
+    this._closedLoopSeq = (Number(this._closedLoopSeq) || 0) + 1
+    return `${prefix}-${Date.now().toString(36)}-${this._closedLoopSeq}`
+  }
+
+  #isTableIntPk(db, table) {
+    try {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all()
+      const pk = cols.find((c) => c.name === 'id')
+      return Boolean(pk && String(pk.type || '').toUpperCase() === 'INTEGER' && Number(pk.pk) > 0)
+    } catch {
+      return false
+    }
+  }
+
+  #openClosedLoopDb(explicitId, createIfMissing = true) {
+    const resolvedId = String(explicitId || this.activeEngagementId() || 'default').trim() || 'default'
+    if (this.handles.has(resolvedId) || existsSync(this.dbPathOf(resolvedId))) {
+      const db = this.db(resolvedId)
+      this.#ensureClosedLoopTables(db)
+      return { resolvedId, db }
+    }
+    if (!createIfMissing) return { resolvedId, db: null }
+    const db = this.db(resolvedId, { create: true })
+    this.#ensureClosedLoopTables(db)
+    return { resolvedId, db }
+  }
+
+  _recordPgWrite(op, table, meta = {}) {
+    const isObj = meta && typeof meta === 'object'
+    const engId = (isObj && (meta.engagement_id || meta.engagement)) || this.activeEngagementId() || 'default'
+    const role = (isObj && meta.role) || 'plan'
+    const summary = typeof meta === 'string'
+      ? meta
+      : ((isObj && meta.summary) || `${op} ${table}`)
+    const rows = isObj && typeof meta.rows === 'number' ? meta.rows : undefined
+    try {
+      recordPgTableWrite(engId, { table, op, role, summary, rows })
+    } catch { /* 忽略探针写入异常 */ }
+  }
+
+  #readClosedLoopState(id) {
+    const { resolvedId, db } = this.#openClosedLoopDb(id, false)
+    const emptyStats = {
+      total_goals: 0,
+      approved_workers: 0,
+      pending_approvals: 0,
+      compression_ratio_pct: 0,
+      compression_saved_tokens: 0,
+    }
+    if (!db) {
+      return {
+        plan_goals: [],
+        worker_tasks: [],
+        worker_digests: [],
+        closed_loop_stats: emptyStats,
+      }
+    }
+    let planGoals = []
+    let workerTasks = []
+    let workerDigests = []
+    try {
+      planGoals = db.prepare(
+        'SELECT * FROM plan_goals ORDER BY COALESCE(priority_weight, 0) DESC, created_at ASC, id ASC',
+      ).all().map((g) => Object.assign({}, g, {
+        engagement_id: g.engagement_id || resolvedId,
+        priority_weight: Number(g.priority_weight) || 0,
+      }))
+    } catch { planGoals = [] }
+    try {
+      workerTasks = db.prepare(
+        'SELECT * FROM worker_tasks ORDER BY COALESCE(priority_weight, 0) DESC, updated_at DESC, id ASC',
+      ).all().map((t) => {
+        const tags = parseJson(t.tags_json, [])
+        return Object.assign({}, t, {
+          engagement_id: t.engagement_id || resolvedId,
+          priority_weight: Number(t.priority_weight) || 0,
+          tool_calls: Number(t.tool_calls) || 0,
+          turns: Number(t.turns) || 0,
+          tags: Array.isArray(tags) ? tags : [],
+          tags_json: typeof t.tags_json === 'string' ? t.tags_json : JSON.stringify(Array.isArray(tags) ? tags : []),
+        })
+      })
+    } catch { workerTasks = [] }
+    try {
+      workerDigests = db.prepare(
+        'SELECT * FROM worker_digests ORDER BY created_at DESC, id DESC',
+      ).all().map((d) => {
+        const filesTouched = parseJson(d.files_touched_json, [])
+        const keyDecisions = parseJson(d.key_decisions_json, [])
+        return Object.assign({}, d, {
+          engagement_id: d.engagement_id || resolvedId,
+          raw_tokens: Number(d.raw_tokens) || 0,
+          compressed_tokens: Number(d.compressed_tokens) || 0,
+          compression_pct: Number(d.compression_pct) || 0,
+          files_touched: Array.isArray(filesTouched) ? filesTouched : [],
+          key_decisions: Array.isArray(keyDecisions) ? keyDecisions : [],
+        })
+      })
+    } catch { workerDigests = [] }
+
+    const totalGoals = planGoals.length
+    const approvedWorkers = workerTasks.filter((t) => t.approval_state === 'approved').length
+    const pendingApprovals = workerTasks.filter(
+      (t) => t.approval_state === 'pending_approval' || t.approval_state === 'revision_required',
+    ).length
+    const totalRaw = workerDigests.reduce((acc, d) => acc + (Number(d.raw_tokens) || 0), 0)
+    const totalCompressed = workerDigests.reduce((acc, d) => acc + (Number(d.compressed_tokens) || 0), 0)
+    const savedTokens = Math.max(0, totalRaw - totalCompressed)
+    const compressionRatioPct = totalRaw > 0
+      ? Math.max(10, Math.min(98, Math.round((1 - totalCompressed / Math.max(1, totalRaw)) * 100)))
+      : (workerDigests.length > 0
+        ? Math.round(workerDigests.reduce((acc, d) => acc + (Number(d.compression_pct) || 0), 0) / workerDigests.length)
+        : 0)
+
+    return {
+      plan_goals: planGoals,
+      worker_tasks: workerTasks,
+      worker_digests: workerDigests,
+      closed_loop_stats: {
+        total_goals: totalGoals,
+        approved_workers: approvedWorkers,
+        pending_approvals: pendingApprovals,
+        compression_ratio_pct: compressionRatioPct,
+        compression_saved_tokens: savedTokens,
+      },
+    }
+  }
+
+  /**
+   * 1. 将用户需求拆解为结构化 `plan_goals`（4 波次）并预分配带优先级与标签的 `worker_tasks`。
+   */
+  decomposeUserPrompt(arg1 = {}, arg2 = undefined) {
+    let input = {}
+    if (typeof arg1 === 'string') {
+      if (arg2 && typeof arg2 === 'object') input = Object.assign({ engagement_id: arg1 }, arg2)
+      else if (typeof arg2 === 'string') input = { engagement_id: arg1, user_prompt: arg2 }
+      else input = { user_prompt: arg1 }
+    } else if (arg1 && typeof arg1 === 'object') {
+      input = arg1
+    }
+
+    const { resolvedId, db } = this.#openClosedLoopDb(input.engagement_id || input.engagement, true)
+    const userPrompt = String(
+      input.user_prompt ?? input.prompt ?? input.goal ?? '构建 1 Plan + N Workers 闭环研发与回归验证流水线',
+    ).trim() || '构建 1 Plan + N Workers 闭环研发与回归验证流水线'
+    const pHash = promptHash(userPrompt)
+    const now = nowIso()
+    const priorityWeights = { P0: 100, P1: 80, P2: 50, P3: 20 }
+
+    const defaultTemplates = [
+      {
+        wave: 'wave-1',
+        ui_priority: 'P0',
+        priority_weight: 100,
+        status: 'running',
+        worker_role: 'recon',
+        worker_name: 'recon-arch',
+        tags: ['#core-arch', '#wave-1'],
+        title: `Wave 1 · 架构测绘与目标拆解（Architecture & Discovery）`,
+        objective: `拆解用户目标「${userPrompt.slice(0, 120)}」，锁定数据表结构契约与并行分片边界`,
+      },
+      {
+        wave: 'wave-2',
+        ui_priority: 'P1',
+        priority_weight: 80,
+        status: 'planned',
+        worker_role: 'exploit',
+        worker_name: 'builder-canvas',
+        tags: ['#ui-canvas', '#60fps'],
+        title: `Wave 2 · 并行模块分片研发（Parallel Module Implementation）`,
+        objective: `围绕「${userPrompt.slice(0, 120)}」并行推进核心引擎与 UI 交互画布实现`,
+      },
+      {
+        wave: 'wave-3',
+        ui_priority: 'P2',
+        priority_weight: 50,
+        status: 'planned',
+        worker_role: 'vuln-scan',
+        worker_name: 'reviewer-pg-audit',
+        tags: ['#pg-store', '#digest'],
+        title: `Wave 3 · 契约审查与压缩摘要归档（Contract & Regression Audit）`,
+        objective: `汇总各 Worker 压缩摘要（Digest），校验 PG 落表完整性与接口契约`,
+      },
+      {
+        wave: 'wave-4',
+        ui_priority: 'P3',
+        priority_weight: 20,
+        status: 'planned',
+        worker_role: 'qa',
+        worker_name: 'qa-release-gate',
+        tags: ['#qa-gate', '#smoke'],
+        title: `Wave 4 · 自动化回归与发布门禁（Release Gate）`,
+        objective: `执行全量回归测试与门禁验收，确认「${userPrompt.slice(0, 90)}」闭环交付`,
+      },
+    ]
+
+    const rawGoals = Array.isArray(input.goals) && input.goals.length > 0 ? input.goals : defaultTemplates
+    const goalIntPk = this.#isTableIntPk(db, 'plan_goals')
+    const taskIntPk = this.#isTableIntPk(db, 'worker_tasks')
+
+    const createdGoals = []
+    const createdTasks = []
+    let prevGoalId = null
+
+    for (let i = 0; i < rawGoals.length; i++) {
+      const tpl = defaultTemplates[i % defaultTemplates.length]
+      const g = typeof rawGoals[i] === 'string'
+        ? { title: rawGoals[i], objective: rawGoals[i] }
+        : (rawGoals[i] || {})
+      const wave = String(g.wave || tpl.wave || `wave-${i + 1}`)
+      const uiPriority = ['P0', 'P1', 'P2', 'P3'].includes(g.ui_priority || g.priority)
+        ? (g.ui_priority || g.priority)
+        : tpl.ui_priority
+      const priorityWeight = Number(g.priority_weight) || priorityWeights[uiPriority] || tpl.priority_weight || 80
+      const title = String(g.title || tpl.title).trim()
+      const objective = String(g.objective || g.description || g.title || tpl.objective).trim()
+      const goalStatus = String(g.status || tpl.status || (i === 0 ? 'running' : 'planned'))
+      const parentGoalId = g.parent_goal_id !== undefined ? g.parent_goal_id : prevGoalId
+      const preferredGoalId = g.id || this.#nextClosedLoopUid(`goal-w${i + 1}`)
+      const bindGoalId = goalIntPk
+        ? (Number.isInteger(Number(preferredGoalId)) ? Number(preferredGoalId) : null)
+        : String(preferredGoalId)
+
+      const goalRes = db.prepare(`
+        INSERT INTO plan_goals (
+          id, engagement_id, parent_goal_id, prompt_hash, user_prompt,
+          title, objective, wave, ui_priority, priority_weight,
+          status, approval_note, approved_at, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          objective = excluded.objective,
+          wave = excluded.wave,
+          ui_priority = excluded.ui_priority,
+          priority_weight = excluded.priority_weight,
+          status = excluded.status,
+          updated_at = excluded.updated_at
+      `).run(
+        bindGoalId,
+        resolvedId,
+        parentGoalId ?? null,
+        pHash,
+        userPrompt,
+        title,
+        objective,
+        wave,
+        uiPriority,
+        priorityWeight,
+        goalStatus,
+        g.approval_note ?? '',
+        g.approved_at ?? null,
+        now,
+        now,
+      )
+      const finalGoalId = bindGoalId !== null ? bindGoalId : Number(goalRes.lastInsertRowid)
+      prevGoalId = finalGoalId
+
+      const goalRecord = {
+        id: finalGoalId,
+        engagement_id: resolvedId,
+        parent_goal_id: parentGoalId ?? null,
+        prompt_hash: pHash,
+        user_prompt: userPrompt,
+        title,
+        objective,
+        wave,
+        ui_priority: uiPriority,
+        priority_weight: priorityWeight,
+        status: goalStatus,
+        approval_note: g.approval_note ?? '',
+        approved_at: g.approved_at ?? null,
+        created_at: now,
+        updated_at: now,
+      }
+      createdGoals.push(goalRecord)
+
+      const rawTags = Array.isArray(g.tags)
+        ? g.tags
+        : (typeof g.tags_json === 'string' ? parseJson(g.tags_json, tpl.tags) : tpl.tags)
+      const tagsJson = JSON.stringify(rawTags)
+      const workerRole = String(g.worker_role || g.role || tpl.worker_role || 'exploit')
+      const workerName = String(g.worker_name || g.name || tpl.worker_name || `${workerRole}#${i + 1}`)
+      const sessionId = String(g.session_id || g.sessionId || `sess-${pHash.slice(0, 6)}-w${i + 1}`)
+      const taskStatus = goalStatus === 'running' ? 'running' : 'queued'
+      const approvalState = String(g.approval_state || 'working')
+      const preferredTaskId = g.worker_task_id || this.#nextClosedLoopUid(`wt-w${i + 1}`)
+      const bindTaskId = taskIntPk
+        ? (Number.isInteger(Number(preferredTaskId)) ? Number(preferredTaskId) : null)
+        : String(preferredTaskId)
+
+      const taskRes = db.prepare(`
+        INSERT INTO worker_tasks (
+          id, engagement_id, goal_id, session_id, worker_name, worker_role,
+          wave, ui_priority, priority_weight, tags_json, assigned_goal,
+          status, approval_state, next_goal, tool_calls, turns, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET
+          goal_id = excluded.goal_id,
+          worker_name = excluded.worker_name,
+          worker_role = excluded.worker_role,
+          wave = excluded.wave,
+          ui_priority = excluded.ui_priority,
+          priority_weight = excluded.priority_weight,
+          tags_json = excluded.tags_json,
+          assigned_goal = excluded.assigned_goal,
+          status = excluded.status,
+          approval_state = excluded.approval_state,
+          updated_at = excluded.updated_at
+      `).run(
+        bindTaskId,
+        resolvedId,
+        finalGoalId,
+        sessionId,
+        workerName,
+        workerRole,
+        wave,
+        uiPriority,
+        priorityWeight,
+        tagsJson,
+        objective,
+        taskStatus,
+        approvalState,
+        '',
+        Number(g.tool_calls) || 0,
+        Number(g.turns) || 0,
+        now,
+        now,
+      )
+      const finalTaskId = bindTaskId !== null ? bindTaskId : Number(taskRes.lastInsertRowid)
+      createdTasks.push({
+        id: finalTaskId,
+        engagement_id: resolvedId,
+        goal_id: finalGoalId,
+        session_id: sessionId,
+        worker_name: workerName,
+        worker_role: workerRole,
+        wave,
+        ui_priority: uiPriority,
+        priority_weight: priorityWeight,
+        tags_json: tagsJson,
+        tags: rawTags,
+        assigned_goal: objective,
+        status: taskStatus,
+        approval_state: approvalState,
+        next_goal: '',
+        tool_calls: Number(g.tool_calls) || 0,
+        turns: Number(g.turns) || 0,
+        created_at: now,
+        updated_at: now,
+      })
+    }
+
+    this._recordPgWrite('INSERT', 'plan_goals', {
+      engagement_id: resolvedId,
+      role: 'plan',
+      rows: createdGoals.length,
+      summary: `INSERT plan_goals · 拆解 ${createdGoals.length} 个波次目标 (${pHash.slice(0, 8)})`,
+    })
+    this._recordPgWrite('INSERT', 'worker_tasks', {
+      engagement_id: resolvedId,
+      role: 'plan',
+      rows: createdTasks.length,
+      summary: `INSERT worker_tasks · 预分配 ${createdTasks.length} 个 Worker 任务`,
+    })
+
+    return {
+      ok: true,
+      engagement_id: resolvedId,
+      engagement: resolvedId,
+      prompt_hash: pHash,
+      user_prompt: userPrompt,
+      goals: createdGoals,
+      plan_goals: createdGoals,
+      worker_tasks: createdTasks,
+    }
+  }
+
+  /**
+   * 2. 提交 Worker 压缩摘要（Digest），自动计算 Token 压缩比并将待审批 Worker 置顶为 P0 (weight=100)。
+   */
+  submitWorkerDigest(arg1 = {}, arg2 = undefined) {
+    let input = {}
+    if (typeof arg1 === 'string' && arg2 && typeof arg2 === 'object') {
+      input = Object.assign({ engagement_id: arg1 }, arg2)
+    } else if (arg1 && typeof arg1 === 'object') {
+      input = arg1
+    }
+
+    const { resolvedId, db } = this.#openClosedLoopDb(input.engagement_id || input.engagement, true)
+    const now = nowIso()
+    const whatWasDone = String(input.what_was_done ?? input.summary ?? '').trim()
+    const rawTokens = Number(input.raw_tokens) || Math.max(400, (whatWasDone || '').length * 6)
+    const compressedTokens = Number(input.compressed_tokens) || Math.max(60, Math.ceil((whatWasDone || '').length / 3))
+    const compressionPct = Math.max(10, Math.min(98, Math.round((1 - compressedTokens / Math.max(1, rawTokens)) * 100)))
+
+    const filesTouched = Array.isArray(input.files_touched)
+      ? input.files_touched
+      : (typeof input.files_touched_json === 'string'
+        ? parseJson(input.files_touched_json, [])
+        : (typeof input.files_touched === 'string' && input.files_touched.trim()
+          ? input.files_touched.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean)
+          : []))
+    const keyDecisions = Array.isArray(input.key_decisions)
+      ? input.key_decisions
+      : (typeof input.key_decisions_json === 'string'
+        ? parseJson(input.key_decisions_json, [])
+        : (typeof input.key_decisions === 'string' && input.key_decisions.trim()
+          ? input.key_decisions.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean)
+          : []))
+    const filesTouchedJson = JSON.stringify(filesTouched)
+    const keyDecisionsJson = JSON.stringify(keyDecisions)
+    const verification = String(input.verification ?? 'passed')
+
+    /* 确保对应 worker_tasks 行存在；不存在则先 upsert */
+    let existingTask = null
+    const lookupTaskId = input.worker_task_id ?? input.worker_id
+    if (lookupTaskId !== undefined && lookupTaskId !== null && String(lookupTaskId) !== '') {
+      existingTask = db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(lookupTaskId)
+        || db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ?').get(String(lookupTaskId))
+    }
+    if (!existingTask && input.session_id) {
+      existingTask = db.prepare('SELECT * FROM worker_tasks WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1').get(String(input.session_id))
+    }
+    if (!existingTask && input.worker_name) {
+      existingTask = db.prepare('SELECT * FROM worker_tasks WHERE worker_name = ? ORDER BY updated_at DESC LIMIT 1').get(String(input.worker_name))
+    }
+
+    /* 确保 goal_id 在 plan_goals 中可关联 */
+    let goalId = input.goal_id ?? (existingTask && existingTask.goal_id) ?? null
+    if (goalId !== null && goalId !== undefined && String(goalId) !== '') {
+      const existingGoal = db.prepare('SELECT id FROM plan_goals WHERE CAST(id AS TEXT) = ?').get(String(goalId))
+      if (!existingGoal) {
+        const goalIntPk = this.#isTableIntPk(db, 'plan_goals')
+        const bindGoalId = goalIntPk
+          ? (Number.isInteger(Number(goalId)) ? Number(goalId) : null)
+          : String(goalId)
+        const gRes = db.prepare(`
+          INSERT INTO plan_goals (
+            id, engagement_id, parent_goal_id, prompt_hash, user_prompt,
+            title, objective, wave, ui_priority, priority_weight,
+            status, approval_note, approved_at, created_at, updated_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          bindGoalId,
+          resolvedId,
+          null,
+          promptHash(whatWasDone || 'digest-goal'),
+          whatWasDone || 'Worker 阶段任务',
+          input.worker_name ? `${input.worker_name} 阶段目标` : 'Worker 阶段目标',
+          whatWasDone || '完成阶段研发并提交 Digest',
+          input.wave || 'wave-2',
+          'P0',
+          100,
+          'running',
+          '',
+          null,
+          now,
+          now,
+        )
+        goalId = bindGoalId !== null ? bindGoalId : Number(gRes.lastInsertRowid)
+      }
+    }
+
+    const taskIntPk = this.#isTableIntPk(db, 'worker_tasks')
+    let finalTaskId
+    if (!existingTask) {
+      const preferredTaskId = lookupTaskId || this.#nextClosedLoopUid('wt')
+      const bindTaskId = taskIntPk
+        ? (Number.isInteger(Number(preferredTaskId)) ? Number(preferredTaskId) : null)
+        : String(preferredTaskId)
+      const tagsArr = Array.isArray(input.tags) ? input.tags : ['#pg-store', '#digest']
+      const tRes = db.prepare(`
+        INSERT INTO worker_tasks (
+          id, engagement_id, goal_id, session_id, worker_name, worker_role,
+          wave, ui_priority, priority_weight, tags_json, assigned_goal,
+          status, approval_state, next_goal, tool_calls, turns, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        bindTaskId,
+        resolvedId,
+        goalId,
+        String(input.session_id || preferredTaskId),
+        String(input.worker_name || 'worker-1'),
+        String(input.worker_role || input.role || 'exploit'),
+        String(input.wave || 'wave-2'),
+        'P0',
+        100,
+        JSON.stringify(tagsArr),
+        whatWasDone || '执行分片任务',
+        'completed',
+        'pending_approval',
+        String(input.next_goal || ''),
+        Number(input.tool_calls) || 1,
+        Number(input.turns) || 1,
+        now,
+        now,
+      )
+      finalTaskId = bindTaskId !== null ? bindTaskId : Number(tRes.lastInsertRowid)
+    } else {
+      finalTaskId = existingTask.id
+      db.prepare(`
+        UPDATE worker_tasks
+        SET goal_id = COALESCE(?, goal_id),
+            session_id = COALESCE(?, session_id),
+            worker_name = COALESCE(?, worker_name),
+            status = 'completed',
+            approval_state = 'pending_approval',
+            ui_priority = 'P0',
+            priority_weight = 100,
+            tool_calls = CASE WHEN ? > 0 THEN ? ELSE COALESCE(tool_calls, 0) END,
+            turns = CASE WHEN ? > 0 THEN ? ELSE COALESCE(turns, 0) END,
+            updated_at = ?
+        WHERE id = ?
+      `).run(
+        goalId,
+        input.session_id ?? null,
+        input.worker_name ?? null,
+        Number(input.tool_calls) || 0,
+        Number(input.tool_calls) || 0,
+        Number(input.turns) || 0,
+        Number(input.turns) || 0,
+        now,
+        finalTaskId,
+      )
+    }
+
+    const updatedTaskRaw = db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(finalTaskId) || {}
+    const updatedTask = Object.assign({}, updatedTaskRaw, {
+      tags: parseJson(updatedTaskRaw.tags_json, []),
+    })
+
+    const digestIntPk = this.#isTableIntPk(db, 'worker_digests')
+    const preferredDigestId = input.id || input.digest_id || this.#nextClosedLoopUid('digest')
+    const bindDigestId = digestIntPk
+      ? (Number.isInteger(Number(preferredDigestId)) ? Number(preferredDigestId) : null)
+      : String(preferredDigestId)
+    const workerName = String(input.worker_name || updatedTask.worker_name || 'worker-1')
+    const approvalDecision = String(input.approval_decision || 'pending_approval')
+    const followupGoal = String(input.followup_goal || input.next_goal || '')
+
+    const dRes = db.prepare(`
+      INSERT INTO worker_digests (
+        id, engagement_id, worker_task_id, goal_id, worker_name,
+        what_was_done, files_touched_json, key_decisions_json, verification,
+        raw_tokens, compressed_tokens, compression_pct,
+        approval_decision, followup_goal, created_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET
+        what_was_done = excluded.what_was_done,
+        files_touched_json = excluded.files_touched_json,
+        key_decisions_json = excluded.key_decisions_json,
+        verification = excluded.verification,
+        raw_tokens = excluded.raw_tokens,
+        compressed_tokens = excluded.compressed_tokens,
+        compression_pct = excluded.compression_pct,
+        approval_decision = excluded.approval_decision,
+        followup_goal = excluded.followup_goal
+    `).run(
+      bindDigestId,
+      resolvedId,
+      finalTaskId,
+      goalId ?? updatedTask.goal_id ?? null,
+      workerName,
+      whatWasDone,
+      filesTouchedJson,
+      keyDecisionsJson,
+      verification,
+      rawTokens,
+      compressedTokens,
+      compressionPct,
+      approvalDecision,
+      followupGoal,
+      now,
+    )
+    const finalDigestId = bindDigestId !== null ? bindDigestId : Number(dRes.lastInsertRowid)
+    const digestRecord = {
+      id: finalDigestId,
+      engagement_id: resolvedId,
+      worker_task_id: finalTaskId,
+      goal_id: goalId ?? updatedTask.goal_id ?? null,
+      worker_name: workerName,
+      what_was_done: whatWasDone,
+      files_touched_json: filesTouchedJson,
+      files_touched: filesTouched,
+      key_decisions_json: keyDecisionsJson,
+      key_decisions: keyDecisions,
+      verification,
+      raw_tokens: rawTokens,
+      compressed_tokens: compressedTokens,
+      compression_pct: compressionPct,
+      approval_decision: approvalDecision,
+      followup_goal: followupGoal,
+      created_at: now,
+    }
+
+    this._recordPgWrite('INSERT', 'worker_digests', {
+      engagement_id: resolvedId,
+      role: updatedTask.worker_role || 'exploit',
+      summary: `INSERT worker_digests · ${workerName} 压缩率 ${compressionPct}% (${rawTokens}->${compressedTokens} tok)`,
+    })
+    this._recordPgWrite('UPDATE', 'worker_tasks', {
+      engagement_id: resolvedId,
+      role: updatedTask.worker_role || 'exploit',
+      summary: `UPDATE worker_tasks · ${workerName} -> pending_approval (P0)`,
+    })
+
+    return {
+      ok: true,
+      engagement_id: resolvedId,
+      digest: digestRecord,
+      worker_task: updatedTask,
+    }
+  }
+
+  /**
+   * 3. Plan 主脑审批 Worker 产出并立即派发下一阶段闭环目标与 Worker 任务。
+   */
+  approveWorkerAndDispatchNext(arg1 = {}, arg2 = undefined) {
+    let input = {}
+    if (typeof arg1 === 'string' && arg2 && typeof arg2 === 'object') {
+      input = Object.assign({ engagement_id: arg1 }, arg2)
+    } else if (arg1 && typeof arg1 === 'object') {
+      input = arg1
+    }
+
+    const { resolvedId, db } = this.#openClosedLoopDb(input.engagement_id || input.engagement, true)
+    const now = nowIso()
+    const rawDecision = String(input.decision || 'approved').trim()
+    const decision = rawDecision === 'revision_required' || rawDecision === 'reject' || rawDecision === 'rejected'
+      ? 'revision_required'
+      : 'approved'
+    const approvalNote = String(input.approval_note ?? input.note ?? '').trim()
+    const nextWave = String(input.next_wave || 'wave-3').trim() || 'wave-3'
+    const nextPriority = ['P0', 'P1', 'P2', 'P3'].includes(input.next_priority) ? input.next_priority : 'P1'
+    const priorityWeights = { P0: 100, P1: 80, P2: 50, P3: 20 }
+
+    /* 查找或 upsert 目标 worker_tasks 行 */
+    const matchId = input.worker_task_id || input.worker_id || input.id
+    let targetTask = null
+    if (matchId !== undefined && matchId !== null && String(matchId) !== '') {
+      targetTask = db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(matchId)
+        || db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ?').get(String(matchId))
+        || db.prepare('SELECT * FROM worker_tasks WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1').get(String(matchId))
+        || db.prepare('SELECT * FROM worker_tasks WHERE worker_name = ? ORDER BY updated_at DESC LIMIT 1').get(String(matchId))
+    }
+    if (!targetTask && input.session_id) {
+      targetTask = db.prepare('SELECT * FROM worker_tasks WHERE session_id = ? ORDER BY updated_at DESC LIMIT 1').get(String(input.session_id))
+    }
+    if (!targetTask && input.worker_name) {
+      targetTask = db.prepare('SELECT * FROM worker_tasks WHERE worker_name = ? ORDER BY updated_at DESC LIMIT 1').get(String(input.worker_name))
+    }
+    if (!targetTask) {
+      targetTask = db.prepare(
+        "SELECT * FROM worker_tasks WHERE approval_state = 'pending_approval' ORDER BY priority_weight DESC, updated_at DESC LIMIT 1",
+      ).get() || db.prepare('SELECT * FROM worker_tasks ORDER BY updated_at DESC LIMIT 1').get()
+    }
+
+    const taskIntPk = this.#isTableIntPk(db, 'worker_tasks')
+    if (!targetTask) {
+      const preferredTaskId = matchId || this.#nextClosedLoopUid('wt')
+      const bindTaskId = taskIntPk
+        ? (Number.isInteger(Number(preferredTaskId)) ? Number(preferredTaskId) : null)
+        : String(preferredTaskId)
+      const tRes = db.prepare(`
+        INSERT INTO worker_tasks (
+          id, engagement_id, goal_id, session_id, worker_name, worker_role,
+          wave, ui_priority, priority_weight, tags_json, assigned_goal,
+          status, approval_state, next_goal, tool_calls, turns, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        bindTaskId,
+        resolvedId,
+        input.goal_id ?? null,
+        String(input.session_id || preferredTaskId),
+        String(input.worker_name || 'worker-1'),
+        String(input.worker_role || 'exploit'),
+        'wave-2',
+        'P0',
+        100,
+        JSON.stringify(['#pg-store', '#digest']),
+        '完成阶段任务产出',
+        'completed',
+        'pending_approval',
+        '',
+        1,
+        1,
+        now,
+        now,
+      )
+      const createdId = bindTaskId !== null ? bindTaskId : Number(tRes.lastInsertRowid)
+      targetTask = db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(createdId)
+    }
+
+    const nextApprovalState = decision === 'revision_required' ? 'revision_required' : 'approved'
+    const nextUiPriority = decision === 'approved' ? 'P2' : 'P0'
+    const nextPriorityWeight = decision === 'approved' ? 50 : 100
+    let nextGoalText = String(input.next_goal ?? input.followup_goal ?? '').trim()
+    if (!nextGoalText && decision === 'approved') {
+      nextGoalText = `推进 ${nextWave.toUpperCase()} 闭环任务：承接 ${targetTask.worker_name || targetTask.id} 已验证产出并执行回归门禁`
+    }
+
+    db.prepare(`
+      UPDATE worker_tasks
+      SET approval_state = ?,
+          ui_priority = ?,
+          priority_weight = ?,
+          next_goal = ?,
+          status = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      nextApprovalState,
+      nextUiPriority,
+      nextPriorityWeight,
+      nextGoalText,
+      decision === 'revision_required' ? 'running' : 'completed',
+      now,
+      targetTask.id,
+    )
+
+    /* 同步更新对应的 plan_goals 与 worker_digests */
+    if (targetTask.goal_id !== null && targetTask.goal_id !== undefined) {
+      db.prepare(`
+        UPDATE plan_goals
+        SET status = ?,
+            approval_note = ?,
+            approved_at = ?,
+            updated_at = ?
+        WHERE CAST(id AS TEXT) = ?
+      `).run(
+        decision === 'approved' ? 'approved' : 'revision_required',
+        approvalNote,
+        now,
+        now,
+        String(targetTask.goal_id),
+      )
+    }
+    db.prepare(`
+      UPDATE worker_digests
+      SET approval_decision = ?,
+          followup_goal = ?
+      WHERE CAST(worker_task_id AS TEXT) = ?
+    `).run(decision, nextGoalText, String(targetTask.id))
+
+    const approvedWorkerRaw = db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(targetTask.id) || targetTask
+    const approvedWorker = Object.assign({}, approvedWorkerRaw, {
+      tags: parseJson(approvedWorkerRaw.tags_json, []),
+    })
+
+    let nextGoalRecord = null
+    let nextWorkerTask = null
+
+    if (nextGoalText) {
+      const goalIntPk = this.#isTableIntPk(db, 'plan_goals')
+      const preferredNextGoalId = this.#nextClosedLoopUid(`goal-${nextWave}`)
+      const bindNextGoalId = goalIntPk ? null : preferredNextGoalId
+      const nextWeight = priorityWeights[nextPriority] || 80
+      const gRes = db.prepare(`
+        INSERT INTO plan_goals (
+          id, engagement_id, parent_goal_id, prompt_hash, user_prompt,
+          title, objective, wave, ui_priority, priority_weight,
+          status, approval_note, approved_at, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        bindNextGoalId,
+        resolvedId,
+        targetTask.goal_id ?? null,
+        promptHash(nextGoalText),
+        nextGoalText,
+        `${nextWave.toUpperCase()} · ${nextGoalText.slice(0, 72)}`,
+        nextGoalText,
+        nextWave,
+        nextPriority,
+        nextWeight,
+        'running',
+        approvalNote,
+        now,
+        now,
+        now,
+      )
+      const finalNextGoalId = bindNextGoalId !== null ? bindNextGoalId : Number(gRes.lastInsertRowid)
+      nextGoalRecord = {
+        id: finalNextGoalId,
+        engagement_id: resolvedId,
+        parent_goal_id: targetTask.goal_id ?? null,
+        prompt_hash: promptHash(nextGoalText),
+        user_prompt: nextGoalText,
+        title: `${nextWave.toUpperCase()} · ${nextGoalText.slice(0, 72)}`,
+        objective: nextGoalText,
+        wave: nextWave,
+        ui_priority: nextPriority,
+        priority_weight: nextWeight,
+        status: 'running',
+        approval_note: approvalNote,
+        approved_at: now,
+        created_at: now,
+        updated_at: now,
+      }
+
+      const preferredNextTaskId = this.#nextClosedLoopUid(`wt-${nextWave}`)
+      const bindNextTaskId = taskIntPk ? null : preferredNextTaskId
+      const nextRole = String(input.next_worker_role || (nextWave === 'wave-4' ? 'qa' : 'vuln-scan'))
+      const nextWorkerName = String(input.next_worker_name || `${nextRole}-${nextWave}`)
+      const nextTags = [`#${nextWave}`, '#closed-loop', '#dispatched']
+      const nextTagsJson = JSON.stringify(nextTags)
+      const nextSessId = `sess-${Date.now().toString(36)}`
+
+      const ntRes = db.prepare(`
+        INSERT INTO worker_tasks (
+          id, engagement_id, goal_id, session_id, worker_name, worker_role,
+          wave, ui_priority, priority_weight, tags_json, assigned_goal,
+          status, approval_state, next_goal, tool_calls, turns, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `).run(
+        bindNextTaskId,
+        resolvedId,
+        finalNextGoalId,
+        nextSessId,
+        nextWorkerName,
+        nextRole,
+        nextWave,
+        nextPriority,
+        nextWeight,
+        nextTagsJson,
+        nextGoalText,
+        'running',
+        'working',
+        '',
+        0,
+        0,
+        now,
+        now,
+      )
+      const finalNextTaskId = bindNextTaskId !== null ? bindNextTaskId : Number(ntRes.lastInsertRowid)
+      nextWorkerTask = {
+        id: finalNextTaskId,
+        engagement_id: resolvedId,
+        goal_id: finalNextGoalId,
+        session_id: nextSessId,
+        worker_name: nextWorkerName,
+        worker_role: nextRole,
+        wave: nextWave,
+        ui_priority: nextPriority,
+        priority_weight: nextWeight,
+        tags_json: nextTagsJson,
+        tags: nextTags,
+        assigned_goal: nextGoalText,
+        status: 'running',
+        approval_state: 'working',
+        next_goal: '',
+        tool_calls: 0,
+        turns: 0,
+        created_at: now,
+        updated_at: now,
+      }
+    }
+
+    this._recordPgWrite('UPDATE', 'worker_tasks', {
+      engagement_id: resolvedId,
+      role: 'plan',
+      summary: `UPDATE worker_tasks · 审批 ${approvedWorker.worker_name} (${decision})`,
+    })
+    this._recordPgWrite('UPDATE', 'worker_digests', {
+      engagement_id: resolvedId,
+      role: 'plan',
+      summary: `UPDATE worker_digests · decision=${decision}`,
+    })
+    this._recordPgWrite('INSERT', 'plan_goals', {
+      engagement_id: resolvedId,
+      role: 'plan',
+      summary: `INSERT plan_goals · 派发下一目标 ${nextGoalText.slice(0, 48)}`,
+    })
+
+    return {
+      ok: true,
+      engagement_id: resolvedId,
+      decision,
+      approved_worker: approvedWorker,
+      next_goal_record: nextGoalRecord,
+      next_worker_task: nextWorkerTask,
+    }
+  }
+
+  /**
+   * 4. 幂等同步宿主子智能体会话到 `plan_goals`、`worker_tasks` 与 `worker_digests`。
+   *    通过 `this._syncedWorkerSig` 过滤未变化的轮询，避免重复写库。
+   */
+  syncHostWorkersToPg(engagementId, workers = []) {
+    let resolvedInputId = engagementId
+    let list = workers
+    if (Array.isArray(engagementId)) {
+      list = engagementId
+      resolvedInputId = null
+    } else if (engagementId && typeof engagementId === 'object') {
+      list = engagementId.workers || engagementId.items || workers || []
+      resolvedInputId = engagementId.engagement_id || engagementId.engagement || null
+    }
+    if (!Array.isArray(list)) list = []
+    if (!this._syncedWorkerSig) this._syncedWorkerSig = new Map()
+
+    const { resolvedId, db } = this.#openClosedLoopDb(resolvedInputId, true)
+    const now = nowIso()
+    const priorityWeights = { P0: 100, P1: 80, P2: 50, P3: 20 }
+    const goalIntPk = this.#isTableIntPk(db, 'plan_goals')
+    const taskIntPk = this.#isTableIntPk(db, 'worker_tasks')
+    const digestIntPk = this.#isTableIntPk(db, 'worker_digests')
+
+    let synced = 0
+    for (let i = 0; i < list.length; i++) {
+      const w = list[i] || {}
+      const rawKey = String(w.id || w.worker_task_id || w.sessionId || w.session_id || w.name || w.worker_name || `worker-${i + 1}`).trim()
+      const sigKey = `${resolvedId}:${rawKey}`
+      const status = String(w.status || w.state || 'running').trim()
+      const turns = Number(w.turns ?? w.turnCount ?? 1) || 0
+      const toolCalls = Number(w.toolCalls ?? w.tool_calls ?? w.tools ?? 1) || 0
+      const approvalState = String(
+        w.approvalState ?? w.approval_state ?? (status === 'completed' || status === 'done' ? 'pending_approval' : 'working'),
+      ).trim()
+      const sig = `${status}|${turns}|${toolCalls}|${approvalState}`
+
+      if (this._syncedWorkerSig.get(sigKey) === sig) {
+        const exists = db.prepare('SELECT id FROM worker_tasks WHERE session_id = ? OR CAST(id AS TEXT) = ? OR worker_name = ? LIMIT 1')
+          .get(String(w.sessionId || w.session_id || rawKey), rawKey, String(w.name || w.worker_name || rawKey))
+        if (exists) continue
+      }
+
+      const workerName = String(w.worker_name || w.name || rawKey)
+      const workerRole = String(w.worker_role || w.role || 'exploit')
+      const wave = String(w.wave || 'wave-2')
+      let uiPriority = String(w.ui_priority || w.uiPriority || '').trim()
+      if (!['P0', 'P1', 'P2', 'P3'].includes(uiPriority)) {
+        if (approvalState === 'pending_approval' || approvalState === 'revision_required') uiPriority = 'P0'
+        else if (status === 'running' || status === 'run') uiPriority = 'P1'
+        else if (approvalState === 'approved') uiPriority = 'P2'
+        else uiPriority = 'P3'
+      }
+      const priorityWeight = Number(w.priority_weight ?? w.priorityWeight) || priorityWeights[uiPriority] || 80
+      const tags = Array.isArray(w.tags)
+        ? w.tags
+        : (typeof w.tags_json === 'string' ? parseJson(w.tags_json, [`#${wave}`, `#${workerRole}`]) : [`#${wave}`, `#${workerRole}`])
+      const tagsJson = JSON.stringify(tags)
+      const assignedGoal = String(w.assigned_goal || w.goal || w.objective || w.title || `执行 ${workerName} 子任务`).trim()
+      const whatWasDone = String(w.what_was_done || w.summary || w.digest || `${workerName} 执行 ${turns} 轮 / ${toolCalls} 次工具调用：${assignedGoal}`).trim()
+
+      /* 1) Upsert plan_goals */
+      let existingGoal = db.prepare('SELECT id FROM plan_goals WHERE title = ? OR CAST(id AS TEXT) = ? LIMIT 1')
+        .get(`${wave.toUpperCase()} · ${workerName}`, String(w.goal_id || `goal-${rawKey}`))
+      let goalId = existingGoal ? existingGoal.id : null
+      if (goalId === null) {
+        const bindGoalId = goalIntPk ? null : String(w.goal_id || `goal-${rawKey}`)
+        const gRes = db.prepare(`
+          INSERT INTO plan_goals (
+            id, engagement_id, parent_goal_id, prompt_hash, user_prompt,
+            title, objective, wave, ui_priority, priority_weight,
+            status, approval_note, approved_at, created_at, updated_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          bindGoalId,
+          resolvedId,
+          null,
+          promptHash(assignedGoal),
+          assignedGoal,
+          `${wave.toUpperCase()} · ${workerName}`,
+          assignedGoal,
+          wave,
+          uiPriority,
+          priorityWeight,
+          approvalState === 'approved' ? 'approved' : (status === 'completed' ? 'completed' : 'running'),
+          '',
+          approvalState === 'approved' ? now : null,
+          now,
+          now,
+        )
+        goalId = bindGoalId !== null ? bindGoalId : Number(gRes.lastInsertRowid)
+      } else {
+        db.prepare(`
+          UPDATE plan_goals
+          SET ui_priority = ?, priority_weight = ?, updated_at = ?
+          WHERE id = ?
+        `).run(uiPriority, priorityWeight, now, goalId)
+      }
+
+      /* 2) Upsert worker_tasks */
+      const sessId = String(w.session_id || w.sessionId || rawKey)
+      const existingTask = db.prepare('SELECT id FROM worker_tasks WHERE session_id = ? OR CAST(id AS TEXT) = ? OR worker_name = ? LIMIT 1')
+        .get(sessId, rawKey, workerName)
+      let taskId = existingTask ? existingTask.id : null
+      if (taskId === null) {
+        const bindTaskId = taskIntPk ? null : String(w.worker_task_id || w.id || `wt-${rawKey}`)
+        const tRes = db.prepare(`
+          INSERT INTO worker_tasks (
+            id, engagement_id, goal_id, session_id, worker_name, worker_role,
+            wave, ui_priority, priority_weight, tags_json, assigned_goal,
+            status, approval_state, next_goal, tool_calls, turns, created_at, updated_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          bindTaskId,
+          resolvedId,
+          goalId,
+          sessId,
+          workerName,
+          workerRole,
+          wave,
+          uiPriority,
+          priorityWeight,
+          tagsJson,
+          assignedGoal,
+          status,
+          approvalState,
+          String(w.next_goal || ''),
+          toolCalls,
+          turns,
+          now,
+          now,
+        )
+        taskId = bindTaskId !== null ? bindTaskId : Number(tRes.lastInsertRowid)
+      } else {
+        db.prepare(`
+          UPDATE worker_tasks
+          SET goal_id = ?, session_id = ?, worker_name = ?, worker_role = ?,
+              wave = ?, ui_priority = ?, priority_weight = ?, tags_json = ?,
+              assigned_goal = ?, status = ?, approval_state = ?,
+              tool_calls = ?, turns = ?, updated_at = ?
+          WHERE id = ?
+        `).run(
+          goalId, sessId, workerName, workerRole,
+          wave, uiPriority, priorityWeight, tagsJson,
+          assignedGoal, status, approvalState,
+          toolCalls, turns, now,
+          taskId,
+        )
+      }
+
+      /* 3) Upsert worker_digests */
+      const rawTokens = Number(w.raw_tokens ?? w.rawTokens) || Math.max(400, (whatWasDone.length * 6) + (turns * 320) + (toolCalls * 180))
+      const compressedTokens = Number(w.compressed_tokens ?? w.compressedTokens) || Math.max(60, Math.ceil(whatWasDone.length / 3) + 40)
+      const compressionPct = Math.max(10, Math.min(98, Math.round((1 - compressedTokens / Math.max(1, rawTokens)) * 100)))
+      const filesTouchedJson = JSON.stringify(Array.isArray(w.files_touched) ? w.files_touched : [])
+      const keyDecisionsJson = JSON.stringify(Array.isArray(w.key_decisions) ? w.key_decisions : [whatWasDone.slice(0, 120)])
+
+      const existingDigest = db.prepare('SELECT id FROM worker_digests WHERE CAST(worker_task_id AS TEXT) = ? LIMIT 1')
+        .get(String(taskId))
+      if (!existingDigest) {
+        const bindDigestId = digestIntPk ? null : `digest-${rawKey}`
+        db.prepare(`
+          INSERT INTO worker_digests (
+            id, engagement_id, worker_task_id, goal_id, worker_name,
+            what_was_done, files_touched_json, key_decisions_json, verification,
+            raw_tokens, compressed_tokens, compression_pct,
+            approval_decision, followup_goal, created_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          bindDigestId,
+          resolvedId,
+          taskId,
+          goalId,
+          workerName,
+          whatWasDone,
+          filesTouchedJson,
+          keyDecisionsJson,
+          String(w.verification || 'passed'),
+          rawTokens,
+          compressedTokens,
+          compressionPct,
+          approvalState,
+          String(w.next_goal || ''),
+          now,
+        )
+      } else {
+        db.prepare(`
+          UPDATE worker_digests
+          SET what_was_done = ?, raw_tokens = ?, compressed_tokens = ?,
+              compression_pct = ?, approval_decision = ?
+          WHERE id = ?
+        `).run(whatWasDone, rawTokens, compressedTokens, compressionPct, approvalState, existingDigest.id)
+      }
+
+      this._syncedWorkerSig.set(sigKey, sig)
+      synced += 1
+    }
+
+    if (synced > 0) {
+      this._recordPgWrite('UPSERT', 'worker_tasks', {
+        engagement_id: resolvedId,
+        role: 'plan',
+        rows: synced,
+        summary: `SYNC worker_tasks · 幂等同步 ${synced}/${list.length} 个宿主 Worker`,
+      })
+      this._recordPgWrite('UPSERT', 'worker_digests', {
+        engagement_id: resolvedId,
+        role: 'plan',
+        rows: synced,
+        summary: `SYNC worker_digests · 同步 ${synced} 条压缩摘要`,
+      })
+    }
+
+    return {
+      ok: true,
+      engagement_id: resolvedId,
+      synced,
+      total: list.length,
+    }
+  }
+
+  /**
    * p2: 实时 PostgreSQL 写表活动探针快照（结合当前靶标库真实行数 + 实时写入缓冲流）。
    */
   pgWriteProbe(id, preStats = null) {
     const resolvedId = id || this.activeEngagementId() || 'default'
     const rowStats = Object.assign({}, preStats || {})
     try {
-      if (resolvedId && (this.handles.has(resolvedId) || (resolvedId !== 'default' && existsSync(this.dbPathOf(resolvedId))))) {
+      if (resolvedId && (this.handles.has(resolvedId) || existsSync(this.dbPathOf(resolvedId)))) {
         const db = this.db(resolvedId)
         const base = preStats || this.stats(resolvedId)
         const count = (sql) => {
@@ -1067,11 +2252,37 @@ export class RedteamStore {
         if (wf && Array.isArray(wf.runs)) rowStats.agent_runs = wf.runs.length
       }
     } catch { /* 忽略 */ }
+
+    const closedLoop = this.#readClosedLoopState(resolvedId)
+    const cls = closedLoop.closed_loop_stats
+    rowStats.plan_goals = closedLoop.plan_goals.length
+    rowStats.worker_tasks = closedLoop.worker_tasks.length
+    rowStats.worker_digests = closedLoop.worker_digests.length
+
     const cfg = resolvePgConfig(this.root)
     rowStats.pool_max = cfg.poolSize || 8
     rowStats.pool_active = this.handles.size + (this.kbHandle ? 1 : 0)
     rowStats.wal_mode = cfg.enabled ? 'PG Wire v3 + WAL' : 'PG-WAL (256MB mmap)'
-    return getPgWriteProbe(resolvedId, rowStats)
+    const snap = Object.assign({}, getPgWriteProbe(resolvedId, rowStats) || {})
+    snap.row_counts = Object.assign({}, snap.row_counts || {}, {
+      plan_goals: rowStats.plan_goals,
+      worker_tasks: rowStats.worker_tasks,
+      worker_digests: rowStats.worker_digests,
+    })
+    snap.compression_ratio_pct = cls.compression_ratio_pct > 0
+      ? cls.compression_ratio_pct
+      : (Number(snap.compression_ratio_pct) || 0)
+    snap.compression_saved_tokens = cls.compression_saved_tokens > 0
+      ? cls.compression_saved_tokens
+      : (Number(snap.compression_saved_tokens) || 0)
+    snap.approved_workers = cls.approved_workers > 0
+      ? cls.approved_workers
+      : (Number(snap.approved_workers) || 0)
+    snap.pending_approvals = closedLoop.worker_tasks.length > 0
+      ? cls.pending_approvals
+      : (Number(snap.pending_approvals) || 0)
+    snap.closed_loop_stats = cls
+    return snap
   }
 
   #workflowStatePathOf(id) {
@@ -1249,6 +2460,7 @@ export class RedteamStore {
     const resolvedId = id || this.activeEngagementId() || 'default'
     const state = this.#readWorkflowState(resolvedId)
     const probe = this.pgWriteProbe(resolvedId)
+    const closedLoop = this.#readClosedLoopState(resolvedId)
 
     let steps = []
     let findings = []
@@ -1492,11 +2704,19 @@ export class RedteamStore {
       telemetry,
       feishu: state.feishu,
       pg_probe: probe,
+      plan_goals: closedLoop.plan_goals,
+      worker_tasks: closedLoop.worker_tasks,
+      worker_digests: closedLoop.worker_digests,
+      closed_loop_stats: closedLoop.closed_loop_stats,
     }
   }
 
   /**
    * 执行工作流编排动作：
+   *   - `decompose`：拆解用户需求为 4-Wave `plan_goals` 与 `worker_tasks`
+   *   - `submit_digest`：提交 Worker 压缩摘要并置顶为 P0 待审批
+   *   - `approve_worker`：审批 Worker 产出并自动派发下一阶段闭环任务
+   *   - `sync_workers`：幂等同步宿主子智能体会话到 PG 事实表
    *   - `retryNode` / `'retry'`：单节点断点重试
    *   - `resumeFromCheckpoint` / `'resume'`：从检查点恢复执行
    *   - `triggerRun` / `'start'`：启动或推进工作流波次
@@ -1504,9 +2724,46 @@ export class RedteamStore {
    *   - `pushFeishuNotify`：推送飞书群机器人进度卡片通知
    */
   workflowAction(id, actionPayload = {}) {
-    const resolvedId = id || actionPayload.engagement || this.activeEngagementId() || 'default'
-    const state = this.#readWorkflowState(resolvedId)
+    if (id && typeof id === 'object' && !Array.isArray(id)) {
+      actionPayload = id
+      id = actionPayload.engagement_id || actionPayload.engagement || null
+    }
+    const resolvedId = id || actionPayload.engagement_id || actionPayload.engagement || this.activeEngagementId() || 'default'
     const rawAction = String(actionPayload.action || actionPayload.kind || actionPayload.type || 'retryNode').trim()
+
+    if (rawAction === 'decompose' || rawAction === 'decomposeUserPrompt') {
+      const res = this.decomposeUserPrompt(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
+      return Object.assign({}, this.workflowDag(resolvedId), res, {
+        ok: true,
+        action: 'decompose',
+      })
+    }
+
+    if (rawAction === 'submit_digest' || rawAction === 'submitWorkerDigest') {
+      const res = this.submitWorkerDigest(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
+      return Object.assign({}, this.workflowDag(resolvedId), res, {
+        ok: true,
+        action: 'submit_digest',
+      })
+    }
+
+    if (rawAction === 'approve_worker' || rawAction === 'planApproveWorker' || rawAction === 'approveWorkerAndDispatchNext') {
+      const res = this.approveWorkerAndDispatchNext(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
+      return Object.assign({}, this.workflowDag(resolvedId), res, {
+        ok: true,
+        action: 'approve_worker',
+      })
+    }
+
+    if (rawAction === 'sync_workers' || rawAction === 'syncHostWorkersToPg') {
+      const res = this.syncHostWorkersToPg(resolvedId, actionPayload.workers || actionPayload.items || [])
+      return Object.assign({}, this.workflowDag(resolvedId), res, {
+        ok: true,
+        action: 'sync_workers',
+      })
+    }
+
+    const state = this.#readWorkflowState(resolvedId)
     const now = nowIso()
     const targetNodeId = String(actionPayload.nodeId || actionPayload.node_id || actionPayload.node || actionPayload.role || 'exploit').trim()
     const targetNode = state.nodes.find((n) => n.id === targetNodeId || n.role === targetNodeId) || state.nodes.find((n) => n.id === 'exploit') || state.nodes[0]

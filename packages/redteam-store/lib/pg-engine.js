@@ -190,6 +190,7 @@ export function translateSqlToPg(sql, options = {}) {
   let out = raw
     .replace(/INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT/gi, 'BIGSERIAL PRIMARY KEY')
     .replace(/DATETIME\s+DEFAULT\s+CURRENT_TIMESTAMP/gi, 'TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP')
+    .replace(/\s+REFERENCES\s+engagements\s*\(\s*id\s*\)(?:\s+ON\s+DELETE\s+CASCADE)?/gi, '')
     .replace(
       /\basset_fts\s+MATCH\s+\?/gi,
       "to_tsvector('simple', coalesce(ip,'') || ' ' || coalesce(names,'') || ' ' || coalesce(banners,'') || ' ' || coalesce(titles,'') || ' ' || coalesce(fingerprints,'')) @@ plainto_tsquery('simple', ?)",
@@ -836,7 +837,7 @@ export function openDatabaseHandle(options = {}) {
 /* ------------------------------------------------------------------ p2: PostgreSQL 实时写表活动探针 (PgWriteActivityProbe) */
 
 /**
- * 集群核心事实表清单（9 张逻辑/物理聚合表，含中文工程模块标签）。
+ * 集群核心事实表清单（12 张逻辑/物理聚合表，含中文工程模块标签与 lmtex 闭环表）。
  */
 export const PG_CLUSTER_TABLES = [
   { table: 'assets', title: '模块分片表', label: 'assets (模块分片表)', defaultRole: 'recon', baseLatency: 0.62 },
@@ -848,9 +849,12 @@ export const PG_CLUSTER_TABLES = [
   { table: 'poc_kb', title: '工程知识库表', label: 'poc_kb (工程知识库表)', defaultRole: 'assess', baseLatency: 0.84 },
   { table: 'dag_nodes', title: 'DAG 拓扑节点表', label: 'dag_nodes (DAG 拓扑节点表)', defaultRole: 'plan', baseLatency: 0.45 },
   { table: 'agent_runs', title: '子智能体运行表', label: 'agent_runs (子智能体运行表)', defaultRole: 'plan', baseLatency: 0.52 },
+  { table: 'plan_goals', title: '主控规划目标表', label: 'plan_goals (主控规划目标表)', defaultRole: 'plan', baseLatency: 0.48 },
+  { table: 'worker_tasks', title: 'Worker 任务分派表', label: 'worker_tasks (Worker 任务分派表)', defaultRole: 'exec', baseLatency: 0.56 },
+  { table: 'worker_digests', title: 'Worker 压缩摘要表', label: 'worker_digests (Worker 压缩摘要表)', defaultRole: 'exec', baseLatency: 0.64 },
 ]
 
-const TABLE_ALIAS_MAP = {
+export const TABLE_ALIAS_MAP = {
   asset: 'assets',
   assets: 'assets',
   segment: 'assets',
@@ -896,6 +900,18 @@ const TABLE_ALIAS_MAP = {
   runs: 'agent_runs',
   agent_run: 'agent_runs',
   agent_runs: 'agent_runs',
+  plan_goal: 'plan_goals',
+  plan_goals: 'plan_goals',
+  goal: 'plan_goals',
+  goals: 'plan_goals',
+  worker_task: 'worker_tasks',
+  worker_tasks: 'worker_tasks',
+  task: 'worker_tasks',
+  tasks: 'worker_tasks',
+  worker_digest: 'worker_digests',
+  worker_digests: 'worker_digests',
+  digest: 'worker_digests',
+  digests: 'worker_digests',
 }
 
 export function normalizeProbeTableName(raw) {
@@ -904,7 +920,7 @@ export function normalizeProbeTableName(raw) {
 }
 
 /**
- * 实时 PostgreSQL 写表活动探针状态机（支持按项目 Schema 隔离统计 + 最近 25 条写入环形缓冲）。
+ * 实时 PostgreSQL 写表活动探针状态机（支持按项目 Schema 隔离统计 + 最近 25 条写入环形缓冲 + Digest 压缩与审批遥测）。
  */
 export class PgWriteActivityProbe {
   constructor() {
@@ -941,6 +957,15 @@ export class PgWriteActivityProbe {
       total_writes: 0,
       latency_sum_ms: 0,
       latency_samples: 0,
+      raw_tokens_total: 0,
+      compressed_tokens_total: 0,
+      digest_samples: 0,
+      record_raw_tokens_total: 0,
+      record_compressed_tokens_total: 0,
+      approved_workers: 0,
+      pending_approvals: 0,
+      record_approved_workers: 0,
+      record_pending_approvals: 0,
       tables,
       recent_events: [],
       write_timestamps: [],
@@ -949,8 +974,63 @@ export class PgWriteActivityProbe {
     return state
   }
 
+  recordDigestCompression(engagementOrPayload = 'default', maybePayload = undefined) {
+    let key = 'default'
+    let payload = {}
+    if (typeof engagementOrPayload === 'object' && engagementOrPayload !== null) {
+      payload = engagementOrPayload
+      key = String(payload.engagement || payload.engagement_id || payload.engagementId || 'default').trim() || 'default'
+    } else {
+      key = String(engagementOrPayload || 'default').trim() || 'default'
+      payload = (maybePayload && typeof maybePayload === 'object') ? maybePayload : {}
+    }
+    const state = this._ensureState(key)
+    const rawTokens = Math.max(0, Number(payload.rawTokens ?? payload.raw_tokens) || 0)
+    const compressedTokens = Math.max(0, Number(payload.compressedTokens ?? payload.compressed_tokens) || 0)
+    if (rawTokens > 0 || compressedTokens > 0) {
+      state.raw_tokens_total += rawTokens
+      state.compressed_tokens_total += Math.min(rawTokens || compressedTokens, compressedTokens)
+      state.digest_samples += 1
+    }
+
+    const decision = String(payload.approval_decision ?? payload.approvalDecision ?? payload.approval_state ?? payload.approvalState ?? '').trim().toLowerCase()
+    if (payload.approved === true || decision === 'approved') {
+      state.approved_workers += 1
+      if ((payload.wasPending === true || payload.fromPending === true || payload.resolvePending === true) && state.pending_approvals > 0) {
+        state.pending_approvals -= 1
+      }
+    } else if (payload.approved === false || payload.pending === true || decision === 'pending' || decision === 'pending_approval') {
+      state.pending_approvals += 1
+    }
+
+    if (payload.approved_workers !== undefined && Number.isFinite(Number(payload.approved_workers))) {
+      state.approved_workers = Math.max(0, Math.round(Number(payload.approved_workers)))
+    }
+    if (payload.pending_approvals !== undefined && Number.isFinite(Number(payload.pending_approvals))) {
+      state.pending_approvals = Math.max(0, Math.round(Number(payload.pending_approvals)))
+    }
+
+    state.updated_at = new Date().toISOString()
+    const ratioPct = state.raw_tokens_total > 0
+      ? Math.max(0, Math.min(95, Math.round((1 - state.compressed_tokens_total / state.raw_tokens_total) * 100)))
+      : 0
+    return {
+      engagement: key,
+      raw_tokens_total: state.raw_tokens_total,
+      compressed_tokens_total: state.compressed_tokens_total,
+      compression_ratio_pct: ratioPct,
+      compression_saved_tokens: Math.max(0, state.raw_tokens_total - state.compressed_tokens_total),
+      approved_workers: state.approved_workers,
+      pending_approvals: state.pending_approvals,
+    }
+  }
+
   record(engagementId, event = {}) {
-    const key = String(engagementId || event.engagement || 'default').trim() || 'default'
+    if (typeof engagementId === 'object' && engagementId !== null) {
+      event = engagementId
+      engagementId = event.engagement || event.engagement_id || event.engagementId || 'default'
+    }
+    const key = String(engagementId || event.engagement || event.engagement_id || 'default').trim() || 'default'
     const state = this._ensureState(key)
     const tblKey = normalizeProbeTableName(event.table || event.target_table || 'assets')
     const meta = PG_CLUSTER_TABLES.find((t) => t.table === tblKey) || PG_CLUSTER_TABLES[0]
@@ -972,12 +1052,30 @@ export class PgWriteActivityProbe {
       entry.rows = Math.max(0, Number(event.rows))
     } else if (event.rows_delta !== undefined && Number.isFinite(Number(event.rows_delta))) {
       entry.rows = Math.max(0, (entry.rows || 0) + Number(event.rows_delta))
+    } else if (op === 'INSERT' || op === 'UPSERT') {
+      entry.rows = Math.max(0, (entry.rows || 0) + incWrites)
     }
     entry.last_op = op === 'UPSERT' ? 'INSERT' : op
     entry.last_writer = role
     entry.last_latency_ms = latencyMs
     entry.last_summary = summary
     entry.updated_at = now
+
+    const evRawTokens = Math.max(0, Number(event.rawTokens ?? event.raw_tokens) || 0)
+    const evCompTokens = Math.max(0, Number(event.compressedTokens ?? event.compressed_tokens) || 0)
+    if (evRawTokens > 0 || evCompTokens > 0) {
+      state.record_raw_tokens_total += evRawTokens
+      state.record_compressed_tokens_total += Math.min(evRawTokens || evCompTokens, evCompTokens)
+    }
+    const evDecision = String(event.approval_decision ?? event.approvalDecision ?? event.approval_state ?? event.approvalState ?? '').trim().toLowerCase()
+    if (event.approved === true || evDecision === 'approved') {
+      state.record_approved_workers += 1
+      if (op === 'UPDATE' && state.record_pending_approvals > 0) {
+        state.record_pending_approvals -= 1
+      }
+    } else if (event.approved === false || evDecision === 'pending' || evDecision === 'pending_approval') {
+      state.record_pending_approvals += 1
+    }
 
     state.total_writes += incWrites
     state.latency_sum_ms += latencyMs
@@ -1021,29 +1119,50 @@ export class PgWriteActivityProbe {
   }
 
   snapshot(engagementId = 'default', stats = {}) {
+    if (typeof engagementId === 'object' && engagementId !== null) {
+      stats = engagementId
+      engagementId = stats.engagement || stats.engagement_id || stats.engagementId || 'default'
+    }
+    stats = (stats && typeof stats === 'object') ? stats : {}
+    const rcInput = (stats.row_counts && typeof stats.row_counts === 'object')
+      ? stats.row_counts
+      : ((stats.rowCounts && typeof stats.rowCounts === 'object') ? stats.rowCounts : stats)
+
     const key = String(engagementId || 'default').trim() || 'default'
     const state = this._ensureState(key)
     const kbState = key !== '__kb__' && this.engagements.has('__kb__') ? this.engagements.get('__kb__') : null
+    const defaultState = key !== 'default' && this.engagements.has('default') ? this.engagements.get('default') : null
+
+    const hasSessionSubcounts = [stats.webshells, stats.tunnels, stats.accesses, stats.credentials, rcInput.webshells, rcInput.tunnels, rcInput.accesses, rcInput.credentials]
+      .some((v) => v !== undefined && v !== null)
+    const hasArtifactSubcounts = [stats.shots, stats.attackFiles, rcInput.shots, rcInput.attackFiles]
+      .some((v) => v !== undefined && v !== null)
 
     const rowMap = {
-      assets: stats.assets ?? stats.liveAssets,
-      findings: stats.findings ?? stats.vulns,
-      scores: stats.scores ?? stats.scoreHits ?? stats.score_hits,
-      attack_tests: stats.attack_tests ?? stats.attackTests ?? stats.steps,
-      sessions: stats.sessions ?? (
-        (Number(stats.webshells) || 0)
-        + (Number(stats.tunnels) || 0)
-        + (Number(stats.accesses) || 0)
-        + (Number(stats.credentials) || 0)
-      ),
-      artifacts: stats.artifacts ?? ((Number(stats.shots) || 0) + (Number(stats.attackFiles) || 0)),
-      poc_kb: stats.poc_kb ?? stats.pocs,
-      dag_nodes: stats.dag_nodes ?? 0,
-      agent_runs: stats.agent_runs ?? stats.runs ?? 0,
+      assets: rcInput.assets ?? stats.assets ?? stats.liveAssets,
+      findings: rcInput.findings ?? stats.findings ?? stats.vulns,
+      scores: rcInput.scores ?? stats.scores ?? stats.scoreHits ?? stats.score_hits,
+      attack_tests: rcInput.attack_tests ?? stats.attack_tests ?? stats.attackTests ?? stats.steps,
+      sessions: rcInput.sessions ?? stats.sessions ?? (hasSessionSubcounts ? (
+        (Number(rcInput.webshells ?? stats.webshells) || 0)
+        + (Number(rcInput.tunnels ?? stats.tunnels) || 0)
+        + (Number(rcInput.accesses ?? stats.accesses) || 0)
+        + (Number(rcInput.credentials ?? stats.credentials) || 0)
+      ) : undefined),
+      artifacts: rcInput.artifacts ?? stats.artifacts ?? (hasArtifactSubcounts ? (
+        (Number(rcInput.shots ?? stats.shots) || 0) + (Number(rcInput.attackFiles ?? stats.attackFiles) || 0)
+      ) : undefined),
+      poc_kb: rcInput.poc_kb ?? stats.poc_kb ?? stats.pocs,
+      dag_nodes: rcInput.dag_nodes ?? stats.dag_nodes,
+      agent_runs: rcInput.agent_runs ?? stats.agent_runs ?? stats.runs,
+      plan_goals: rcInput.plan_goals ?? stats.plan_goals ?? rcInput.planGoals ?? stats.planGoals ?? rcInput.goals ?? stats.goals,
+      worker_tasks: rcInput.worker_tasks ?? stats.worker_tasks ?? rcInput.workerTasks ?? stats.workerTasks ?? rcInput.tasks ?? stats.tasks,
+      worker_digests: rcInput.worker_digests ?? stats.worker_digests ?? rcInput.workerDigests ?? stats.workerDigests ?? rcInput.digests ?? stats.digests,
     }
 
     const tables = []
     const byTable = {}
+    const rowCounts = {}
     for (const meta of PG_CLUSTER_TABLES) {
       const item = Object.assign({}, state.tables.get(meta.table))
       if (meta.table === 'poc_kb' && kbState) {
@@ -1060,11 +1179,70 @@ export class PgWriteActivityProbe {
       const statRows = rowMap[meta.table]
       if (statRows !== undefined && statRows !== null && Number.isFinite(Number(statRows))) {
         item.rows = Math.max(0, Number(statRows))
+      } else {
+        item.rows = Math.max(0, Number(item.rows) || 0)
       }
       item.count = item.writes
       item.role = item.last_writer
       tables.push(item)
       byTable[meta.table] = item
+      rowCounts[meta.table] = item.rows
+    }
+
+    /* 计算压缩率与审批统计（优先显式参数 -> 当前项目探针 -> default 探针回退 -> 基于 worker_digests 行数估算） */
+    const compSrc = (state.digest_samples > 0 || state.raw_tokens_total > 0 || state.approved_workers > 0 || state.pending_approvals > 0)
+      ? state
+      : ((defaultState && (defaultState.digest_samples > 0 || defaultState.raw_tokens_total > 0 || defaultState.approved_workers > 0 || defaultState.pending_approvals > 0))
+          ? defaultState
+          : state)
+
+    const digestRows = Number(rowCounts.worker_digests) || 0
+    let rawTotal = 0
+    let compressedTotal = 0
+    if (stats.raw_tokens !== undefined || stats.rawTokens !== undefined) {
+      rawTotal = Math.max(0, Number(stats.raw_tokens ?? stats.rawTokens) || 0)
+      compressedTotal = Math.max(0, Number(stats.compressed_tokens ?? stats.compressedTokens) || 0)
+    } else if (compSrc.raw_tokens_total > 0) {
+      rawTotal = compSrc.raw_tokens_total
+      compressedTotal = compSrc.compressed_tokens_total
+    } else if (compSrc.record_raw_tokens_total > 0) {
+      rawTotal = compSrc.record_raw_tokens_total
+      compressedTotal = compSrc.record_compressed_tokens_total
+    } else if (digestRows > 0) {
+      rawTotal = digestRows * 2400
+      compressedTotal = digestRows * 360
+    }
+
+    let compressionRatioPct = 0
+    let compressionSavedTokens = 0
+    if (rawTotal > 0) {
+      compressionRatioPct = Math.max(0, Math.min(95, Math.round((1 - compressedTotal / rawTotal) * 100)))
+      compressionSavedTokens = Math.max(0, Math.round(rawTotal - compressedTotal))
+    } else {
+      if (stats.compression_ratio_pct !== undefined && Number.isFinite(Number(stats.compression_ratio_pct))) {
+        compressionRatioPct = Math.max(0, Math.min(95, Math.round(Number(stats.compression_ratio_pct))))
+      }
+      if (stats.compression_saved_tokens !== undefined && Number.isFinite(Number(stats.compression_saved_tokens))) {
+        compressionSavedTokens = Math.max(0, Math.round(Number(stats.compression_saved_tokens)))
+      }
+    }
+
+    let approvedWorkers = 0
+    if (stats.approved_workers !== undefined || stats.approvedWorkers !== undefined) {
+      approvedWorkers = Math.max(0, Math.round(Number(stats.approved_workers ?? stats.approvedWorkers) || 0))
+    } else if (compSrc.digest_samples > 0 || compSrc.approved_workers > 0 || compSrc.pending_approvals > 0) {
+      approvedWorkers = compSrc.approved_workers
+    } else if (compSrc.record_approved_workers > 0 || compSrc.record_pending_approvals > 0) {
+      approvedWorkers = compSrc.record_approved_workers
+    }
+
+    let pendingApprovals = 0
+    if (stats.pending_approvals !== undefined || stats.pendingApprovals !== undefined) {
+      pendingApprovals = Math.max(0, Math.round(Number(stats.pending_approvals ?? stats.pendingApprovals) || 0))
+    } else if (compSrc.digest_samples > 0 || compSrc.approved_workers > 0 || compSrc.pending_approvals > 0) {
+      pendingApprovals = compSrc.pending_approvals
+    } else if (compSrc.record_approved_workers > 0 || compSrc.record_pending_approvals > 0) {
+      pendingApprovals = compSrc.record_pending_approvals
     }
 
     const nowMs = Date.now()
@@ -1099,6 +1277,12 @@ export class PgWriteActivityProbe {
       latency_ms: avgLatencyMs,
       active_writer: (latestEvent && latestEvent.role) ? `${latestEvent.role} (thinking: low)` : null,
       updated_at: state.updated_at,
+      row_counts: rowCounts,
+      rowCounts,
+      compression_ratio_pct: compressionRatioPct,
+      compression_saved_tokens: compressionSavedTokens,
+      approved_workers: approvedWorkers,
+      pending_approvals: pendingApprovals,
       tables,
       by_table: byTable,
       recent_events: recentEvents,
@@ -1120,6 +1304,15 @@ export function recordPgTableWrite(engagement, event = {}) {
 export const recordTableWrite = recordPgTableWrite
 
 /**
+ * 记录一次 Worker 压缩摘要与主控审批统计（供 lmtex 闭环写库调用）。
+ */
+export function recordPgDigestCompression(engagementOrPayload, maybePayload) {
+  return globalWriteProbe.recordDigestCompression(engagementOrPayload, maybePayload)
+}
+
+export const recordDigestCompression = recordPgDigestCompression
+
+/**
  * 获取指定项目（Engagement）的实时 PostgreSQL 写表探针快照。
  */
 export function getPgWriteProbe(engagement, stats = {}) {
@@ -1127,4 +1320,5 @@ export function getPgWriteProbe(engagement, stats = {}) {
 }
 
 export const getWriteProbeSnapshot = getPgWriteProbe
+
 
