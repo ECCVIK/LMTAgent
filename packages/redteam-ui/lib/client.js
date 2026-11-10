@@ -666,17 +666,17 @@ window.__ModuleLoader__.load({
             h('div', { className: 'rt-ov-gap-meta' },
               h('span', null, '已得 ' + earned + ' 分'
                 + (p.cap > 0 ? ' · 规则已用 ' + (p.cap_used || 0) + ' / ' + p.cap : ''))),
-            p.cap > 0 ? h('div', { className: 'rt-ov-bar' }, h('div', { style: { width: capPct + '%', background: '#10b981' } })) : null),
+            p.cap > 0 ? h('div', { className: 'rt-ov-bar' }, h('div', { style: { width: capPct + '%', background: 'linear-gradient(90deg, #4d6bfe, #0ea5e9)' } })) : null),
           h('span', { className: 'rt-ov-pts rt-ov-pts-got' }, '+' + earned))
       })
 
       return h('div', { className: 'rt-main rt-ov' },
         h('div', { className: 'rt-ov-head' },
           h('div', { className: 'rt-ov-heading' },
-            h('div', { className: 'rt-ov-eyebrow' }, 'RED TEAM / 作战态势'),
+            h('div', { className: 'rt-ov-eyebrow' }, 'DSH WORKBENCH · 研发集群作战态势'),
             h('div', { className: 'rt-ov-title-row' },
               h('span', { className: 'rt-ov-title', title: eng || '' }, eng || '未选择靶标'),
-              current ? h('span', { className: 'rt-ov-stage-chip', style: { borderColor: current.color || 'var(--dsw-alias-border-l1)' }, }, '当前 · ' + current.name) : null)),
+              current ? h('span', { className: 'rt-ov-stage-chip', style: { borderColor: current.color || '#4d6bfe' }, }, '当前 · ' + current.name) : null)),
           h('div', { className: 'rt-spacer' }),
           h('button', { className: 'rt-btn', disabled: loading, onClick: load }, loading ? '刷新中…' : '刷新')),
         err ? h('div', { className: 'rt-err', style: { margin: '0 16px 8px' } }, err) : null,
@@ -693,7 +693,7 @@ window.__ModuleLoader__.load({
                 stages.map((x, i) => h('div', {
                   key: 'st' + x.code,
                   className: 'rt-ov-stage' + (current && current.code === x.code ? ' on' : '') + ((x.points || 0) > 0 ? ' has' : ''),
-                  style: { '--stage': x.color || 'var(--dsw-alias-brand-primary)' },
+                  style: { '--stage': x.color || '#4d6bfe' },
                   title: (x.goal || '') + ' · 本阶段 ' + (x.points || 0) + ' 分 · 累计 ' + (x.cumulative || 0) + ' 分',
                 },
                   h('div', { className: 'rt-ov-node' }, String(i + 1)),
@@ -1024,7 +1024,7 @@ window.__ModuleLoader__.load({
               title: it.state === 'live' ? '存活' : String(it.state),
               style: {
                 width: 7, height: 7, borderRadius: '50%', flex: 'none', marginTop: 4,
-                background: it.state === 'live' ? '#10b981' : '#94a3b8',
+                background: it.state === 'live' ? '#4d6bfe' : '#94a3b8',
               },
             }),
             h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, it.ip),
@@ -3416,7 +3416,7 @@ window.__ModuleLoader__.load({
           w.privilege ? h('span', { className: 'rt-tag' }, w.privilege) : null,
           h('div', { className: 'rt-spacer' }),
           copied === 'cmd' + w.id
-            ? h('span', { className: 'rt-tag', style: { color: '#10b981' } }, '已复制')
+            ? h('span', { className: 'rt-tag', style: { color: '#4d6bfe' } }, '已复制')
             : h('button', {
                 className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
                 onClick: () => copy('cmd' + w.id, 'curl -s "' + w.url + '"'),
@@ -3609,8 +3609,22 @@ window.__ModuleLoader__.load({
           err ? h('div', { className: 'rt-err' }, err) : null,
           (() => {
             const running = (concurrency && concurrency.running) || []
+            const slotCount = Math.max(1, Math.min(max || 6, 12))
+            const activeCount = typeof used === 'number' ? used : running.length
+            const slots = Array.from({ length: slotCount }, (_, idx) => {
+              const job = running[idx]
+              const isBusy = idx < activeCount
+              return h('div', {
+                key: 'slot' + idx,
+                className: 'rt-wb-slot' + (isBusy ? ' on' : ''),
+              },
+                h('span', { className: 'rt-dot', style: isBusy ? undefined : { background: 'var(--dsw-alias-line-primary)', boxShadow: 'none' } }),
+                h('span', { className: 'rt-mono' }, 'SLOT #' + (idx + 1)),
+                h('span', null, job ? (job.label || job.activity || 'Running') : (isBusy ? 'Active' : 'Idle')))
+            })
             return h('div', { className: 'rt-card' },
-              h('h4', null, '编队状态'),
+              h('h4', null, '编队状态 · 6 并发槽实时监控 (WorkBuddy Cluster)'),
+              h('div', { className: 'rt-wb-slots', style: { marginBottom: 8 } }, slots),
               running.length
                 ? h('div', { style: { fontSize: 12, lineHeight: 1.8 } }, running.map((x, i) => h('div', { key: 'run' + i },
                     h('span', { className: 'rt-tag rt-tag-live' }, x.activity || 'running'), ' ',
@@ -3619,6 +3633,27 @@ window.__ModuleLoader__.load({
           })(),
           h('div', { className: 'rt-card' },
             h('h4', null, '4-Wave Bounded DAG 最优执行排布与并发规则（默认 6 并发）'),
+            h('div', { className: 'rt-wb-dag' },
+              h('div', { className: 'rt-wb-wave' },
+                h('div', { className: 'rt-wb-wave-head' },
+                  h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 1 · 2 SLOTS'),
+                  h('span', { className: 'rt-wb-wave-title' }, '双轨立项')),
+                h('div', { className: 'rt-wb-wave-roles' }, 'recon (CEO) + designer (Designer) 并行拆解需求与 UI 规范')),
+              h('div', { className: 'rt-wb-wave' },
+                h('div', { className: 'rt-wb-wave-head' },
+                  h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 2 · 1 SLOT'),
+                  h('span', { className: 'rt-wb-wave-title' }, '架构单点锁')),
+                h('div', { className: 'rt-wb-wave-roles' }, 'assess (Eng Manager) 冻结接口契约与 File-Disjoint 6 分片')),
+              h('div', { className: 'rt-wb-wave' },
+                h('div', { className: 'rt-wb-wave-head' },
+                  h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 3 · 6 SLOTS'),
+                  h('span', { className: 'rt-wb-wave-title' }, '满载并发构建')),
+                h('div', { className: 'rt-wb-wave-roles' }, '最多 6× exploit (Builder) 独占分片并行编码与验证')),
+              h('div', { className: 'rt-wb-wave' },
+                h('div', { className: 'rt-wb-wave-head' },
+                  h('span', { className: 'rt-wb-wave-tag' }, 'WAVE 4 · 2→1 SLOTS'),
+                  h('span', { className: 'rt-wb-wave-title' }, '双轨门禁与收尾')),
+                h('div', { className: 'rt-wb-wave-roles' }, 'vuln-scan (CSO) + qa (QA Lead) 审计后由 internal 交付'))),
             h('div', { style: { fontSize: 12, lineHeight: 1.7 } },
               '· 同一项目/靶标**同时最多 ' + max + ' 个执行智能体**（默认 6，最高 12）；主会话派活前用 `redteam_agent_slot` 占位，满了直接拒绝。',
               h('br'),
@@ -4253,6 +4288,7 @@ window.__ModuleLoader__.load({
         })),
         h('div', { className: 'rt-body' }, h(RtBoundary, { key: st.tab }, body)),
         h('div', { className: 'rt-foot' },
+          h('span', { className: 'rt-wb-badge' }, 'PGSQL Wire v3 · 4-Wave DAG · 6 Slots'),
           h('div', { className: 'rt-spacer' }),
           full ? h('span', null, '按 Esc 或点右上角「退出全面浏览」回到带侧栏的界面') : null,
           h('span', null, 'SQLite · ' + (snapshot && snapshot.engagement ? snapshot.engagement.name : '')),

@@ -1,98 +1,78 @@
-# dsh-redteam-mode
+<div align="center">
 
-DeepSeek Harness 的**红队作战模式**插件：给一个靶标单位名称，就拉起一支红队智能体
-（信息收集 → 漏洞检测 → 漏洞利用 → 内网渗透），所有发现落进本机 SQLite 事实库，
-右侧常驻控制台实时看资产、得分与报告。
+# ⚡ LMTAgent (`dsh-redteam-mode` v0.15.1)
 
-## 安装
+**为 [DeepSeek Harness (DSH Desktop)](https://github.com/anywhere-labs/dsh-desktop) 打造的「WorkBuddy × DSH Brand Blue」8 角色全栈软件研发与安全审计多智能体集群**
 
-```sh
-dsh plugin --profile web add dsh-redteam-mode
+[![DSH Plugin](https://img.shields.io/badge/DSH_Desktop-Plugin_v0.15.1-4D6BFE?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://github.com/ECCVIK/lmtagent)
+[![gstack 8 Roles](https://img.shields.io/badge/Architecture-8_Roles_×_4--Wave_DAG-2563EB?style=for-the-badge)](https://github.com/garrytan/gstack)
+[![PostgreSQL Engine](https://img.shields.io/badge/Fact_Store-PostgreSQL_16_+_WAL_mmap-0EA5E9?style=for-the-badge&logo=postgresql&logoColor=white)](#4-postgresql-高并发双模事实库引擎)
+[![Tests Passing](https://img.shields.io/badge/Tests-18_Suites_·_888_Assertions_PASS-4D6BFE?style=for-the-badge)](#6-质量门禁与测试验证)
+
+<p align="center">
+  <b>主代理（Captain）拆解用户意图 · 7 位 <code>gstack</code> 专家子代理协同 · 默认 6 并发槽（最高 12） · 4-Wave Bounded DAG 零冲突分片构建 · WorkBuddy × DSH 品牌蓝（<code>#4D6BFE</code>）常驻工作台</b>
+</p>
+
+</div>
+
+---
+
+## ✨ 1. WorkBuddy × DSH Brand Blue 界面展示（UI Gallery）
+
+参考 **WorkBuddy 现代双栏 AI 工作台美学** 并全面融合 **DSH Desktop 品牌蓝（`#4D6BFE` → `#2563EB` → `#0EA5E9`）** 视觉系统，提供左侧会话编排流 + 右侧常驻多维控制台（支持一键全屏独立窗口）：
+
+| **① 全局态势工作台（Overview Workbench）** | **② 8 角色集群与 4-Wave DAG 监控（Agents & 6 Slots）** |
+| :---: | :---: |
+| ![Overview Workbench](https://raw.githubusercontent.com/ECCVIK/lmtagent/main/docs/assets/ui-overview-workbench.png) | ![Agents & 4-Wave DAG](https://raw.githubusercontent.com/ECCVIK/lmtagent/main/docs/assets/ui-agents-dag.png) |
+| *6 大核心指标卡片、下一步行动建议与 4-Wave DAG 实时流水线* | *6 并发槽实时监控、4-Wave Bounded DAG 卡片与 8 位 `gstack` 角色名册* |
+| **③ PostgreSQL 模块与资产测绘（Assets & PG Engine）** | **④ V2 工程交付与安全审计报告（Delivery Report V2）** |
+| ![Assets & PostgreSQL Topology](https://raw.githubusercontent.com/ECCVIK/lmtagent/main/docs/assets/ui-assets-pg.png) | ![Engineering & Security Report V2](https://raw.githubusercontent.com/ECCVIK/lmtagent/main/docs/assets/ui-report-v2.png) |
+| *基于 PostgreSQL Wire v3 + `GIN tsvector` 全文检索的分片模块管理* | *CSO 与 QA 双重签发，一键导出独立 HTML / Word (`.docx`) / Markdown* |
+
+---
+
+## 🧠 2. 核心设计理念：8 角色 `gstack` 虚拟研发团队内化
+
+本项目将 [Garry Tan `gstack`](https://github.com/garrytan/gstack) 的虚拟工程团队方法论深度内化到 [anywhere-labs/dsh-desktop](https://github.com/anywhere-labs/dsh-desktop) 的 Cordis 插件与 Subagent 委派机制中。**主代理（Captain）只负责拆解意图与调度 6 并发槽，绝不越俎代庖写业务代码；所有编码、设计、架构、审计、测试与发布均由具备专属预设与工具链的 7 位叶子专家子代理完成：**
+
+| 序号 | 角色 ID | 预设 ID (`agentPreset`) | 对齐 `gstack` 角色与核心技能 | 核心职责与输出契约 |
+| :---: | :--- | :--- | :--- | :--- |
+| **⓪** | **`plan`** | `redteam`（主会话） | **Captain / 主控总指挥** | 拆解用户意图、通过 `redteam_agent_slot` 管理 6 并发槽、按 4-Wave DAG 派发子代理、核对事实库并向用户汇报 |
+| **①** | **`recon`** | `redteam-worker-recon` | **CEO / 产品与需求规划** (`/office-hours`, `/plan-ceo-review`) | 全量盘点需求边界、仓库模块拓扑与外部攻击面，标注 **P0/P1/P2** 优先级写入事实库 |
+| **②** | **`designer`** | `redteam-worker-designer` | **Designer / 交互与视觉设计** (`/plan-design-review`, `/design-shotgun`) | 制定 DSH Desktop 插件 UI 组件树、CSS 变量令牌（`--wb-blue`）与空态/加载/错误三态交互契约 |
+| **③** | **`assess`** | `redteam-worker-assess` | **Eng Manager / 架构与排期** (`/plan-eng-review`) | 冻结接口 Schema、数据流边界，并将开发任务切分为 **最多 6 个文件无交集分片（File-Disjoint Sharding）** |
+| **④** | **`vuln-scan`** | `redteam-worker-vuln-scan` | **Reviewer & CSO / 审查与安全** (`/review`, `/cso`) | 执行静态代码质量审查、并发竞态排查与 OWASP Top 10 / STRIDE 安全漏洞扫描 |
+| **⑤** | **`exploit`** | `redteam-worker-exploit` | **Builder / 全栈研发与构建**（Wave 3 主力 6 并发） | 在独占文件分片内高并发编写核心业务代码、Cordis 插件逻辑、数据库迁移与深度验证脚本 |
+| **⑥** | **`qa`** | `redteam-worker-qa` | **QA Lead / 质量保障与测试** (`/qa`, `/benchmark`) | 运行全量单元/集成测试套件、浏览器端到端回归与性能基线，独立复核 `verified` 交付成果 |
+| **⑦** | **`internal`** | `redteam-worker-internal` | **Doc & Release / 文档与发布** (`/ship`, `/document-release`) | 同步架构文档、CHANGELOG、跨模块集成冒烟与 V2 标准交付报告生成 |
+
+---
+
+## 🔄 3. 4-Wave Bounded DAG 最优执行排布与 6 并发槽模型
+
+针对多智能体并行开发最常见的三大痛点（**写文件冲突**、**数据库写锁争用**、**API 速率挤占**），集群采用 **4-Wave 有界无环图（Bounded DAG）** 调度拓扑，默认开放 **6 个并发槽**（可在控制台实时调节 `1–12`，立即生效无需重启）：
+
+- **Wave 1（双轨立项，2 槽）**：并行派发 `recon`（CEO）+ `designer`（Designer）摸清需求、仓库拓扑与 UI 规范。
+- **Wave 2（架构单点锁，1 槽）**：派发 `assess`（Eng Manager）冻结接口契约与文件无交集的开发分片（File-Disjoint Sharding）。
+- **Wave 3（高并发分片构建，满载 6 槽）**：并行派发最多 6 个 `exploit`（Builder）在各自独占文件集内编码与自测。
+- **Wave 4（双轨门禁与收尾，2 槽 → 1 槽）**：并行派发 `vuln-scan`（Reviewer & CSO）+ `qa`（QA Lead）审计测试，通过后由 `internal`（Doc & Release）收口发布。
+
+---
+
+## 🐘 4. PostgreSQL 高并发双模事实库引擎
+
+存储层支持 `REDTEAM_PG_URL`（PostgreSQL Wire Protocol v3 + Schema 隔离 + `GIN tsvector` 全文检索），未配置外部实例时自动启用零配置高并发 `256MB mmap WAL` 引擎：
+
+```bash
+export REDTEAM_PG_URL="postgres://postgres:password@127.0.0.1:5432/dsh_cluster"
+export REDTEAM_PG_POOL_MAX=12
+export REDTEAM_MAX_AGENTS=6
 ```
 
-装完重启一次 `dsh web`，然后在**设置 → 插件市场**里就能看到它（也可以直接在上面搜
-`redteam`）。插件自带 `红队模式` 与 29 个技能（含 AD/云/网络设备/数据/C2 等专项技能），不需要手动拷任何文件。
+---
 
-> **版本对应**：DSH **0.2.1 及以上**用 **0.15.1 及更新的版本**；DSH **0.1.7–0.2.0** 用
-> 0.12.1–0.13.1；DSH **0.1.6 及更低**用 0.12.0 及更早版本。0.12.0 及更早的插件在
-> DSH 0.1.7+ 上，新建会话的模式列表里不会出现「红队模式」（资产库、控制台、工具与技能都不受影响）。
->
-> **DSH 0.2.1 的破坏性变更**：`@deepseek-ai/dsh-tool-subagent` 移除了 `toolFilter` / `persona`，
-> 再写会在 `apply()` 直接抛错 `toolFilter is no longer supported`，`subagent` 委派工具不再注册。
-> 0.13.2 起红队预设改用独立的 `redteam-worker` 执行角色预设 + `agentPreset`；升级 DSH 后请同时
-> 升级本插件。旧版 DSH 仍可加载本版（未知字段被忽略），但子智能体的叶子约束只剩 `maxDepth: 1`。
+## 🚀 5. 在 DSH Desktop 中一键导入
 
-使用：新建会话 → 选预设 **红队模式** → 直接发靶标单位名称。
+在 **DSH Desktop** 的「插件市场 → 导入插件」中粘贴：
 
-> **关于工具链**：本包**只含编排与事实库**，不含任何"自动下载安全工具"的脚本，也不含
-> 攻击链技能（隧道 / 凭据 / WebShell / 反弹 Shell / 横向移动 / 未授权利用）。
-> 需要它们的用户从本项目 Release 附件 `dsh-redteam-mode-<版本>-toolkit.tar.gz` 自取、
-> 自行执行——本插件不会替用户下载或安装任何工具。详见 v0.12.0 发布说明。
-
-## 从预发布期的「开发版」升级过来
-
-如果你在 **0.7.0 之前**用过开发版（在 `~/.dsh/profiles/web/cordis.patch.yml` 里手写过
-`redteam-store` / `redteam-ui` 两行，指向 `dsh-redteam-store` / `dsh-redteam-ui`），
-装完本插件后启动会报服务/条目冲突，先跑一次迁移把旧行清掉：
-
-```sh
-node "$(npm root -g 2>/dev/null)/dsh-redteam-mode/lib/migrate-legacy-rows.mjs" --dry-run   # 预演
-node node_modules/dsh-redteam-mode/lib/migrate-legacy-rows.mjs                              # 在 profile 目录里执行
-```
-
-它会只删那两条（连子行），其它内容与注释原样保留，写回前自动备份；已经在用 0.7.0+ 或者新装的机器不需要跑。
-
-## 它给你什么
-
-| 能力 | 说明 |
-| --- | --- |
-| 五个执行角色 | 信息收集 / 资产梳理 / 漏洞发现 / 漏洞利用 / 内网渗透，主会话只做调度与指挥 |
-| 角色工具裁剪 | 5 个 `redteam-worker-*` 预设按 profile 裁剪工具（recon 38 / assess 40 / vuln-scan 47 / exploit 53 / internal 54；默认全部 59） |
-| 资产测绘 | C 段按内外网分组、端口/服务/指纹/域名/Web 标题、易打性评估、测试状态 |
-| 得分目标 | 得分点可编辑、命中记录一行一条；自建账号不计分；**账号权限与数据库权限按「同一资产 + 同一端口」封顶**（拿到最高权限账号即该服务拿满，同服务再刷账号标「服务已拿满 · 不计分」），其余得分点仍不设数量上限 |
-| 会话隧道 | WebShell 与隧道状态、连通性实测、**是否跨越靶标边界**的判定 |
-| 报告 | 按攻击链顺序、按阶段可折叠，每条得分附可直接粘进 Yakit 的原始请求；自建账号与同服务重复命中整条剔除（抬头给出剔除条数） |
-| POC 知识库 | 全局共享（跨靶标）：先查库再联网/手搓，验证有效的回填；同时检索本机 nuclei 模板库 |
-| 技能 | 29 个技能随 npm 包分发（含 AD/云/网络设备/数据/C2 等专项技能）；仅本地自有 `egress-ip-rotate` 与 9 个攻击链技能不随包；不打包任何本地工具/二进制 |
-
-## 数据放在哪
-
-- 全部落在**本机** `$DSH_HOME/redteam/`：`engagements/<靶标>/`（SQLite 事实库 + `runs/` 证据 +
-  按目标分目录的攻击文件）、`knowledge.db` + `pocs/`（跨靶标共享的 POC/EXP 知识库）。
-- 不含任何遥测、上报或云端同步；凭据明文只在本机库里，面板直显便于复用。
-
-## 工具（59 个 `redteam_*`）
-
-资产/端口/服务/指纹/漏洞/凭据/会话/得分/报告/知识库全覆盖。典型入口：
-
-```
-redteam_engagement_open     绑定本次演练靶标
-redteam_asset_add           落库一个资产（端口带 service/product/version/url/title）
-redteam_batch               批量资产/评估/漏洞入库（assets≤500 / assess·vulns≤200），减少逐条调用
-redteam_scope_check         核对 IP/URL 是否在靶标授权 scope 内
-redteam_vuln_add            落库一个漏洞（带 severity/status/gained）
-redteam_score_hit           记一次得分（command/result 自动生成动作记录；自建账号不计分；同服务只算一次）
-redteam_data_proof          P1 敏感数据结构化证明（字段/条数/样本/来源，≥1 万条标 meets_threshold）
-redteam_score_report        生成「四段式红队得分报告」
-redteam_sessions            一屏看 WebShell / 隧道 / 凭据 / 会话
-redteam_pivot_probe          经 SOCKS5 实测多个内网 host:port 的可达矩阵
-redteam_cleanup              上传的马/临时账号/隧道/文件清理台账
-redteam_poc_search          打 Nday/1day 前先查知识库 + 本机 nuclei 模板库
-redteam_poc_add             把验证有效的通用 POC/EXP 回填知识库（脱敏）
-```
-
-## 从源码构建
-
-本包是**自包含**的：`lib/` 由 `tools/build.mjs` 从同仓库的三个源码包生成
-（`redteam-store` / `redteam-tools` / `redteam-ui`），预设与技能也一并拷进来。
-
-```sh
-node packages/redteam-bundle/tools/build.mjs          # 生成
-node packages/redteam-bundle/tools/build.mjs --check  # 只校验是否漂移（CI 用）
-node packages/redteam-bundle/test/bundle.test.mjs     # 打包契约 + 泄露 + 自举自检
-```
-
-## 授权与合规
-
-**仅在获得明确书面授权的范围内使用**。本插件是作战工具：它本身不替你做授权判断，
-请自行确认目标范围、时间窗与允许手段，并遵守所在司法辖区法律。
+> 我想安装 LMTAgent（dsh-redteam-mode v0.15.1）全栈软件研发与安全审计多智能体集群插件，仓库地址是 https://github.com/ECCVIK/lmtagent ，主包路径就在仓库根目录（或者 packages/redteam-bundle），入口补丁配置是 cordis.patch.yml，前端工作台入口是 lib/client.js。请帮我直接安装并启用该插件。

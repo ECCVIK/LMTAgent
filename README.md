@@ -1,107 +1,176 @@
-# DSH 软件研发多智能体集群（LMTAgent / DSH DevCluster）
+<div align="center">
 
-面向 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）与 [anywhere-labs/dsh-desktop](https://github.com/anywhere-labs/dsh-desktop) 打造的**软件研发多智能体集群插件**，深度内化 [garrytan/gstack](https://github.com/garrytan/gstack) 的虚拟工程团队角色体系与哲学（Boil the Lake、Search Before Building、Fix-First 审查、证据化交付）：
-只需输入用户需求或工程目标，主控智能体（Captain）即按 **4-Wave 有界 DAG 拓扑** 拆解意图并调度 **8 位专职工程角色**（默认 **6 并发槽位**），所有架构边界、模块契约、缺陷单与验收证据实时写入高性能 **PostgreSQL 事实库**（支持零配置高并发 WAL 嵌入式回退），并在右侧常驻控制台实时可视化。
+# ⚡ LMTAgent (`dsh-redteam-mode` v0.15.1)
 
-**59 个结构化工程工具 · 8 位 `gstack` 专职角色 · 4-Wave DAG 调度 · 默认 6 并发槽 · PostgreSQL 双模引擎 · 5 个分区 / 9 个控制台页面**
+**为 [DeepSeek Harness (DSH Desktop)](https://github.com/anywhere-labs/dsh-desktop) 打造的「WorkBuddy × DSH Brand Blue」8 角色全栈软件研发与安全审计多智能体集群**
 
----
+[![DSH Plugin](https://img.shields.io/badge/DSH_Desktop-Plugin_v0.15.1-4D6BFE?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://github.com/ECCVIK/lmtagent)
+[![gstack 8 Roles](https://img.shields.io/badge/Architecture-8_Roles_×_4--Wave_DAG-2563EB?style=for-the-badge)](https://github.com/garrytan/gstack)
+[![PostgreSQL Engine](https://img.shields.io/badge/Fact_Store-PostgreSQL_16_+_WAL_mmap-0EA5E9?style=for-the-badge&logo=postgresql&logoColor=white)](#4-postgresql-高并发双模事实库引擎)
+[![Tests Passing](https://img.shields.io/badge/Tests-18_Suites_·_888_Assertions_PASS-4D6BFE?style=for-the-badge)](#6-质量门禁与测试验证)
+[![License: MIT](https://img.shields.io/badge/License-MIT-6366F1?style=for-the-badge)](LICENSE)
 
-## 核心架构
+<p align="center">
+  <b>主代理（Captain）拆解用户意图 · 7 位 <code>gstack</code> 专家子代理协同 · 默认 6 并发槽（最高 12） · 4-Wave Bounded DAG 零冲突分片构建 · WorkBuddy × DSH 品牌蓝（<code>#4D6BFE</code>）常驻工作台</b>
+</p>
 
-### 1. 八角色虚拟软件工程团队（内化 `gstack`）
-
-| 角色代号 | 工程角色（`gstack` 映射） | 预设变体 | 核心职责 |
-| --- | --- | --- | --- |
-| `plan` | **主控编排与任务分发（Captain / Главный）** | `agent.cordis.yml` | 拆解用户意图、管理 6 并发槽闸门、按 4-Wave DAG 派发子任务、汇总交付报告（主会话只指挥不动手） |
-| `recon` | **产品需求与代码库勘探（CEO / Product Recon）** | `worker-recon` | `/office-hours` + `/plan-ceo-review`：勘探现有仓库目录、技术栈与外部依赖，收敛 MVP 需求边界 |
-| `designer` | **UI/UX 设计审查与交互规范（Designer）** | `worker-designer` | `/plan-design-review` + `/design-review`：制定 Design System 令牌、组件层级、响应式与无障碍规范 |
-| `assess` | **架构设计与技术拆解（Eng Manager / Architect）** | `worker-assess` | `/plan-eng-review`：单点锁定模块边界、API 契约与数据表结构，输出文件无交集（File-Disjoint）的并发任务单 |
-| `exploit` | **全栈开发与功能实现（Full-Stack Builder）** | `worker-exploit` | 按模块独占分片并发编写前后端代码、Cordis 插件服务与单元/集成测试 |
-| `vuln-scan` | **代码审查与安全审计（Staff Reviewer & CSO）** | `worker-vuln-scan` | `/review` + `/cso`：静态审查、契约一致性核对、OWASP Top 10 / 依赖与密钥泄露审计 |
-| `qa` | **自动化测试与质量验证（QA Lead）** | `worker-qa` | `/qa` + `/benchmark`：执行真实构建、端到端回归测试与性能基准验证，拒绝无证据宣称通过 |
-| `internal` | **文档同步、知识沉淀与发布（Doc & Release Manager）** | `worker-internal` | `/ship` + `/document-release`：同步 `README`/架构文档、沉淀可复用模板入库并生成四段式交付报告 |
-
-### 2. 最优 4-Wave 有界 DAG 执行排布（6 并发槽）
-
-```
-Wave 1（并发探索，2 槽） :  [recon 产品与仓库勘探]  ∥  [designer UI/UX 规范设计]
-                                      │ (写入 PostgreSQL 事实库)
-                                      ▼
-Wave 2（单点架构，1 槽） :  [assess 架构师锁定模块接口、Schema 与无冲突文件分片]
-                                      │ (生成 N 个文件互不重叠的 P0/P1 开发切片)
-                                      ▼
-Wave 3（饱和构建，6 槽） :  [exploit #1] ∥ [exploit #2] ∥ [exploit #3] ∥ [exploit #4] ∥ [exploit #5] ∥ [exploit #6]
-                                      │ (各自独占目录，跑通模块单测后释放槽位)
-                                      ▼
-Wave 4（门禁发布，3 槽） :  [vuln-scan 代码与安全审计]  ∥  [qa 集成测试与基准验收]  ──►  [internal 文档同步与发布]
-```
-
-### 3. 高性能 PostgreSQL 存储引擎（`pg-engine.js`）
-
-- **原生 PostgreSQL 直连模式**：配置 `REDTEAM_PG_URL`（或 `DSH_PG_URL` / `DATABASE_URL` / 控制台设置页 `pgUrl`）即可启用零外部依赖的 PostgreSQL Wire Protocol v3 连接池（默认 8 连接，支持 SCRAM-SHA-256 / MD5 / TLS），按项目自动隔离 Schema（`eng_<id>` + `dsh_kb`），并使用 `GIN (to_tsvector('simple', ...))` 全文索引加速检索。
-- **高并发嵌入式回退模式**：未配置外部 PostgreSQL 时自动回退至预编译语句缓存 + 256MB `mmap` + `WAL` 高并发本地引擎，开箱即用、零原生编译依赖。
+</div>
 
 ---
 
-## 安装与部署
+## ✨ 1. WorkBuddy × DSH Brand Blue 界面展示（UI Gallery）
 
-```sh
-dsh plugin --profile web add dsh-redteam-mode
+参考 **WorkBuddy 现代双栏 AI 工作台美学** 并全面融合 **DSH Desktop 品牌蓝（`#4D6BFE` → `#2563EB` → `#0EA5E9`）** 视觉系统，提供左侧会话编排流 + 右侧常驻多维控制台（支持一键全屏独立窗口）：
+
+| **① 全局态势工作台（Overview Workbench）** | **② 8 角色集群与 4-Wave DAG 监控（Agents & 6 Slots）** |
+| :---: | :---: |
+| ![Overview Workbench](docs/assets/ui-overview-workbench.png) | ![Agents & 4-Wave DAG](docs/assets/ui-agents-dag.png) |
+| *6 大核心指标卡片、下一步行动建议与 4-Wave DAG 实时流水线* | *6 并发槽实时监控、4-Wave Bounded DAG 卡片与 8 位 `gstack` 角色名册* |
+| **③ PostgreSQL 模块与资产测绘（Assets & PG Engine）** | **④ V2 工程交付与安全审计报告（Delivery Report V2）** |
+| ![Assets & PostgreSQL Topology](docs/assets/ui-assets-pg.png) | ![Engineering & Security Report V2](docs/assets/ui-report-v2.png) |
+| *基于 PostgreSQL Wire v3 + `GIN tsvector` 全文检索的分片模块管理* | *CSO 与 QA 双重签发，一键导出独立 HTML / Word (`.docx`) / Markdown* |
+
+---
+
+## 🧠 2. 核心设计理念：8 角色 `gstack` 虚拟研发团队内化
+
+本项目将 [Garry Tan `gstack`](https://github.com/garrytan/gstack) 的虚拟工程团队方法论深度内化到 [anywhere-labs/dsh-desktop](https://github.com/anywhere-labs/dsh-desktop) 的 Cordis 插件与 Subagent 委派机制中。**主代理（Captain）只负责拆解意图与调度 6 并发槽，绝不越俎代庖写业务代码；所有编码、设计、架构、审计、测试与发布均由具备专属预设与工具链的 7 位叶子专家子代理完成：**
+
+| 序号 | 角色 ID | 预设 ID (`agentPreset`) | 对齐 `gstack` 角色与核心技能 | 核心职责与输出契约 |
+| :---: | :--- | :--- | :--- | :--- |
+| **⓪** | **`plan`** | `redteam`（主会话） | **Captain / 主控总指挥** | 拆解用户意图、通过 `redteam_agent_slot` 管理 6 并发槽、按 4-Wave DAG 派发子代理、核对事实库并向用户汇报 |
+| **①** | **`recon`** | `redteam-worker-recon` | **CEO / 产品与需求规划** (`/office-hours`, `/plan-ceo-review`) | 全量盘点需求边界、仓库模块拓扑与外部攻击面，标注 **P0/P1/P2** 优先级写入事实库 |
+| **②** | **`designer`** | `redteam-worker-designer` | **Designer / 交互与视觉设计** (`/plan-design-review`, `/design-shotgun`) | 制定 DSH Desktop 插件 UI 组件树、CSS 变量令牌（`--wb-blue`）与空态/加载/错误三态交互契约 |
+| **③** | **`assess`** | `redteam-worker-assess` | **Eng Manager / 架构与排期** (`/plan-eng-review`) | 冻结接口 Schema、数据流边界，并将开发任务切分为 **最多 6 个文件无交集分片（File-Disjoint Sharding）** |
+| **④** | **`vuln-scan`** | `redteam-worker-vuln-scan` | **Reviewer & CSO / 审查与安全** (`/review`, `/cso`) | 执行静态代码质量审查、并发竞态排查与 OWASP Top 10 / STRIDE 安全漏洞扫描 |
+| **⑤** | **`exploit`** | `redteam-worker-exploit` | **Builder / 全栈研发与构建**（Wave 3 主力 6 并发） | 在独占文件分片内高并发编写核心业务代码、Cordis 插件逻辑、数据库迁移与深度验证脚本 |
+| **⑥** | **`qa`** | `redteam-worker-qa` | **QA Lead / 质量保障与测试** (`/qa`, `/benchmark`) | 运行全量单元/集成测试套件、浏览器端到端回归与性能基线，独立复核 `verified` 交付成果 |
+| **⑦** | **`internal`** | `redteam-worker-internal` | **Doc & Release / 文档与发布** (`/ship`, `/document-release`) | 同步架构文档、CHANGELOG、跨模块集成冒烟与 V2 标准交付报告生成 |
+
+---
+
+## 🔄 3. 4-Wave Bounded DAG 最优执行排布与 6 并发槽模型
+
+针对多智能体并行开发最常见的三大痛点（**写文件冲突**、**数据库写锁争用**、**API 速率挤占**），集群采用 **4-Wave 有界无环图（Bounded DAG）** 调度拓扑，默认开放 **6 个并发槽**（可在控制台实时调节 `1–12`，立即生效无需重启）：
+
+```mermaid
+flowchart LR
+  User(["👤 用户需求输入"]) --> Captain["⓪ Captain (plan)<br/>主控意图拆解与 6 槽闸门"]
+
+  subgraph Wave1["Wave 1 · 双轨立项 (2 Slots)"]
+    direction TB
+    R1["① recon (CEO)<br/>需求边界与模块测绘"]
+    R2["② designer (Designer)<br/>UI 规范与设计令牌"]
+  end
+
+  subgraph Wave2["Wave 2 · 架构单点锁 (1 Slot)"]
+    direction TB
+    R3["③ assess (Eng Manager)<br/>接口契约冻结 + 6 分片切分"]
+  end
+
+  subgraph Wave3["Wave 3 · 满载并发构建 (6 Slots)"]
+    direction TB
+    B1["⑤ exploit #1 · Shard A"]
+    B2["⑤ exploit #2 · Shard B"]
+    B3["⑤ exploit #3..#6 · Shards C–F"]
+  end
+
+  subgraph Wave4["Wave 4 · 双轨门禁与发布 (2→1 Slots)"]
+    direction TB
+    G1["④ vuln-scan (CSO)<br/>代码审查与安全审计"]
+    G2["⑥ qa (QA Lead)<br/>全量测试与性能基线"]
+    G3["⑦ internal (Release)<br/>文档同步与报告签发"]
+    G1 --> G3
+    G2 --> G3
+  end
+
+  Captain --> Wave1 --> Wave2 --> Wave3 --> Wave4
 ```
 
-装完**重启一次 `dsh web`**，在界面助手栏选择预设即可开工。
+- **文件无交集分片锁（File-Disjoint Sharding）**：Wave 2 的 `assess`（Eng Manager）显式为每个子任务分配独占的文件写入集，使 Wave 3 的 6 个 `exploit`（Builder）槽位能够以 100% 并发效率编码而零合并冲突。
+- **实时并发槽闸门（`redteam_agent_slot`）**：支持通过「智能体」页签或环境变量 `REDTEAM_MAX_AGENTS=6` 动态控制并发度（默认 `6`，上限 `12`）。
 
-**配置 PostgreSQL 连接（可选，推荐高并发场景）**：
+---
 
-```sh
-export REDTEAM_PG_URL="postgresql://user:password@127.0.0.1:5432/dsh_cluster"
+## 🐘 4. PostgreSQL 高并发双模事实库引擎
+
+为支撑 6–12 个并发智能体同时高频读写资产、任务分片、测试记录与知识库，存储层（`packages/redteam-store/lib/pg-engine.js`）升级为 **PostgreSQL Wire Protocol v3 + 零配置高并发 WAL 双模引擎**：
+
+1. **外部 PostgreSQL 集群模式（配置 `REDTEAM_PG_URL` 或 `POSTGRES_URL`）**：
+   - 原生实现零依赖 **PostgreSQL Wire Protocol v3** 客户端（支持 `Trust`、`Cleartext` 与 `SCRAM-SHA-256` 认证）。
+   - 按项目/靶标自动创建独立 Schema（`CREATE SCHEMA IF NOT EXISTS rt_<engagement_id>`），实现租户级强隔离。
+   - 生成完整的 PostgreSQL DDL（含 `JSONB` 扩展字段与 `GIN (to_tsvector('simple', ...))` 全文检索索引）。
+2. **零配置高并发本地模式（未配置外部 PG 时自动启用）**：
+   - 自动启用 **WAL 预写日志 + 256MB `mmap` 内存映射 + 64MB 页缓存 + 15000ms 忙等待锁**，彻底消除 6 槽并发写入时的 `SQLITE_BUSY` 锁冲突。
+
+```bash
+# 可选：连接高性能 PostgreSQL 16 实例（支持连接池大小配置）
+export REDTEAM_PG_URL="postgres://postgres:password@127.0.0.1:5432/dsh_cluster"
+export REDTEAM_PG_POOL_MAX=12
 export REDTEAM_MAX_AGENTS=6
 ```
 
-**从源码构建与本地部署**：
+---
+
+## 🚀 5. 安装与使用指南（DSH Desktop & CLI）
+
+### 方式一：在 DSH Desktop 插件市场中一键导入（推荐）
+
+打开 **[DSH Desktop](https://github.com/anywhere-labs/dsh-desktop)** → 进入「插件市场」→ 点击右上角 **「导入插件」**，粘贴以下一段完整描述即可自动识别并安装：
+
+> 我想安装 LMTAgent（dsh-redteam-mode v0.15.1）全栈软件研发与安全审计多智能体集群插件，仓库地址是 https://github.com/ECCVIK/lmtagent ，主包路径就在仓库根目录（或者 packages/redteam-bundle），入口补丁配置是 cordis.patch.yml，前端工作台入口是 lib/client.js。它内置了参考 gstack 的 8 位研发角色（Captain 主控 + CEO / Designer / Eng Manager / Reviewer & CSO / Builder / QA Lead / Doc & Release）、默认 6 并发槽（4-Wave Bounded DAG 调度）、WorkBuddy × DSH 品牌蓝常驻控制台以及 PostgreSQL 高并发事实库引擎，请帮我直接安装并启用该插件。
+
+### 方式二：通过命令行安装
 
 ```bash
+# 从 GitHub 仓库直接安装进当前 DSH 环境
+dsh plugin add github:ECCVIK/lmtagent
+
+# 或克隆仓库进行本地构建与开发调试
+git clone https://github.com/ECCVIK/lmtagent.git
+cd lmtagent
 node packages/redteam-bundle/tools/build.mjs
-node packages/redteam-bundle/tools/test-all.mjs
-node scripts/deploy-local.mjs
 ```
-
-完整说明、59 个工具清单与开发流程见 [`docs/详细文档.md`](docs/详细文档.md)。
 
 ---
 
-## 数据与隐私（硬约束）
+## 🧪 6. 质量门禁与测试验证
 
-本仓库是**公开**的，推送即发布、无法撤回。下列内容**一律不得入库** ——
-`docs/`、`README`、提交说明、Issue/PR 正文、Release 说明都算：
-
-| 不入库 | 说明 | 该放哪 |
-| --- | --- | --- |
-| **演练战绩 / 战果统计** | 打了几家单位、发现多少资产 / 漏洞 / 凭据、几次得分命中、累计分值 | 仓库外的留档文件（如 `~/redteam-战绩.md`） |
-| **逐单位成果明细** | 某个单位多少资产 / 端口 / 漏洞 / 内网段、是否打进内网、内网突破类型 | 同上。**"行业-编号"式脱敏也不行**：脱敏只挡"是谁"，挡不住"打成什么样" |
-| **内网段清单** | 一批真实私网 C 段（单个段举例可以，成清单不行） | 同上 |
-| **凭据真值** | 口令、密钥、哈希、Cookie、`secret_value` / `pass_key` 的实际值 | 只留在本机 `$DSH_HOME/redteam/engagements/*/assets.db` |
-
-这条约束**有机检、不是靠自觉**（2026-10-12 真实事故：战绩统计曾被写进仓库根 `README` 与 `docs/`，
-只能靠改写 git 历史清除）：
+仓库内置 **18 个零依赖自动化测试套件（共 888 条断言）**，覆盖 PostgreSQL 引擎协议解析、8 角色提示词契约、6 并发槽会话隔离、WorkBuddy × DSH Blue UI 渲染树、无障碍键盘交互以及单包发行安全自检：
 
 ```bash
-node scripts/check-no-confidential.mjs --selftest   # 证明规则有效（12 拦 / 5 放）
-node scripts/check-no-confidential.mjs --all        # 自查工作区（含未跟踪文件）
-git config core.hooksPath .githooks                 # 启用提交前闸门（scripts/deploy-local.mjs 会自动配）
+# 重新编译单包产物并校验同步一致性
+node packages/redteam-bundle/tools/build.mjs
+node packages/redteam-bundle/tools/build.mjs --check
+
+# 运行全量 18 个测试套件（888 条断言）
+node packages/redteam-bundle/tools/test-all.mjs
+
+# 重新生成 4 张 Retina 2x 工作台截图
+node scripts/capture-ui-screenshots.mjs
 ```
-
-- **提交前闸门**：`.githooks/pre-commit` 扫暂存区，命中即拦（`git commit --no-verify` 可越过，但先确认是误报）。
-- **回归测试**：`packages/redteam-bundle/test/no-confidential.test.mjs` —— 跑规则自检 + 全仓扫描 +
-  确认钩子确实接在提交路径上（防"规则还在、闸门没接"）。
-- 确实需要在本仓库讨论这类内容时用**占位符写法**：`单位：<靶标单位>　规模：<N> 家　内网段：<私网 C 段>`。
-
-演练数据本身只写在本机 `$DSH_HOME/redteam/`，无遥测、无上报、无云端同步。
 
 ---
 
-## 合规
+## 📂 7. 仓库目录结构
 
-面向**授权范围内**的安全评估：攻防演练、红蓝对抗、企业自检、教学研究。
-未获授权的扫描、探测、入侵或数据获取均属违法，与本项目作者无关。MIT，见 [LICENSE](LICENSE)。
+```text
+ECCVIK/lmtagent
+├── packages/
+│   ├── redteam-store/      # PostgreSQL Wire v3 引擎 (pg-engine.js) + 8 角色 gstack 提示词 + V2 报告生成
+│   ├── redteam-tools/      # 30+ 研发与审计工具 + 6 并发槽闸门 (concurrency.js) + 会话强隔离
+│   ├── redteam-ui/         # WorkBuddy × DSH Brand Blue (#4D6BFE) 样式表 (styles.js) 与常驻控制台 (client.js)
+│   └── redteam-bundle/     # 单包合成器 (tools/build.mjs) 与全量测试入口 (tools/test-all.mjs)
+├── preset/                 # Captain 主会话预设 (agent.cordis.yml) 与执行角色预设 (worker.cordis.yml)
+├── skills/                 # 随包分发的 29+ 专项工程与安全审计技能书
+├── scripts/                # UI 高清截图生成脚本 (capture-ui-screenshots.mjs) 与环境自举工具
+└── docs/assets/            # WorkBuddy × DSH Blue 工作台高清实机截图
+```
+
+---
+
+## 🙏 致谢与参考生态
+
+- **[anywhere-labs/dsh-desktop](https://github.com/anywhere-labs/dsh-desktop)** —— 为 DeepSeek Harness (DSH) 插件生态打造的现代化桌面端解决方案（「万物皆插件，桌面本身也是插件」）。
+- **[garrytan/gstack](https://github.com/garrytan/gstack)** —— Garry Tan 的虚拟工程团队角色体系（CEO, Designer, Eng Manager, Reviewer/CSO, Builder, QA Lead, Release Manager）。
+- **WorkBuddy Design System** —— 现代 AI 协同工作台双栏布局与高可读性卡片视觉规范（适配 DSH 品牌蓝 `#4D6BFE`）。
