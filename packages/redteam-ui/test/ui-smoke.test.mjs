@@ -8,9 +8,10 @@
  *   ② 宿主侧 resolveRootSessionId 会话根解析契约；
  *   ③ p4 工作台组件（`Agent 网络`、`跨 Agent 协作`、`协作任务`）；
  *   ④ p5 工作台组件（`团队任务板`、`树状图`）；
- *   ⑤ 工程模式库分类（`公开接口与免鉴权数据源`、`鉴权策略与开放平台契约`）。
+ *   ⑤ 工程模式库分类（`公开接口与免鉴权数据源`、`鉴权策略与开放平台契约`）；
+ *   ⑧ v0.21.0 模块化组装器、零攻防残留、许愿向导与闭环控制契约。
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -285,6 +286,42 @@ ok(
   'OverviewTab 中全宽 Workflow Tree 画布 (.rt-bento-row-canvas) 位于页面最上方（先于 .rt-bento-row-1 与 .rt-analytics-trio）',
 )
 
+/* ── 8. v0.21.0 架构根治与零攻防残留契约 ────────────────────────────────── */
+console.log('— 冒烟八：v0.21.0 架构根治与零攻防残留契约')
+const assembleStylesPath = join(here, '..', 'tools', 'assemble-styles.mjs')
+const assembleClientPath = join(here, '..', 'tools', 'assemble-client.mjs')
+ok(existsSync(assembleStylesPath), '存在模块化样式组装脚本 packages/redteam-ui/tools/assemble-styles.mjs')
+ok(existsSync(assembleClientPath), '存在模块化前端组装脚本 packages/redteam-ui/tools/assemble-client.mjs')
+
+const FORBIDDEN_V021_OFFENSIVE_LABELS = [
+  '粘进 Burp Repeater',
+  'redteam_webshell_add',
+]
+for (const label of FORBIDDEN_V021_OFFENSIVE_LABELS) {
+  ok(!source.includes(label), `client.js 不含遗留攻防 UI 标签或工具名「${label}」`)
+}
+
+const V021_CLIENT_TOKENS = [
+  'rt-exit-full',
+  'refineAndDecomposeWish',
+  'updateWorkerGoal',
+  'retryWorkerTask',
+  'feishuConfig',
+]
+for (const token of V021_CLIENT_TOKENS) {
+  ok(source.includes(token), `client.js 支持 v0.21.0 闭环控制与配置能力「${token}」`)
+}
+
+ok(
+  PANEL_CSS.includes('.rt-wish-wizard'),
+  'styles.js (PANEL_CSS) 包含许愿润色向导样式「.rt-wish-wizard」',
+)
+ok(
+  /svg\.rt-h-wave-branch-line\s*\{[^}]*background\s*:\s*none/s.test(PANEL_CSS),
+  'styles.js (PANEL_CSS) 包含 svg.rt-h-wave-branch-line 背景重置（background: none）',
+)
+
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)
+
 

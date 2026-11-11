@@ -414,65 +414,79 @@ SELECT p.asset_id, p.port, p.proto, p.provenance AS port_provenance,
 FROM port p LEFT JOIN service s ON s.port_id = p.id;
 
 CREATE TABLE IF NOT EXISTS plan_goals (
-  id            TEXT PRIMARY KEY,
-  engagement_id TEXT NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
-  parent_goal_id TEXT,
-  prompt_hash   TEXT,
-  user_prompt   TEXT NOT NULL DEFAULT '',
-  title         TEXT NOT NULL,
-  objective     TEXT NOT NULL DEFAULT '',
-  wave          TEXT NOT NULL DEFAULT 'wave-2',
-  ui_priority   TEXT NOT NULL DEFAULT 'P1',
+  id              TEXT PRIMARY KEY,
+  engagement_id   TEXT NOT NULL DEFAULT '',
+  parent_goal_id  TEXT,
+  prompt_hash     TEXT,
+  user_prompt     TEXT NOT NULL DEFAULT '',
+  title           TEXT NOT NULL,
+  objective       TEXT NOT NULL DEFAULT '',
+  wave            TEXT NOT NULL DEFAULT 'wave-2',
+  ui_priority     TEXT NOT NULL DEFAULT 'P1',
   priority_weight INTEGER NOT NULL DEFAULT 80,
-  status        TEXT NOT NULL DEFAULT 'pending',
-  approval_note TEXT NOT NULL DEFAULT '',
-  approved_at   INTEGER,
-  created_at    INTEGER NOT NULL,
-  updated_at    INTEGER NOT NULL
+  status          TEXT NOT NULL DEFAULT 'pending',
+  approval_note   TEXT NOT NULL DEFAULT '',
+  approved_at     TEXT,
+  created_at      TEXT NOT NULL DEFAULT '',
+  updated_at      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_plan_goals_eng ON plan_goals(engagement_id, priority_weight DESC, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS worker_tasks (
-  id              TEXT PRIMARY KEY,
-  engagement_id   TEXT NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
-  goal_id         TEXT REFERENCES plan_goals(id) ON DELETE SET NULL,
-  session_id      TEXT NOT NULL DEFAULT '',
-  worker_name     TEXT NOT NULL,
-  worker_role     TEXT NOT NULL DEFAULT 'exec',
-  wave            TEXT NOT NULL DEFAULT 'wave-2',
-  ui_priority     TEXT NOT NULL DEFAULT 'P1',
-  priority_weight INTEGER NOT NULL DEFAULT 80,
-  tags_json       TEXT NOT NULL DEFAULT '[]',
-  assigned_goal   TEXT NOT NULL DEFAULT '',
-  status          TEXT NOT NULL DEFAULT 'running',
-  approval_state  TEXT NOT NULL DEFAULT 'pending_approval',
-  next_goal       TEXT NOT NULL DEFAULT '',
-  tool_calls      INTEGER NOT NULL DEFAULT 0,
-  turns           INTEGER NOT NULL DEFAULT 0,
-  created_at      INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL
+  id               TEXT PRIMARY KEY,
+  engagement_id    TEXT NOT NULL DEFAULT '',
+  goal_id          TEXT,
+  session_id       TEXT NOT NULL DEFAULT '',
+  worker_name      TEXT NOT NULL,
+  worker_role      TEXT NOT NULL DEFAULT 'exec',
+  wave             TEXT NOT NULL DEFAULT 'wave-2',
+  ui_priority      TEXT NOT NULL DEFAULT 'P1',
+  priority_weight  INTEGER NOT NULL DEFAULT 80,
+  tags_json        TEXT NOT NULL DEFAULT '[]',
+  files_owned_json TEXT NOT NULL DEFAULT '[]',
+  assigned_goal    TEXT NOT NULL DEFAULT '',
+  status           TEXT NOT NULL DEFAULT 'running',
+  approval_state   TEXT NOT NULL DEFAULT 'pending_approval',
+  next_goal        TEXT NOT NULL DEFAULT '',
+  error_detail     TEXT NOT NULL DEFAULT '',
+  tool_calls       INTEGER NOT NULL DEFAULT 0,
+  turns            INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT NOT NULL DEFAULT '',
+  updated_at       TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_worker_tasks_eng ON worker_tasks(engagement_id, priority_weight DESC, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS worker_digests (
-  id                TEXT PRIMARY KEY,
-  engagement_id     TEXT NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
-  worker_task_id    TEXT NOT NULL REFERENCES worker_tasks(id) ON DELETE CASCADE,
-  goal_id           TEXT,
-  worker_name       TEXT NOT NULL,
-  what_was_done     TEXT NOT NULL DEFAULT '',
+  id                 TEXT PRIMARY KEY,
+  engagement_id      TEXT NOT NULL DEFAULT '',
+  worker_task_id     TEXT NOT NULL REFERENCES worker_tasks(id) ON DELETE CASCADE,
+  goal_id            TEXT,
+  worker_name        TEXT NOT NULL,
+  what_was_done      TEXT NOT NULL DEFAULT '',
   files_touched_json TEXT NOT NULL DEFAULT '[]',
   key_decisions_json TEXT NOT NULL DEFAULT '[]',
-  verification      TEXT NOT NULL DEFAULT '',
-  raw_tokens        INTEGER NOT NULL DEFAULT 0,
-  compressed_tokens INTEGER NOT NULL DEFAULT 0,
-  compression_pct   INTEGER NOT NULL DEFAULT 0,
-  approval_decision TEXT NOT NULL DEFAULT 'pending',
-  followup_goal     TEXT NOT NULL DEFAULT '',
-  created_at        INTEGER NOT NULL
+  verification       TEXT NOT NULL DEFAULT '',
+  raw_tokens         INTEGER NOT NULL DEFAULT 0,
+  compressed_tokens  INTEGER NOT NULL DEFAULT 0,
+  compression_pct    INTEGER NOT NULL DEFAULT 0,
+  approval_decision  TEXT NOT NULL DEFAULT 'pending',
+  followup_goal      TEXT NOT NULL DEFAULT '',
+  created_at         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_worker_digests_eng ON worker_digests(engagement_id, created_at DESC);
-PRAGMA foreign_keys = OFF;
+
+CREATE TABLE IF NOT EXISTS shard_locks (
+  id             TEXT PRIMARY KEY,
+  engagement_id  TEXT NOT NULL DEFAULT '',
+  worker_task_id TEXT NOT NULL DEFAULT '',
+  worker_name    TEXT NOT NULL DEFAULT '',
+  wave           TEXT NOT NULL DEFAULT 'wave-3',
+  file_pattern   TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'active',
+  acquired_at    TEXT NOT NULL DEFAULT '',
+  released_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_shard_locks_eng ON shard_locks(engagement_id, status);
 `
 
 export const SCHEMA_SQL = DDL
@@ -486,7 +500,7 @@ CREATE TABLE IF NOT EXISTS poc (
   code TEXT NOT NULL,                -- 稳定标识（slug），智能体可直接引用
   title TEXT NOT NULL,
   kind TEXT,                         -- poc | exp | script | template | payload
-  category TEXT,                     -- 归类：rce / deserialization / file-upload / sqli / unauthorized / auth-bypass / weak-password / ssrf / xxe / path-traversal / file-read / info-leak / privesc / tunnel / other
+  category TEXT,                     -- 归类：rce / deserialization / file-upload / sqli / unauthorized / auth-bypass / weak-password / ssrf / xxe / path-traversal / file-read / info-leak / privesc / tunnel / architecture / frontend / backend / database / testing / devops / other
   cve TEXT,                          -- CVE / CNVD / 厂商编号
   component TEXT,                    -- 组件/产品（Weblogic、Shiro、泛微 OA…）
   versions TEXT,                     -- 影响版本
@@ -514,6 +528,25 @@ CREATE TABLE IF NOT EXISTS poc (
 CREATE INDEX IF NOT EXISTS ix_poc_cve ON poc(cve);
 CREATE INDEX IF NOT EXISTS ix_poc_component ON poc(component);
 CREATE INDEX IF NOT EXISTS ix_poc_kind ON poc(kind, verified);
+
+CREATE TABLE IF NOT EXISTS engineering_memories (
+  id              TEXT PRIMARY KEY,
+  engagement_id   TEXT NOT NULL DEFAULT '',
+  engagement_name TEXT NOT NULL DEFAULT '',
+  category        TEXT NOT NULL DEFAULT 'architecture',
+  module_path     TEXT NOT NULL DEFAULT '',
+  title           TEXT NOT NULL,
+  summary         TEXT NOT NULL DEFAULT '',
+  decisions_json  TEXT NOT NULL DEFAULT '[]',
+  patterns_json   TEXT NOT NULL DEFAULT '[]',
+  tags_json       TEXT NOT NULL DEFAULT '[]',
+  created_by      TEXT NOT NULL DEFAULT 'plan',
+  hit_count       INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT NOT NULL DEFAULT '',
+  updated_at      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_eng_memories_cat ON engineering_memories(category, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_eng_memories_eng ON engineering_memories(engagement_id);
 /* 注意：归类 / 来源靶标两个索引**不能写在这里** —— 老 knowledge.db 的 poc 表还没有
    这两列，CREATE INDEX 会在 exec(DDL) 阶段直接抛
    "no such column: category"，连补列的迁移都跑不到。它们在 migrateKnowledge() 补完列之后再建。 */
@@ -541,6 +574,12 @@ const POC_CATEGORIES = [
   { code: 'info-leak', name: '数据脱敏与隐私合规防护', hint: '脱敏、隐私、日志规范、边界防呆' },
   { code: 'privesc', name: '并发调度与权限分层模型', hint: '并发槽、RBAC、权限模型、递归调度' },
   { code: 'tunnel', name: '跨进程通信与联调网关桥接', hint: 'IPC、WebSocket、联调桥接、RPC' },
+  { code: 'architecture', name: '系统架构与契约分片设计', hint: '架构蓝图、模块分片、接口契约、DAG 拓扑、闭环状态机' },
+  { code: 'frontend', name: '前端组件与交互画布工程', hint: 'React、UI 画布、状态管理、样式令牌、60FPS 交互' },
+  { code: 'backend', name: '后端服务与运行时核心引擎', hint: '服务路由、RPC 桥接、并发控制、工具执行链' },
+  { code: 'database', name: '数据库 Schema 与双模存储引擎', hint: 'SQLite WAL、PostgreSQL Wire、增量迁移、全文检索' },
+  { code: 'testing', name: '自动化测试与回归门禁套件', hint: '单元测试、集成回归、冒烟门禁、断言规范' },
+  { code: 'devops', name: '构建打包与持续发布流水线', hint: '构建发布、CI/CD、部署脚本、健康检查' },
   { code: 'other', name: '通用工程模式与组件复刻模板', hint: '通用工程模式、脚手架与组件复刻模板（写清用途）' },
 ]
 export { POC_CATEGORIES }
@@ -573,6 +612,12 @@ export function guessPocCategory(text) {
   if (has('路径校验', '沙箱', '文件分片', '目录规范', 'path-traversal', 'path traversal')) return 'path-traversal'
   if (has('并发槽', 'RBAC', '权限模型', '递归调度', 'privesc')) return 'privesc'
   if (has('脱敏', '隐私', '日志规范', '边界防呆', 'info-leak', 'leak')) return 'info-leak'
+  if (has('architecture', '架构蓝图', '拓扑分片')) return 'architecture'
+  if (has('frontend', 'react', '组件画布')) return 'frontend'
+  if (has('backend', '后端服务')) return 'backend'
+  if (has('database', 'sqlite', '增量迁移')) return 'database'
+  if (has('testing', '单元测试', '回归测试')) return 'testing'
+  if (has('devops', 'ci/cd', '持续发布')) return 'devops'
   return 'other'
 }
 
@@ -702,66 +747,82 @@ export function migrate(db) {
       status TEXT DEFAULT 'open', created_by TEXT, created_at TEXT, updated_at TEXT
     )`)
     db.exec(`CREATE TABLE IF NOT EXISTS plan_goals (
-      id            TEXT PRIMARY KEY,
-      engagement_id TEXT NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
-      parent_goal_id TEXT,
-      prompt_hash   TEXT,
-      user_prompt   TEXT NOT NULL DEFAULT '',
-      title         TEXT NOT NULL,
-      objective     TEXT NOT NULL DEFAULT '',
-      wave          TEXT NOT NULL DEFAULT 'wave-2',
-      ui_priority   TEXT NOT NULL DEFAULT 'P1',
+      id              TEXT PRIMARY KEY,
+      engagement_id   TEXT NOT NULL DEFAULT '',
+      parent_goal_id  TEXT,
+      prompt_hash     TEXT,
+      user_prompt     TEXT NOT NULL DEFAULT '',
+      title           TEXT NOT NULL,
+      objective       TEXT NOT NULL DEFAULT '',
+      wave            TEXT NOT NULL DEFAULT 'wave-2',
+      ui_priority     TEXT NOT NULL DEFAULT 'P1',
       priority_weight INTEGER NOT NULL DEFAULT 80,
-      status        TEXT NOT NULL DEFAULT 'pending',
-      approval_note TEXT NOT NULL DEFAULT '',
-      approved_at   INTEGER,
-      created_at    INTEGER NOT NULL,
-      updated_at    INTEGER NOT NULL
+      status          TEXT NOT NULL DEFAULT 'pending',
+      approval_note   TEXT NOT NULL DEFAULT '',
+      approved_at     TEXT,
+      created_at      TEXT NOT NULL DEFAULT '',
+      updated_at      TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_plan_goals_eng ON plan_goals(engagement_id, priority_weight DESC, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS worker_tasks (
-      id              TEXT PRIMARY KEY,
-      engagement_id   TEXT NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
-      goal_id         TEXT REFERENCES plan_goals(id) ON DELETE SET NULL,
-      session_id      TEXT NOT NULL DEFAULT '',
-      worker_name     TEXT NOT NULL,
-      worker_role     TEXT NOT NULL DEFAULT 'exec',
-      wave            TEXT NOT NULL DEFAULT 'wave-2',
-      ui_priority     TEXT NOT NULL DEFAULT 'P1',
-      priority_weight INTEGER NOT NULL DEFAULT 80,
-      tags_json       TEXT NOT NULL DEFAULT '[]',
-      assigned_goal   TEXT NOT NULL DEFAULT '',
-      status          TEXT NOT NULL DEFAULT 'running',
-      approval_state  TEXT NOT NULL DEFAULT 'pending_approval',
-      next_goal       TEXT NOT NULL DEFAULT '',
-      tool_calls      INTEGER NOT NULL DEFAULT 0,
-      turns           INTEGER NOT NULL DEFAULT 0,
-      created_at      INTEGER NOT NULL,
-      updated_at      INTEGER NOT NULL
+      id               TEXT PRIMARY KEY,
+      engagement_id    TEXT NOT NULL DEFAULT '',
+      goal_id          TEXT,
+      session_id       TEXT NOT NULL DEFAULT '',
+      worker_name      TEXT NOT NULL,
+      worker_role      TEXT NOT NULL DEFAULT 'exec',
+      wave             TEXT NOT NULL DEFAULT 'wave-2',
+      ui_priority      TEXT NOT NULL DEFAULT 'P1',
+      priority_weight  INTEGER NOT NULL DEFAULT 80,
+      tags_json        TEXT NOT NULL DEFAULT '[]',
+      files_owned_json TEXT NOT NULL DEFAULT '[]',
+      assigned_goal    TEXT NOT NULL DEFAULT '',
+      status           TEXT NOT NULL DEFAULT 'running',
+      approval_state   TEXT NOT NULL DEFAULT 'pending_approval',
+      next_goal        TEXT NOT NULL DEFAULT '',
+      error_detail     TEXT NOT NULL DEFAULT '',
+      tool_calls       INTEGER NOT NULL DEFAULT 0,
+      turns            INTEGER NOT NULL DEFAULT 0,
+      created_at       TEXT NOT NULL DEFAULT '',
+      updated_at       TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_worker_tasks_eng ON worker_tasks(engagement_id, priority_weight DESC, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS worker_digests (
-      id                TEXT PRIMARY KEY,
-      engagement_id     TEXT NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
-      worker_task_id    TEXT NOT NULL REFERENCES worker_tasks(id) ON DELETE CASCADE,
-      goal_id           TEXT,
-      worker_name       TEXT NOT NULL,
-      what_was_done     TEXT NOT NULL DEFAULT '',
+      id                 TEXT PRIMARY KEY,
+      engagement_id      TEXT NOT NULL DEFAULT '',
+      worker_task_id     TEXT NOT NULL REFERENCES worker_tasks(id) ON DELETE CASCADE,
+      goal_id            TEXT,
+      worker_name        TEXT NOT NULL,
+      what_was_done      TEXT NOT NULL DEFAULT '',
       files_touched_json TEXT NOT NULL DEFAULT '[]',
       key_decisions_json TEXT NOT NULL DEFAULT '[]',
-      verification      TEXT NOT NULL DEFAULT '',
-      raw_tokens        INTEGER NOT NULL DEFAULT 0,
-      compressed_tokens INTEGER NOT NULL DEFAULT 0,
-      compression_pct   INTEGER NOT NULL DEFAULT 0,
-      approval_decision TEXT NOT NULL DEFAULT 'pending',
-      followup_goal     TEXT NOT NULL DEFAULT '',
-      created_at        INTEGER NOT NULL
+      verification       TEXT NOT NULL DEFAULT '',
+      raw_tokens         INTEGER NOT NULL DEFAULT 0,
+      compressed_tokens  INTEGER NOT NULL DEFAULT 0,
+      compression_pct    INTEGER NOT NULL DEFAULT 0,
+      approval_decision  TEXT NOT NULL DEFAULT 'pending',
+      followup_goal      TEXT NOT NULL DEFAULT '',
+      created_at         TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_worker_digests_eng ON worker_digests(engagement_id, created_at DESC);
-    PRAGMA foreign_keys = OFF;`)
+
+    CREATE TABLE IF NOT EXISTS shard_locks (
+      id             TEXT PRIMARY KEY,
+      engagement_id  TEXT NOT NULL DEFAULT '',
+      worker_task_id TEXT NOT NULL DEFAULT '',
+      worker_name    TEXT NOT NULL DEFAULT '',
+      wave           TEXT NOT NULL DEFAULT 'wave-3',
+      file_pattern   TEXT NOT NULL,
+      status         TEXT NOT NULL DEFAULT 'active',
+      acquired_at    TEXT NOT NULL DEFAULT '',
+      released_at    TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_shard_locks_eng ON shard_locks(engagement_id, status);`)
   } catch { /* 表已存在或并发建表，忽略 */ }
+  ensure('worker_tasks', 'files_owned_json', "TEXT NOT NULL DEFAULT '[]'")
+  ensure('worker_tasks', 'error_detail', "TEXT NOT NULL DEFAULT ''")
   ensure('score_hit', 'self_created', 'INTEGER DEFAULT 0')
   /* 得分落在哪个「服务」上：账号类得分按 (资产, 端口) 封顶，同一服务只算一次最高权限。
      端口在写入时解析（工具传的 port → target 里的端口 → 该资产唯一登记的端口）；老数据打开靶标时按 target 回填一次。 */
@@ -817,6 +878,26 @@ export function migrateKnowledge(db) {
   ensure('found_by_agent', 'TEXT')
   try { db.exec('CREATE INDEX IF NOT EXISTS ix_poc_category ON poc(category)') } catch { /* 忽略 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS ix_poc_engagement ON poc(engagement_id)') } catch { /* 忽略 */ }
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS engineering_memories (
+      id              TEXT PRIMARY KEY,
+      engagement_id   TEXT NOT NULL DEFAULT '',
+      engagement_name TEXT NOT NULL DEFAULT '',
+      category        TEXT NOT NULL DEFAULT 'architecture',
+      module_path     TEXT NOT NULL DEFAULT '',
+      title           TEXT NOT NULL,
+      summary         TEXT NOT NULL DEFAULT '',
+      decisions_json  TEXT NOT NULL DEFAULT '[]',
+      patterns_json   TEXT NOT NULL DEFAULT '[]',
+      tags_json       TEXT NOT NULL DEFAULT '[]',
+      created_by      TEXT NOT NULL DEFAULT 'plan',
+      hit_count       INTEGER NOT NULL DEFAULT 0,
+      created_at      TEXT NOT NULL DEFAULT '',
+      updated_at      TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_eng_memories_cat ON engineering_memories(category, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_eng_memories_eng ON engineering_memories(engagement_id);`)
+  } catch { /* 忽略 */ }
   /* 老条目没有归类：按 code/标题/组件的关键词推一个（推测逻辑只有一份，见 guessPocCategory） */
   try {
     const rows = db.prepare("SELECT id, code, title, component FROM poc WHERE COALESCE(category, '') = ''").all()

@@ -301,12 +301,48 @@ for (const [label, source, needle] of SENSITIVE) {
   ok(hits.length === 0, `${label} 0 命中${hits.length ? '：' + hits.join(', ') : ''}`)
 }
 
+console.log('— 模块化样式组装与仓库根同步契约')
+{
+  const repoRoot = join(root, '..', '..')
+  const uiStylesDir = join(root, '..', 'redteam-ui', 'src', 'styles')
+  const assembleStylesScript = join(root, '..', 'redteam-ui', 'tools', 'assemble-styles.mjs')
+  const expectedStyleModules = [
+    '00-tokens.css',
+    '01-shell.css',
+    '02-wizard.css',
+    '03-canvas.css',
+    '04-inspector-swimlane.css',
+    '05-tabs.css',
+    '06-animations.css',
+  ]
+  ok(existsSync(uiStylesDir), 'packages/redteam-ui/src/styles/ 模块化样式目录存在')
+  ok(
+    existsSync(uiStylesDir) && expectedStyleModules.every((f) => existsSync(join(uiStylesDir, f))),
+    'src/styles/ 包含全部 7 个模块化 CSS 源文件（00-tokens .. 06-animations）',
+  )
+  try {
+    execFileSync(process.execPath, [assembleStylesScript, '--check'], { stdio: 'pipe' })
+    ok(true, 'assemble-styles.mjs --check 通过（styles.js 与 src/styles/*.css 零漂移）')
+  } catch (error) {
+    ok(false, 'assemble-styles.mjs --check 失败：\n' + String(error.stderr || error.stdout || error.message || ''))
+  }
+
+  for (const rel of ['cordis.patch.yml', 'lib/client.js', 'lib/store-core.js', 'lib/ui.js', 'lib/tools.js']) {
+    const bundlePath = join(root, rel)
+    const rootPath = join(repoRoot, rel)
+    const same = existsSync(bundlePath)
+      && existsSync(rootPath)
+      && Buffer.compare(readFileSync(bundlePath), readFileSync(rootPath)) === 0
+    ok(same, `仓库根 ${rel} 与 packages/redteam-bundle/${rel} 100% 字节一致（防根包静默漂移）`)
+  }
+}
+
 console.log('— 生成物与源码同步')
 try {
   execFileSync(process.execPath, [join(root, 'tools', 'build.mjs'), '--check'], { stdio: 'pipe' })
   ok(true, 'lib/ 与三个源码包一致（跑 build.mjs 生成）')
 } catch (error) {
-  ok(false, 'lib/ 已漂移，需要重新运行 node packages/redteam-bundle/tools/build.mjs\n' + String(error.stdout || ''))
+  ok(false, 'lib/ 已漂移，需要重新运行 node packages/redteam-bundle/tools/build.mjs\n' + String(error.stdout || '') + String(error.stderr || ''))
 }
 
 console.log('— 首次启动自举（预设落地 + 占位符替换 + 幂等）')

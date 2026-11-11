@@ -193,11 +193,11 @@ export function translateSqlToPg(sql, options = {}) {
     .replace(/\s+REFERENCES\s+engagements\s*\(\s*id\s*\)(?:\s+ON\s+DELETE\s+CASCADE)?/gi, '')
     .replace(
       /\basset_fts\s+MATCH\s+\?/gi,
-      "to_tsvector('simple', coalesce(ip,'') || ' ' || coalesce(names,'') || ' ' || coalesce(banners,'') || ' ' || coalesce(titles,'') || ' ' || coalesce(fingerprints,'')) @@ plainto_tsquery('simple', ?)",
+      "to_tsvector('simple', coalesce(ip,'') || ' ' || coalesce(names,'') || ' ' || coalesce(banners,'') || ' ' || coalesce(titles,'') || ' ' || coalesce(fingerprints,'')) @@ websearch_to_tsquery('simple', regexp_replace(regexp_replace(?, '[*]', '', 'g'), '\\s+AND\\s+', ' ', 'gi'))",
     )
     .replace(
       /\bpoc_fts\s+MATCH\s+\?/gi,
-      "to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(cve,'') || ' ' || coalesce(component,'') || ' ' || coalesce(versions,'') || ' ' || coalesce(tags,'') || ' ' || coalesce(description,'') || ' ' || coalesce(content,'')) @@ plainto_tsquery('simple', ?)",
+      "to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(cve,'') || ' ' || coalesce(component,'') || ' ' || coalesce(versions,'') || ' ' || coalesce(tags,'') || ' ' || coalesce(description,'') || ' ' || coalesce(content,'')) @@ websearch_to_tsquery('simple', regexp_replace(regexp_replace(?, '[*]', '', 'g'), '\\s+AND\\s+', ' ', 'gi'))",
     )
 
   /* 处理 INSERT OR IGNORE */
@@ -218,67 +218,106 @@ export function translateSqlToPg(sql, options = {}) {
     }
   }
 
-  /* 替换字符串字面量外的 `?` 为 `$1, $2, ...` */
+  /* 单遍扫描：跳过单引号字符串字面量、双引号标识符与注释，仅在 SQL 代码段内转换 `?` -> `$n` 及 `IS $n` -> `IS NOT DISTINCT FROM $n` */
   let paramCount = 0
   let translated = ''
-  let inSingle = false
-  let inDouble = false
-  let inLineComment = false
-  let inBlockComment = false
+  let codeBuf = ''
+  const flushCodeBuf = () => {
+    if (!codeBuf) return
+    translated += codeBuf.replace(/\bIS\s+\$(\d+)\b/gi, (_, n) => `IS NOT DISTINCT FROM $${n}`)
+    codeBuf = ''
+  }
 
-  for (let i = 0; i < out.length; i += 1) {
+  let i = 0
+  const len = out.length
+  while (i < len) {
     const ch = out[i]
     const next = out[i + 1]
-    if (inLineComment) {
-      translated += ch
-      if (ch === '\n') inLineComment = false
+    if (ch === '-' && next === '-') {
+      flushCodeBuf()
+      const nl = out.indexOf('\n', i + 2)
+      if (nl < 0) {
+        translated += out.slice(i)
+        break
+      }
+      translated += out.slice(i, nl + 1)
+      i = nl + 1
       continue
     }
-    if (inBlockComment) {
-      translated += ch
-      if (ch === '*' && next === '/') {
-        translated += '/'
-        i += 1
-        inBlockComment = false
+    if (ch === '/' && next === '*') {
+      flushCodeBuf()
+      const end = out.indexOf('*/', i + 2)
+      if (end < 0) {
+        translated += out.slice(i)
+        break
       }
+      translated += out.slice(i, end + 2)
+      i = end + 2
       continue
     }
-    if (!inSingle && !inDouble) {
-      if (ch === '-' && next === '-') {
-        translated += '--'
-        i += 1
-        inLineComment = true
-        continue
-      }
-      if (ch === '/' && next === '*') {
-        translated += '/*'
-        i += 1
-        inBlockComment = true
-        continue
-      }
-    }
-    if (ch === "'" && !inDouble) {
-      translated += ch
-      if (inSingle && next === "'") {
+    if (ch === "'" || ((ch === 'e' || ch === 'E') && next === "'" && (i === 0 || !/[a-zA-Z0-9_]/.test(out[i - 1])))) {
+      flushCodeBuf()
+      const isEscaped = ch !== "'"
+      if (isEscaped) {
+        translated += ch + "'"
+        i += 2
+      } else {
         translated += "'"
         i += 1
-      } else {
-        inSingle = !inSingle
+      }
+      while (i < len) {
+        const c = out[i]
+        if (isEscaped && c === '\\' && i + 1 < len) {
+          translated += c + out[i + 1]
+          i += 2
+          continue
+        }
+        if (c === "'") {
+          if (out[i + 1] === "'") {
+            translated += "''"
+            i += 2
+            continue
+          }
+          translated += "'"
+          i += 1
+          break
+        }
+        translated += c
+        i += 1
       }
       continue
     }
-    if (ch === '"' && !inSingle) {
-      inDouble = !inDouble
-      translated += ch
+    if (ch === '"') {
+      flushCodeBuf()
+      translated += '"'
+      i += 1
+      while (i < len) {
+        const c = out[i]
+        if (c === '"') {
+          if (out[i + 1] === '"') {
+            translated += '""'
+            i += 2
+            continue
+          }
+          translated += '"'
+          i += 1
+          break
+        }
+        translated += c
+        i += 1
+      }
       continue
     }
-    if (ch === '?' && !inSingle && !inDouble) {
+    if (ch === '?') {
       paramCount += 1
-      translated += '$' + paramCount
+      codeBuf += '$' + paramCount
+      i += 1
       continue
     }
-    translated += ch
+    codeBuf += ch
+    i += 1
   }
+  flushCodeBuf()
 
   const isInsert = /^INSERT\s+INTO\b/i.test(translated)
   const noIdTables = /^INSERT\s+INTO\s+["']?(?:segment|stage_state|asset_fts|poc_fts)\b/i.test(translated)
@@ -445,6 +484,196 @@ export function probePgConnection(rawUrlOrConfig, timeoutMs = 4000) {
 
 /* ------------------------------------------------------------------ 后台 Worker 同步桥（真实 PostgreSQL 直连） */
 
+export function quotePgLiteral(v) {
+  if (v === null || v === undefined) return 'NULL'
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL'
+  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
+  if (Buffer.isBuffer(v) || v instanceof Uint8Array) {
+    return "'\\x" + Buffer.from(v).toString('hex') + "'::bytea"
+  }
+  return "'" + String(v).replace(/\x00/g, '').replace(/'/g, "''") + "'"
+}
+
+export function interpolatePgParams(sql, params) {
+  const src = String(sql || '')
+  if (!params || params.length === 0) return src
+  let out = ''
+  let i = 0
+  const len = src.length
+  while (i < len) {
+    const ch = src[i]
+    const next = src[i + 1]
+    if (ch === '-' && next === '-') {
+      const nl = src.indexOf('\n', i + 2)
+      if (nl < 0) {
+        out += src.slice(i)
+        break
+      }
+      out += src.slice(i, nl + 1)
+      i = nl + 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const end = src.indexOf('*/', i + 2)
+      if (end < 0) {
+        out += src.slice(i)
+        break
+      }
+      out += src.slice(i, end + 2)
+      i = end + 2
+      continue
+    }
+    if (ch === "'" || ((ch === 'e' || ch === 'E') && next === "'" && (i === 0 || !/[a-zA-Z0-9_]/.test(src[i - 1])))) {
+      const isEscaped = ch !== "'"
+      if (isEscaped) {
+        out += ch + "'"
+        i += 2
+      } else {
+        out += "'"
+        i += 1
+      }
+      while (i < len) {
+        const c = src[i]
+        if (isEscaped && c === '\\' && i + 1 < len) {
+          out += c + src[i + 1]
+          i += 2
+          continue
+        }
+        if (c === "'") {
+          if (src[i + 1] === "'") {
+            out += "''"
+            i += 2
+            continue
+          }
+          out += "'"
+          i += 1
+          break
+        }
+        out += c
+        i += 1
+      }
+      continue
+    }
+    if (ch === '"') {
+      out += '"'
+      i += 1
+      while (i < len) {
+        const c = src[i]
+        if (c === '"') {
+          if (src[i + 1] === '"') {
+            out += '""'
+            i += 2
+            continue
+          }
+          out += '"'
+          i += 1
+          break
+        }
+        out += c
+        i += 1
+      }
+      continue
+    }
+    if (ch === '$' && next >= '1' && next <= '9') {
+      let j = i + 1
+      while (j < len && src[j] >= '0' && src[j] <= '9') j += 1
+      const idx = Number(src.slice(i + 1, j)) - 1
+      if (idx >= 0 && idx < params.length) {
+        out += quotePgLiteral(params[idx])
+      } else {
+        out += src.slice(i, j)
+      }
+      i = j
+      continue
+    }
+    out += ch
+    i += 1
+  }
+  return out
+}
+
+export function splitSqlStatements(sql) {
+  const src = String(sql || '')
+  const stmts = []
+  let cur = ''
+  let i = 0
+  const len = src.length
+  while (i < len) {
+    const ch = src[i]
+    const next = src[i + 1]
+    if (ch === '-' && next === '-') {
+      const nl = src.indexOf('\n', i + 2)
+      if (nl < 0) {
+        cur += src.slice(i)
+        break
+      }
+      cur += src.slice(i, nl + 1)
+      i = nl + 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const end = src.indexOf('*/', i + 2)
+      if (end < 0) {
+        cur += src.slice(i)
+        break
+      }
+      cur += src.slice(i, end + 2)
+      i = end + 2
+      continue
+    }
+    if (ch === "'") {
+      cur += "'"
+      i += 1
+      while (i < len) {
+        if (src[i] === "'") {
+          if (src[i + 1] === "'") {
+            cur += "''"
+            i += 2
+            continue
+          }
+          cur += "'"
+          i += 1
+          break
+        }
+        cur += src[i]
+        i += 1
+      }
+      continue
+    }
+    if (ch === '"') {
+      cur += '"'
+      i += 1
+      while (i < len) {
+        if (src[i] === '"') {
+          if (src[i + 1] === '"') {
+            cur += '""'
+            i += 2
+            continue
+          }
+          cur += '"'
+          i += 1
+          break
+        }
+        cur += src[i]
+        i += 1
+      }
+      continue
+    }
+    if (ch === ';') {
+      const trimmed = cur.trim()
+      if (trimmed) stmts.push(trimmed)
+      cur = ''
+      i += 1
+      continue
+    }
+    cur += ch
+    i += 1
+  }
+  const tail = cur.trim()
+  if (tail) stmts.push(tail)
+  return stmts
+}
+
 const PG_WORKER_CODE = `
 import { parentPort, workerData } from 'node:worker_threads';
 import { connect as netConnect } from 'node:net';
@@ -452,12 +681,14 @@ import { connect as tlsConnect } from 'node:tls';
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 
 const cfg = workerData.config;
+const activeSchema = workerData.schema || null;
 let sock = null;
 let buf = Buffer.alloc(0);
 let waitResolve = null;
+let connectCount = 0;
 
 function cstr(s) {
-  return Buffer.concat([Buffer.from(String(s), 'utf8'), Buffer.from([0])]);
+  return Buffer.concat([Buffer.from(String(s).replace(/\\x00/g, ''), 'utf8'), Buffer.from([0])]);
 }
 function buildPacket(t, p) {
   const h = Buffer.alloc(5);
@@ -467,46 +698,58 @@ function buildPacket(t, p) {
 }
 function md5Hex(b) { return createHash('md5').update(b).digest('hex'); }
 
-function quoteLiteral(v) {
-  if (v === null || v === undefined) return 'NULL';
-  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
-  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
-  if (Buffer.isBuffer(v) || v instanceof Uint8Array) {
-    return "'\\\\x" + Buffer.from(v).toString('hex') + "'::bytea";
-  }
-  return "'" + String(v).replace(/'/g, "''") + "'";
-}
-
-function interpolateParams(sql, params) {
-  if (!params || params.length === 0) return sql;
-  return sql.replace(/\\$(\\d+)/g, (m, idx) => {
-    const i = Number(idx) - 1;
-    return i >= 0 && i < params.length ? quoteLiteral(params[i]) : m;
-  });
-}
+${quotePgLiteral.toString()}
+${interpolatePgParams.toString()}
+const quoteLiteral = quotePgLiteral;
+const interpolateParams = interpolatePgParams;
 
 async function ensureConnected() {
   if (sock && !sock.destroyed) return;
+  sock = null;
+  buf = Buffer.alloc(0);
   await new Promise((resolve, reject) => {
     const connectFn = cfg.ssl ? tlsConnect : netConnect;
-    sock = connectFn({ host: cfg.host, port: cfg.port, rejectUnauthorized: false });
+    const currentSock = connectFn({ host: cfg.host, port: cfg.port, rejectUnauthorized: false });
+    sock = currentSock;
     let scramState = null;
     let connected = false;
-    sock.on('error', (err) => {
-      if (!connected) reject(err);
-      else if (waitResolve) { const r = waitResolve; waitResolve = null; r({ ok: false, error: String(err.message || err) }); }
+    let settled = false;
+    const handleDisconnect = (reason) => {
+      if (sock === currentSock) {
+        sock = null;
+        buf = Buffer.alloc(0);
+      }
+      if (!connected) {
+        if (!settled) {
+          settled = true;
+          reject(new Error(reason || 'PG socket closed before ready'));
+        }
+      } else if (waitResolve) {
+        const r = waitResolve;
+        waitResolve = null;
+        r({ ok: false, error: reason || 'PG socket closed' });
+      }
+    };
+    currentSock.on('error', (err) => {
+      handleDisconnect(String(err?.message || err));
     });
-    sock.on('connect', () => {
+    currentSock.on('end', () => {
+      handleDisconnect('PG socket ended by peer');
+    });
+    currentSock.on('close', () => {
+      handleDisconnect('PG socket closed');
+    });
+    currentSock.on('connect', () => {
       const params = ['user', cfg.user, 'database', cfg.database, 'client_encoding', 'UTF8', 'application_name', 'dsh-devteam-pg'];
       const parts = [];
       const proto = Buffer.alloc(4); proto.writeInt32BE(196608, 0); parts.push(proto);
-      for (const p of params) { parts.push(Buffer.from(String(p), 'utf8')); parts.push(Buffer.from([0])); }
+      for (const p of params) { parts.push(Buffer.from(String(p).replace(/\\x00/g, ''), 'utf8')); parts.push(Buffer.from([0])); }
       parts.push(Buffer.from([0]));
       const body = Buffer.concat(parts);
       const len = Buffer.alloc(4); len.writeInt32BE(body.length + 4, 0);
-      sock.write(Buffer.concat([len, body]));
+      currentSock.write(Buffer.concat([len, body]));
     });
-    sock.on('data', (chunk) => {
+    currentSock.on('data', (chunk) => {
       buf = Buffer.concat([buf, chunk]);
       if (!connected) {
         while (buf.length >= 5) {
@@ -515,15 +758,18 @@ async function ensureConnected() {
           if (buf.length < 1 + len) break;
           const payload = buf.subarray(5, 1 + len);
           buf = buf.subarray(1 + len);
-          if (type === 'E') return reject(new Error('PG auth failed'));
+          if (type === 'E') {
+            settled = true;
+            return reject(new Error('PG auth failed'));
+          }
           if (type === 'R') {
             const authType = payload.readInt32BE(0);
-            if (authType === 3) sock.write(buildPacket('p', cstr(cfg.password || '')));
+            if (authType === 3) currentSock.write(buildPacket('p', cstr(cfg.password || '')));
             else if (authType === 5) {
               const salt = payload.subarray(4, 8);
               const inner = md5Hex(Buffer.from((cfg.password || '') + cfg.user, 'utf8'));
               const outer = 'md5' + md5Hex(Buffer.concat([Buffer.from(inner, 'ascii'), salt]));
-              sock.write(buildPacket('p', cstr(outer)));
+              currentSock.write(buildPacket('p', cstr(outer)));
             } else if (authType === 10) {
               const nonce = randomBytes(18).toString('base64');
               const clientFirstBare = 'n=,r=' + nonce;
@@ -531,7 +777,7 @@ async function ensureConnected() {
               scramState = { nonce, clientFirstBare };
               const mech = cstr('SCRAM-SHA-256');
               const l = Buffer.alloc(4); l.writeInt32BE(Buffer.byteLength(clientFirst), 0);
-              sock.write(buildPacket('p', Buffer.concat([mech, l, Buffer.from(clientFirst, 'utf8')])));
+              currentSock.write(buildPacket('p', Buffer.concat([mech, l, Buffer.from(clientFirst, 'utf8')])));
             } else if (authType === 11 && scramState) {
               const sf = payload.subarray(4).toString('utf8');
               const pts = Object.fromEntries(sf.split(',').map((kv) => [kv.slice(0, 1), kv.slice(2)]));
@@ -546,11 +792,13 @@ async function ensureConnected() {
               const csig = createHmac('sha256', sk).update(authMsg).digest();
               const proof = Buffer.alloc(ck.length);
               for (let i = 0; i < ck.length; i++) proof[i] = ck[i] ^ csig[i];
-              sock.write(buildPacket('p', Buffer.from(cfwp + ',p=' + proof.toString('base64'), 'utf8')));
+              currentSock.write(buildPacket('p', Buffer.from(cfwp + ',p=' + proof.toString('base64'), 'utf8')));
             }
           }
           if (type === 'Z') {
             connected = true;
+            settled = true;
+            connectCount += 1;
             resolve();
             break;
           }
@@ -560,6 +808,9 @@ async function ensureConnected() {
       }
     });
   });
+  if (connectCount > 1 && activeSchema) {
+    await sendRawSimpleQuery('SET search_path TO "' + activeSchema.replace(/"/g, '""') + '", public;');
+  }
 }
 
 let qCols = [];
@@ -634,8 +885,7 @@ function processQueryPackets() {
   }
 }
 
-async function runSimpleQuery(sql) {
-  await ensureConnected();
+function sendRawSimpleQuery(sql) {
   qCols = [];
   qRows = [];
   qError = null;
@@ -647,23 +897,49 @@ async function runSimpleQuery(sql) {
   });
 }
 
-parentPort.on('message', async (msg) => {
-  const { sab, req } = msg;
-  const i32 = new Int32Array(sab, 0, 2);
-  const bytes = new Uint8Array(sab, 8);
-  let res;
-  try {
-    const finalSql = interpolateParams(req.sql, req.params);
-    res = await runSimpleQuery(finalSql);
-  } catch (err) {
-    res = { ok: false, error: String(err?.message || err) };
-  }
-  const encoded = Buffer.from(JSON.stringify(res), 'utf8');
-  const writeLen = Math.min(encoded.length, bytes.byteLength);
-  bytes.set(encoded.subarray(0, writeLen), 0);
-  Atomics.store(i32, 1, writeLen);
-  Atomics.store(i32, 0, 1);
-  Atomics.notify(i32, 0, 1);
+async function runSimpleQuery(sql) {
+  await ensureConnected();
+  return sendRawSimpleQuery(sql);
+}
+
+let queryChain = Promise.resolve();
+
+parentPort.on('message', (msg) => {
+  queryChain = queryChain.then(async () => {
+    const { sab, reqId, req } = msg;
+    const ctrl = new Int32Array(sab, 0, 4);
+    const bytes = new Uint8Array(sab, 16);
+    if (Atomics.load(ctrl, 2) !== reqId) return;
+    let res;
+    try {
+      const finalSql = interpolateParams(req.sql, req.params);
+      res = await runSimpleQuery(finalSql);
+    } catch (err) {
+      res = { ok: false, error: String(err?.message || err) };
+    }
+    if (Atomics.load(ctrl, 2) !== reqId) return;
+    const encoded = Buffer.from(JSON.stringify(res), 'utf8');
+    if (encoded.length > bytes.byteLength) {
+      const errBuf = Buffer.from(JSON.stringify({
+        ok: false,
+        overflow: true,
+        code: 'ERR_PG_PAYLOAD_OVERFLOW',
+        byteLength: encoded.length,
+        maxByteLength: bytes.byteLength,
+        error: 'PostgreSQL response payload (' + encoded.length + ' bytes) exceeds SharedArrayBuffer capacity (' + bytes.byteLength + ' bytes)',
+      }), 'utf8');
+      if (Atomics.load(ctrl, 2) !== reqId) return;
+      bytes.set(errBuf, 0);
+      Atomics.store(ctrl, 1, errBuf.length);
+      Atomics.store(ctrl, 0, 2);
+      Atomics.notify(ctrl, 0, 1);
+      return;
+    }
+    bytes.set(encoded, 0);
+    Atomics.store(ctrl, 1, encoded.length);
+    Atomics.store(ctrl, 0, 1);
+    Atomics.notify(ctrl, 0, 1);
+  }).catch(() => {});
 });
 `
 
@@ -683,21 +959,22 @@ export class PgCompatibleHandle {
     this.maxStmtCache = 256
     this.worker = null
     this.sab = null
+    this._reqSeq = 0
     this.mode = 'pg-embedded'
     this.fallbackReason = null
 
     if (this.pgConfig && this.pgConfig.enabled) {
       try {
         this._initPgWorker()
-        this.exec(`CREATE SCHEMA IF NOT EXISTS "${this.schema}"; SET search_path TO "${this.schema}", public;`)
         this.mode = 'postgresql'
+        this.exec(`CREATE SCHEMA IF NOT EXISTS "${this.schema}"; SET search_path TO "${this.schema}", public;`)
       } catch (error) {
+        this.mode = 'pg-embedded'
         this._closeWorker()
         if (this.pgConfig.fallbackOnConnectError === false) {
           throw error
         }
         this.fallbackReason = error && error.message ? error.message : String(error)
-        this.mode = 'pg-embedded'
       }
     }
 
@@ -713,7 +990,7 @@ export class PgCompatibleHandle {
     this.sab = new SharedArrayBuffer(8 * 1024 * 1024) // 8MB shared buffer for sync query payloads
     this.worker = new Worker(PG_WORKER_CODE, {
       eval: true,
-      workerData: { config: this.pgConfig },
+      workerData: { config: this.pgConfig, schema: this.schema },
     })
     this.worker.unref()
   }
@@ -727,16 +1004,33 @@ export class PgCompatibleHandle {
   }
 
   _callWorkerSync(sql, params = []) {
-    const i32 = new Int32Array(this.sab, 0, 2)
-    Atomics.store(i32, 0, 0)
-    Atomics.store(i32, 1, 0)
-    this.worker.postMessage({ sab: this.sab, req: { sql, params } })
-    const status = Atomics.wait(i32, 0, 0, 15000)
+    this._reqSeq = (this._reqSeq + 1) | 0
+    if (this._reqSeq <= 0) this._reqSeq = 1
+    const reqId = this._reqSeq
+    const ctrl = new Int32Array(this.sab, 0, 4)
+    Atomics.store(ctrl, 0, 0)
+    Atomics.store(ctrl, 1, 0)
+    Atomics.store(ctrl, 2, reqId)
+    this.worker.postMessage({ sab: this.sab, reqId, req: { sql, params } })
+    const status = Atomics.wait(ctrl, 0, 0, 15000)
     if (status === 'timed-out') {
+      Atomics.compareExchange(ctrl, 2, reqId, -reqId)
       throw new Error('PostgreSQL synchronous query timed out after 15000ms')
     }
-    const len = Atomics.load(i32, 1)
-    const bytes = new Uint8Array(this.sab, 8, len)
+    const flag = Atomics.load(ctrl, 0)
+    const respReqId = Atomics.load(ctrl, 2)
+    if (respReqId !== reqId) {
+      throw new Error(`PostgreSQL synchronous query reqId mismatch (expected ${reqId}, got ${respReqId})`)
+    }
+    const len = Atomics.load(ctrl, 1)
+    const bytes = new Uint8Array(this.sab, 16, len)
+    if (flag === 2) {
+      const errInfo = len > 0 ? JSON.parse(Buffer.from(bytes).toString('utf8')) : null
+      const err = new Error((errInfo && errInfo.error) || 'PostgreSQL response payload exceeded SharedArrayBuffer capacity')
+      err.code = (errInfo && errInfo.code) || 'ERR_PG_PAYLOAD_OVERFLOW'
+      err.overflow = true
+      throw err
+    }
     const parsed = JSON.parse(Buffer.from(bytes).toString('utf8'))
     if (!parsed || parsed.ok === false) {
       throw new Error((parsed && parsed.error) || 'PostgreSQL query failed')
@@ -746,14 +1040,21 @@ export class PgCompatibleHandle {
 
   exec(sql) {
     if (this.mode === 'postgresql') {
-      const statements = String(sql || '')
-        .split(/;\s*(?:\r?\n|$)/)
-        .map((s) => s.trim())
-        .filter(Boolean)
+      const statements = splitSqlStatements(sql)
       for (const stmt of statements) {
         const tr = translateSqlToPg(stmt)
         if (!tr.sql || tr.isPragma) continue
-        this._callWorkerSync(tr.sql, [])
+        try {
+          this._callWorkerSync(tr.sql, [])
+        } catch (err) {
+          const msg = String(err?.message || err || '')
+          const isAlreadyExists = /already exists/i.test(msg)
+          const isDropStmt = /^\s*DROP\b|\bDROP\s+(?:COLUMN|CONSTRAINT|INDEX|TABLE|TRIGGER|VIEW)\b/i.test(tr.sql)
+          if (isAlreadyExists || (isDropStmt && /does not exist/i.test(msg))) {
+            continue
+          }
+          throw err
+        }
       }
       return
     }
@@ -837,7 +1138,7 @@ export function openDatabaseHandle(options = {}) {
 /* ------------------------------------------------------------------ p2: PostgreSQL 实时写表活动探针 (PgWriteActivityProbe) */
 
 /**
- * 集群核心事实表清单（12 张逻辑/物理聚合表，含中文工程模块标签与 lmtex 闭环表）。
+ * 集群核心事实表清单（13 张逻辑/物理聚合表，含中文工程模块标签、lmtex 闭环表与 shard_locks 分片锁表）。
  */
 export const PG_CLUSTER_TABLES = [
   { table: 'assets', title: '模块分片表', label: 'assets (模块分片表)', defaultRole: 'recon', baseLatency: 0.62 },
@@ -852,6 +1153,7 @@ export const PG_CLUSTER_TABLES = [
   { table: 'plan_goals', title: '主控规划目标表', label: 'plan_goals (主控规划目标表)', defaultRole: 'plan', baseLatency: 0.48 },
   { table: 'worker_tasks', title: 'Worker 任务分派表', label: 'worker_tasks (Worker 任务分派表)', defaultRole: 'exec', baseLatency: 0.56 },
   { table: 'worker_digests', title: 'Worker 压缩摘要表', label: 'worker_digests (Worker 压缩摘要表)', defaultRole: 'exec', baseLatency: 0.64 },
+  { table: 'shard_locks', title: '文件分片互斥锁表', label: 'shard_locks (文件分片互斥锁表)', defaultRole: 'assess', baseLatency: 0.42 },
 ]
 
 export const TABLE_ALIAS_MAP = {
@@ -892,6 +1194,8 @@ export const TABLE_ALIAS_MAP = {
   poc_fts: 'poc_kb',
   poc_kb: 'poc_kb',
   knowledge: 'poc_kb',
+  engineering_memory: 'poc_kb',
+  engineering_memories: 'poc_kb',
   dag: 'dag_nodes',
   dag_node: 'dag_nodes',
   dag_nodes: 'dag_nodes',
@@ -912,6 +1216,10 @@ export const TABLE_ALIAS_MAP = {
   worker_digests: 'worker_digests',
   digest: 'worker_digests',
   digests: 'worker_digests',
+  shard_lock: 'shard_locks',
+  shard_locks: 'shard_locks',
+  lock: 'shard_locks',
+  locks: 'shard_locks',
 }
 
 export function normalizeProbeTableName(raw) {
@@ -971,6 +1279,11 @@ export class PgWriteActivityProbe {
       write_timestamps: [],
     }
     this.engagements.set(key, state)
+    while (this.engagements.size > 64) {
+      const oldestKey = this.engagements.keys().next().value
+      if (oldestKey === undefined || oldestKey === key) break
+      this.engagements.delete(oldestKey)
+    }
     return state
   }
 
@@ -1158,6 +1471,7 @@ export class PgWriteActivityProbe {
       plan_goals: rcInput.plan_goals ?? stats.plan_goals ?? rcInput.planGoals ?? stats.planGoals ?? rcInput.goals ?? stats.goals,
       worker_tasks: rcInput.worker_tasks ?? stats.worker_tasks ?? rcInput.workerTasks ?? stats.workerTasks ?? rcInput.tasks ?? stats.tasks,
       worker_digests: rcInput.worker_digests ?? stats.worker_digests ?? rcInput.workerDigests ?? stats.workerDigests ?? rcInput.digests ?? stats.digests,
+      shard_locks: rcInput.shard_locks ?? stats.shard_locks ?? rcInput.shardLocks ?? stats.shardLocks ?? rcInput.locks ?? stats.locks,
     }
 
     const tables = []

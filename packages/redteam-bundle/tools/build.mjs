@@ -12,6 +12,7 @@
  *
  *   node packages/redteam-bundle/tools/build.mjs
  */
+import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,12 +22,26 @@ const here = dirname(fileURLToPath(import.meta.url))
 const { isSkillShipped, isScriptShipped } = await import('./distribution.mjs')
 const pkgRoot = join(here, '..')
 const packagesDir = join(pkgRoot, '..')
+const repoRoot = join(packagesDir, '..')
 const libDir = join(pkgRoot, 'lib')
 
 const read = (rel) => readFileSync(join(packagesDir, rel), 'utf8')
 /** `--check`：只比对生成结果与仓库现状，不写盘（CI / 回归测试用）。 */
 const CHECK = process.argv.includes('--check')
 const drift = []
+
+/* 0) 先运行 UI 模块化组装器（src/styles/*.css → styles.js；src/client/* → client.js）。 */
+for (const relAssembler of ['redteam-ui/tools/assemble-styles.mjs', 'redteam-ui/tools/assemble-client.mjs']) {
+  const assemblerPath = join(packagesDir, relAssembler)
+  if (existsSync(assemblerPath)) {
+    try {
+      execFileSync(process.execPath, [assemblerPath, ...(CHECK ? ['--check'] : [])], { stdio: 'inherit' })
+    } catch (error) {
+      if (!CHECK) throw error
+      drift.push(`packages/${relAssembler} --check 未通过`)
+    }
+  }
+}
 const write = (rel, text) => {
   const target = join(pkgRoot, rel)
   if (CHECK) {
@@ -377,13 +392,64 @@ if (!patchGenerated.includes('id: preset-redteam-worker')) {
   console.error('✗ cordis.patch.yml 里没有生成出 preset-redteam-worker 声明行（执行角色预设）')
   process.exit(1)
 }
+/* 6) 同步仓库根产物（支持 dsh plugin add github:ECCVIK/LMTAgent 直接安装仓库根），杜绝根包静默漂移。 */
+const syncOrCheckRootFile = (relPath) => {
+  const bundlePath = join(pkgRoot, relPath)
+  const rootPath = join(repoRoot, relPath)
+  if (CHECK) {
+    let bundleBuf
+    let rootBuf
+    try { bundleBuf = readFileSync(bundlePath) } catch { bundleBuf = undefined }
+    try { rootBuf = readFileSync(rootPath) } catch { rootBuf = undefined }
+    if (!bundleBuf || !rootBuf || Buffer.compare(bundleBuf, rootBuf) !== 0) {
+      drift.push(`repoRoot/${relPath}（与 packages/redteam-bundle/${relPath} 不同步）`)
+    }
+    return
+  }
+  mkdirSync(dirname(rootPath), { recursive: true })
+  copyFileSync(bundlePath, rootPath)
+}
+
+syncOrCheckRootFile('cordis.patch.yml')
+
+const bundleLibFiles = readdirSync(libDir, { withFileTypes: true })
+  .filter((e) => e.isFile())
+  .map((e) => e.name)
+  .sort()
+for (const fileName of bundleLibFiles) {
+  syncOrCheckRootFile('lib/' + fileName)
+}
+
+const bundlePresetDir = join(pkgRoot, 'presets/redteam')
+const rootPresetDir = join(repoRoot, 'presets/redteam')
+const bundlePresetFiles = readdirSync(bundlePresetDir, { withFileTypes: true })
+  .filter((e) => e.isFile())
+  .map((e) => e.name)
+  .sort()
+if (CHECK) {
+  let rootPresetFiles = []
+  try {
+    rootPresetFiles = readdirSync(rootPresetDir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name)
+  } catch { rootPresetFiles = [] }
+  for (const f of rootPresetFiles) {
+    if (!bundlePresetFiles.includes(f)) drift.push('repoRoot/presets/redteam/' + f + '（多余，应删除）')
+  }
+} else if (existsSync(rootPresetDir)) {
+  for (const e of readdirSync(rootPresetDir, { withFileTypes: true })) {
+    if (e.isFile() && !bundlePresetFiles.includes(e.name)) rmSync(join(rootPresetDir, e.name), { force: true })
+  }
+}
+for (const fileName of bundlePresetFiles) {
+  syncOrCheckRootFile('presets/redteam/' + fileName)
+}
+
 if (CHECK) {
   if (drift.length > 0) {
-    console.error('✗ 生成物与源码不同步（跑 node packages/redteam-bundle/tools/build.mjs 重新生成）：')
+    console.error('✗ 生成物与源码或仓库根不同步（跑 node packages/redteam-bundle/tools/build.mjs 重新生成）：')
     for (const d of drift) console.error('   ' + d)
     process.exit(1)
   }
-  console.log(`✓ 生成物与源码同步（lib/ ${generated.length} 个文件、预设 9 份、cordis.patch.yml 九条声明行、技能 ${skills} 个）`)
+  console.log(`✓ 生成物与源码及仓库根同步（lib/ ${generated.length} 个生成文件、根同步 ${bundleLibFiles.length} 个文件、预设 9 份、cordis.patch.yml 九条声明行、技能 ${skills} 个）`)
   process.exit(0)
 }
-console.log(`✓ dsh-redteam-mode 已生成：lib/ ${generated.length} 个文件（含 core、prompts、concurrency 与报告模块）、预设 9 份（指挥者 + 执行角色 + 7 个角色变体，支持 maxDepth: 3 递归子代理 + thinking: low 默认）+ cordis.patch.yml 九条声明行、技能 ${skills} 个、安装脚本 ${setupCopied ? '1 个' : '缺失'}`)
+console.log(`✓ dsh-redteam-mode 已生成并同步至仓库根：lib/ ${generated.length} 个文件（根同步 ${bundleLibFiles.length} 个）、预设 9 份（指挥者 + 执行角色 + 7 个角色变体，支持 maxDepth: 3 递归子代理 + thinking: low 默认）+ cordis.patch.yml 九条声明行、技能 ${skills} 个、安装脚本 ${setupCopied ? '1 个' : '缺失'}`)

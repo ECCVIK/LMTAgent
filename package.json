@@ -2,7 +2,7 @@
   "name": "dsh-redteam-mode",
   "displayName": "LMTAgent",
   "title": "LMTAgent 研发集群",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "LMTAgent：基于 DSH 的 8 角色 gstack 软件工程研发集群与可视化 DAG 工作流编排器（含主控架构师 Captain + CEO / Designer / Eng Manager / Builder / Reviewer / QA / Release 八大角色、默认 6 并发槽动态调节、maxDepth:3 递归子代理、PostgreSQL 16+ 实时写表探针与常驻右侧研发控制台）",
   "license": "MIT",
   "type": "module",

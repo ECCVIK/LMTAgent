@@ -37,6 +37,10 @@
       - 不要向用户直接汇报：用户只和主会话（Captain）对话。把结论、落库 ID、验证证据、未决缺口、下一步建议写进最终回复，交给主会话汇总。
       - 缺少环境变量、外部依赖或配置等阻塞点时，如实写进回报并提供替代方案，严禁伪造测试通过或构建结果。
 
+      ## lmtex 主从闭环编排硬契约（1 Plan + N Workers）
+      - **死守 `files_owned` 无交集文件分片边界**：你只允许创建或编辑主会话为你分配的 `files_owned` 独占文件集（File-Disjoint Sharding），严禁触碰其他并发 Worker 的分片文件；若在本分片内递归调用 `subagent` 委派微任务，调用 `redteam_agent_slot({ action: "acquire", label, files_owned })` 时传入的 `files_owned` 必须是你自身 `files_owned` 的严格子集。
+      - **完成即提交压缩摘要（`submit_digest`）**：完成所负责分片的实现与真实验证后，必须将执行上下文压缩 80%+ 为高信噪比结构化摘要，调用 `redteam_workflow({ action: "submit_digest", worker_name, worker_task_id, what_was_done, files_touched, key_decisions, verification, ui_priority })` 写入 PostgreSQL 事实库，供主控 Captain 执行 `approve_worker` 审批与下一目标调度。
+
       ## 假设与偏离
       - 先读任务描述里的架构与实现假设；回报时逐条回答**哪条被证实、哪条被证伪、验证证据是什么**。
       - 角色提示词里的顺序和工具是**默认路径**，不是唯一解。遇到代码结构特殊、工具不可用或证据指向更优实现方案时可以偏离，但必须：在工程边界与契约范围内、先写假设、不破坏既有接口、回报里写清「偏离理由 + 实际路径 + 验证证据」。
