@@ -253,6 +253,32 @@ function getCachedEngagementsList(store) {
   return list
 }
 
+function normalizeSessionBindingsPayload(raw) {
+  if (!raw || typeof raw !== 'object') return {}
+  if (Array.isArray(raw)) {
+    const out = {}
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue
+      const sid = String(item.session || item.id || item.sessionId || '').trim()
+      if (sid) {
+        out[sid] = {
+          engagement: item.engagement || item.bound || item.engagement_id || null,
+          name: item.name || item.engagement_name || item.engagement || null,
+          at: item.at || item.updated_at || null,
+        }
+      }
+    }
+    return out
+  }
+  if (raw.agents && typeof raw.agents === 'object' && !Array.isArray(raw.agents)) {
+    return raw.agents
+  }
+  if (Array.isArray(raw.bindings) || Array.isArray(raw.items)) {
+    return normalizeSessionBindingsPayload(raw.bindings || raw.items)
+  }
+  return raw
+}
+
 function getCachedSessionBindingsMap(store) {
   if (!store || typeof store !== 'object') return {}
   const now = Date.now()
@@ -277,10 +303,10 @@ function getCachedSessionBindingsMap(store) {
     let agents = {}
     try {
       if (typeof store.sessionBindings === 'function') {
-        agents = store.sessionBindings() || {}
+        agents = normalizeSessionBindingsPayload(store.sessionBindings())
       } else {
         const parsed = JSON.parse(readFileSync(filePath, 'utf8'))
-        agents = (parsed && parsed.agents && typeof parsed.agents === 'object') ? parsed.agents : {}
+        agents = normalizeSessionBindingsPayload(parsed)
       }
     } catch { agents = {} }
     sessionBindingsCache.set(store, { at: now, missing: false, ino: st.ino, mtimeNs: st.mtimeNs, size: st.size, agents })
@@ -289,7 +315,9 @@ function getCachedSessionBindingsMap(store) {
   if (cached && (now - cached.at) < HOST_META_TTL_MS) return cached.agents
   let agents = {}
   try {
-    if (typeof store.sessionBindings === 'function') agents = store.sessionBindings() || {}
+    if (typeof store.sessionBindings === 'function') {
+      agents = normalizeSessionBindingsPayload(store.sessionBindings())
+    }
   } catch { agents = {} }
   sessionBindingsCache.set(store, { at: now, missing: false, ino: -1n, mtimeNs: -1n, size: -1n, agents })
   return agents
@@ -299,12 +327,18 @@ function getCachedSessionBindingEntry(store, sessionId) {
   const sid = String(sessionId || '').trim()
   if (!store || !sid) return null
   const agents = getCachedSessionBindingsMap(store)
-  if (agents && agents[sid]) {
+  if (agents && Object.prototype.hasOwnProperty.call(agents, sid) && agents[sid]) {
     const entry = agents[sid]
-    return {
-      bound: entry.engagement || null,
-      name: entry.name || entry.engagement || null,
-      at: entry.at || null,
+    if (typeof entry === 'string') {
+      return { bound: entry, name: entry, at: null }
+    }
+    if (typeof entry === 'object') {
+      const bound = entry.engagement || entry.bound || entry.id || entry.engagement_id || null
+      return {
+        bound,
+        name: entry.name || entry.engagement_name || bound || null,
+        at: entry.at || entry.updated_at || null,
+      }
     }
   }
   if (typeof store.sessionBindings !== 'function' && !store.root) {
@@ -1262,14 +1296,14 @@ export class IncrementalSessionJsonlReader {
   _indexDir(dir) {
     const now = Date.now()
     const cached = this.dirIndexCache.get(dir)
-    if (cached && (now - cached.at) < HOST_META_TTL_MS) return cached.byId
-    const st = statSync(dir, { throwIfNoEntry: false })
+    const st = statSync(dir, { bigint: true, throwIfNoEntry: false })
     if (!st || !st.isDirectory()) {
+      if (cached && cached.missing && (now - cached.at) < HOST_META_TTL_MS) return cached.byId
       const empty = new Map()
-      this.dirIndexCache.set(dir, { at: now, mtimeMs: -1, byId: empty })
+      this.dirIndexCache.set(dir, { at: now, missing: true, mtimeNs: -1n, byId: empty })
       return empty
     }
-    if (cached && cached.mtimeMs === st.mtimeMs) {
+    if (cached && !cached.missing && cached.mtimeNs === st.mtimeNs) {
       cached.at = now
       return cached.byId
     }
@@ -1293,7 +1327,7 @@ export class IncrementalSessionJsonlReader {
         }
       }
     } catch { /* ignore dir read failure */ }
-    this.dirIndexCache.set(dir, { at: now, mtimeMs: st.mtimeMs, byId })
+    this.dirIndexCache.set(dir, { at: now, missing: false, mtimeNs: st.mtimeNs, byId })
     return byId
   }
 
@@ -1311,6 +1345,12 @@ export class IncrementalSessionJsonlReader {
       const idx = this._indexDir(dir)
       const exact = idx.get(sid)
       if (exact) return exact
+      const directCandidate = join(dir, `${sid}.jsonl`)
+      const directSt = statSync(directCandidate, { throwIfNoEntry: false })
+      if (directSt && directSt.isFile()) {
+        idx.set(sid, directCandidate)
+        return directCandidate
+      }
       for (const [k, fp] of idx.entries()) {
         if (k.endsWith(sid) || sid.endsWith(k)) return fp
       }
@@ -1466,6 +1506,10 @@ export class IncrementalSessionJsonlReader {
     if (rawToolCalls.length > 0) {
       acc.toolCalls += rawToolCalls.length
       acc.steps += 1
+      if ((role === 'assistant' || role === 'model') && text && !text.startsWith('[工具调用]')) {
+        const cleanedText = text.replace(/\s*\[工具调用\][^\n]*$/g, '').trim()
+        if (cleanedText) acc.lastAssistantText = cleanedText
+      }
       for (const tc of rawToolCalls) {
         if (!tc || typeof tc !== 'object') continue
         const tName = String(
@@ -1693,8 +1737,36 @@ export class IncrementalSessionJsonlReader {
     return Object.assign({ didAdvance: Boolean(cur) }, telemetry)
   }
 
-  readSession(sessionId, options = {}) {
-    const filePath = this.locateSessionFile(sessionId, options)
+  readSession(sessionId, options = {}, rawSession = null) {
+    let normOpts = {}
+    const isStoreLike = Boolean(
+      rawSession !== null
+      || (
+        options
+        && typeof options === 'object'
+        && !Array.isArray(options)
+        && (
+          typeof options.workflowDag === 'function'
+          || typeof options.listEngagements === 'function'
+          || typeof options.activeEngagementId === 'function'
+          || (typeof options.root === 'string' && options.dirs === undefined && options.explicitPath === undefined && options.store === undefined)
+        )
+      ),
+    )
+    if (isStoreLike) {
+      const explicitPath = extractExplicitJsonlPath(rawSession) || undefined
+      normOpts = {
+        store: (options && typeof options === 'object') ? options : null,
+        explicitPath,
+      }
+    } else if (options && typeof options === 'object') {
+      normOpts = Object.assign({}, options)
+      if (!normOpts.explicitPath && normOpts.session) {
+        const extracted = extractExplicitJsonlPath(normOpts.session)
+        if (extracted) normOpts.explicitPath = extracted
+      }
+    }
+    const filePath = this.locateSessionFile(sessionId, normOpts)
     if (!filePath) return null
     return this.readFile(filePath)
   }
@@ -2456,6 +2528,8 @@ function extractSessionTelemetry(s, options = {}) {
     label,
     name: title,
     role,
+    roleIndex: roleIdx,
+    roleSiblingCount: roleSiblings || 1,
     badge,
     wave,
     color,
@@ -4347,7 +4421,7 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {},
   }
 }
 
-function invokeStoreMethodCompat(store, methodName, engagementId, payload) {
+export function invokeStoreMethodCompat(store, methodName, engagementId, payload) {
   if (!store || typeof store[methodName] !== 'function') return undefined
   const fn = store[methodName]
   const fnSrc = Function.prototype.toString.call(fn)
@@ -4380,12 +4454,51 @@ function invokeStoreMethodCompat(store, methodName, engagementId, payload) {
   return fn.call(store, mergedPayload, engagementId)
 }
 
+function normalizeWishGoalItem(w, idx = 0) {
+  const src = w && typeof w === 'object' ? w : {}
+  const waveNum = Math.min(4, Math.max(1, parseWaveNumber(src.wave ?? src.wave_key, Math.min(4, Math.floor(idx / 2) + 1))))
+  const role = inferAgentRole(
+    src.title || src.worker_name || src.goal || src.objective || src.assigned_goal || '',
+    false,
+    src.role || src.worker_role || 'exploit',
+  )
+  const meta = AGENT_ROLE_META[role] || AGENT_ROLE_META.exploit
+  const title = String(src.title || src.worker_name || src.workerName || meta.defaultTitle).trim()
+  const goal = String(
+    src.assigned_goal || src.assignedGoal || src.objective || src.goal || src.description || title,
+  ).trim()
+  const filesOwned = parseJsonArraySafe(src.files_owned ?? src.filesOwned ?? src.files_owned_json)
+  const uiPriority = ['P0', 'P1', 'P2', 'P3'].includes(src.ui_priority || src.uiPriority)
+    ? (src.ui_priority || src.uiPriority)
+    : 'P1'
+  return {
+    id: src.id || `prop-w${waveNum}-${idx + 1}`,
+    wave: waveNum,
+    wave_key: `wave-${waveNum}`,
+    role,
+    worker_role: role,
+    worker_name: String(src.worker_name || src.workerName || title).trim(),
+    badge: meta.badge,
+    ui_priority: uiPriority,
+    uiPriority,
+    title,
+    goal,
+    objective: goal,
+    assigned_goal: goal,
+    assignedGoal: goal,
+    files_owned: filesOwned,
+    filesOwned,
+  }
+}
+
 function buildRefinedWishSpec(rawPrompt, template = '', rawPayload = {}) {
   const promptText = String(rawPrompt || '').trim() || '构建高可靠模块化工程系统并完成自动化验证'
   const tpl = String(template || rawPayload.template_id || 'fullstack').trim().toLowerCase()
   const cleanFirstLine = promptText.split(/[\n。！？!?]/)[0].trim()
   const specTitle = String(
     rawPayload.title
+    || rawPayload.project_name
+    || rawPayload.projectName
     || (cleanFirstLine.length > 42 ? `${cleanFirstLine.slice(0, 40)}…` : cleanFirstLine)
     || '多智能体 4-Wave 协同交付方案'
   ).trim()
@@ -4471,40 +4584,37 @@ function buildRefinedWishSpec(rawPrompt, template = '', rawPayload = {}) {
     },
   ]
 
-  const inputWaves = Array.isArray(rawPayload.proposed_waves)
+  const inputWaves = Array.isArray(rawPayload.proposed_waves) && rawPayload.proposed_waves.length > 0
     ? rawPayload.proposed_waves
-    : (Array.isArray(rawPayload.waves) ? rawPayload.waves : null)
+    : (Array.isArray(rawPayload.waves) && rawPayload.waves.length > 0
+      ? rawPayload.waves
+      : (Array.isArray(rawPayload.goals) && rawPayload.goals.length > 0
+        ? rawPayload.goals
+        : (Array.isArray(rawPayload.stages) && rawPayload.stages.length > 0
+          ? rawPayload.stages
+          : (Array.isArray(rawPayload.subgoals) && rawPayload.subgoals.length > 0 ? rawPayload.subgoals : null))))
 
-  const proposedWaves = (inputWaves && inputWaves.length > 0 ? inputWaves : defaultWaves).map((w, idx) => {
-    const waveNum = parseWaveNumber(w.wave ?? w.wave_key, Math.min(4, Math.floor(idx / 2) + 1))
-    const role = inferAgentRole(w.title || w.goal || w.objective || '', false, w.role || w.worker_role || 'exploit')
-    const meta = AGENT_ROLE_META[role] || AGENT_ROLE_META.exploit
-    const title = String(w.title || w.worker_name || meta.defaultTitle).trim()
-    const goal = String(w.goal || w.objective || w.assigned_goal || title).trim()
-    const filesOwned = parseJsonArraySafe(w.files_owned ?? w.filesOwned ?? w.files_owned_json)
-    return {
-      id: w.id || `prop-w${waveNum}-${idx + 1}`,
-      wave: waveNum,
-      wave_key: `wave-${waveNum}`,
-      role,
-      badge: meta.badge,
-      ui_priority: ['P0', 'P1', 'P2', 'P3'].includes(w.ui_priority || w.uiPriority) ? (w.ui_priority || w.uiPriority) : 'P1',
-      title,
-      goal,
-      objective: goal,
-      assigned_goal: goal,
-      files_owned: filesOwned,
-    }
-  })
+  const proposedWaves = (inputWaves || defaultWaves).map((w, idx) => normalizeWishGoalItem(w, idx))
+  const summaryText = `已将您的需求整理为 4 个波次（共 ${proposedWaves.length} 个无冲突并发子任务）：先完成需求测绘与契约加锁，再并行推进独占文件研发，最后经自动化测试门禁验收交付。`
+  const refinedPrompt = String(
+    rawPayload.refined_prompt
+    || rawPayload.refinedPrompt
+    || `【项目目标】${specTitle}\n【原始诉求】${promptText}\n【交付策略】${summaryText}`,
+  ).trim()
 
   return {
     title: specTitle,
+    project_name: specTitle,
+    projectName: specTitle,
     template: tpl,
     raw_prompt: promptText,
-    summary: `已将您的需求整理为 4 个波次（共 ${proposedWaves.length} 个无冲突并发子任务）：先完成需求测绘与契约加锁，再并行推进独占文件研发，最后经自动化测试门禁验收交付。`,
+    refined_prompt: refinedPrompt,
+    refinedPrompt,
+    summary: summaryText,
     clarifications,
     deliverables,
     proposed_waves: proposedWaves,
+    goals: proposedWaves,
   }
 }
 
@@ -4541,71 +4651,151 @@ function sanitizeDagTelemetryCacheHit(dagData, synthNodes) {
   }
 }
 
-function computeShardLocksFallback(store, engagementId, wfDag = null) {
-  if (store && typeof store.listShardLocks === 'function') {
-    const res = invokeStoreMethodCompat(store, 'listShardLocks', engagementId)
-    if (res && typeof res === 'object') {
-      const locks = Array.isArray(res.locks) ? res.locks : (Array.isArray(res.items) ? res.items : [])
-      return Object.assign({ ok: true, engagement: engagementId, locks, items: locks }, res)
-    }
-    if (Array.isArray(res)) {
-      return { ok: true, engagement: engagementId, locks: res, items: res, conflicts: [] }
-    }
-  }
-  const dag = wfDag || (store && typeof store.workflowDag === 'function' ? store.workflowDag(engagementId) : null)
-  const tasks = (dag && Array.isArray(dag.worker_tasks)) ? dag.worker_tasks : []
+function detectShardLockConflicts(locksList) {
   const ownersByFile = new Map()
-  const locks = []
-  for (const t of tasks) {
-    if (!t) continue
-    const st = String(t.status || '').toLowerCase()
-    const active = st !== 'cancelled' && st !== 'archived'
-    const files = parseJsonArraySafe(t.files_owned ?? t.files_owned_json)
-    for (const f of files) {
-      const norm = normalizeTouchedFilePath(f) || String(f).trim()
-      if (!norm) continue
-      const entry = {
-        file_path: norm,
-        worker_task_id: t.id,
-        worker_name: t.worker_name || `wt-${t.id}`,
-        worker_role: t.worker_role || 'exploit',
-        wave: t.wave || 'wave-3',
-        status: t.status || 'pending',
-        active,
-      }
-      locks.push(entry)
-      if (active) {
-        if (!ownersByFile.has(norm)) ownersByFile.set(norm, [])
-        ownersByFile.get(norm).push(entry)
-      }
-    }
+  for (const entry of Array.isArray(locksList) ? locksList : []) {
+    if (!entry || typeof entry !== 'object') continue
+    const isActive = entry.active !== undefined
+      ? Boolean(entry.active)
+      : (String(entry.status || 'active').toLowerCase() === 'active')
+    if (!isActive) continue
+    const fp = normalizeTouchedFilePath(entry.file_path || entry.filePath || '') || String(entry.file_path || entry.filePath || '').trim()
+    if (!fp) continue
+    if (!ownersByFile.has(fp)) ownersByFile.set(fp, [])
+    ownersByFile.get(fp).push(entry)
   }
   const conflicts = []
   for (const [filePath, holders] of ownersByFile.entries()) {
     if (holders.length > 1) {
       conflicts.push({
         file_path: filePath,
-        holders: holders.map((h) => ({ worker_task_id: h.worker_task_id, worker_name: h.worker_name, wave: h.wave })),
+        holders: holders.map((h) => ({
+          worker_task_id: h.worker_task_id ?? null,
+          worker_name: h.worker_name || '',
+          wave: h.wave || '',
+        })),
       })
     }
   }
-  return {
-    ok: true,
-    engagement: engagementId,
-    locks,
-    items: locks,
-    conflicts,
+  return conflicts
+}
+
+function computeShardLocksFallback(store, engagementId, wfDag = null, filterOpts = null) {
+  const cleanFilter = {}
+  let hasFilter = false
+  if (filterOpts && typeof filterOpts === 'object') {
+    if (filterOpts.activeOnly !== undefined || filterOpts.active_only !== undefined) {
+      cleanFilter.activeOnly = Boolean(filterOpts.activeOnly ?? filterOpts.active_only)
+      hasFilter = true
+    }
+    if (filterOpts.status !== undefined && filterOpts.status !== null && filterOpts.status !== '') {
+      cleanFilter.status = String(filterOpts.status)
+      hasFilter = true
+    }
+    if (filterOpts.wave !== undefined && filterOpts.wave !== null && filterOpts.wave !== '') {
+      cleanFilter.wave = String(filterOpts.wave)
+      hasFilter = true
+    }
+    const wtFilter = filterOpts.worker_task_id ?? filterOpts.workerTaskId
+    if (wtFilter !== undefined && wtFilter !== null && wtFilter !== '') {
+      cleanFilter.worker_task_id = wtFilter
+      hasFilter = true
+    }
   }
+
+  let dbLocks = []
+  let storeMeta = null
+  if (store && typeof store.listShardLocks === 'function') {
+    let res = null
+    try {
+      res = hasFilter
+        ? invokeStoreMethodCompat(store, 'listShardLocks', engagementId, cleanFilter)
+        : invokeStoreMethodCompat(store, 'listShardLocks', engagementId)
+    } catch {
+      res = null
+    }
+    if (Array.isArray(res)) {
+      dbLocks = res.slice()
+    } else if (res && typeof res === 'object') {
+      storeMeta = res
+      dbLocks = Array.isArray(res.locks)
+        ? res.locks.slice()
+        : (Array.isArray(res.shard_locks) ? res.shard_locks.slice() : (Array.isArray(res.items) ? res.items.slice() : []))
+    }
+  }
+
+  const dag = wfDag || (store && typeof store.workflowDag === 'function' ? store.workflowDag(engagementId) : null)
+  const tasks = (dag && Array.isArray(dag.worker_tasks)) ? dag.worker_tasks : []
+  const seenKeys = new Set()
+  for (const existing of dbLocks) {
+    if (!existing || typeof existing !== 'object') continue
+    const fp = normalizeTouchedFilePath(existing.file_path || existing.filePath || '') || String(existing.file_path || existing.filePath || '').trim()
+    if (!fp) continue
+    seenKeys.add(`${existing.worker_task_id ?? ''}::${fp}`)
+    if (existing.worker_name) seenKeys.add(`name:${existing.worker_name}::${fp}`)
+  }
+
+  const locks = dbLocks.slice()
+  for (const t of tasks) {
+    if (!t) continue
+    if (cleanFilter.worker_task_id !== undefined && String(t.id) !== String(cleanFilter.worker_task_id)) continue
+    if (cleanFilter.wave && String(t.wave || '') !== cleanFilter.wave) continue
+    const st = String(t.status || '').toLowerCase()
+    const active = st !== 'cancelled' && st !== 'archived' && st !== 'released'
+    if (cleanFilter.activeOnly && !active) continue
+    if (cleanFilter.status && st !== cleanFilter.status.toLowerCase()) continue
+    const files = parseJsonArraySafe(t.files_owned ?? t.files_owned_json)
+    for (const f of files) {
+      const norm = normalizeTouchedFilePath(f) || String(f).trim()
+      if (!norm) continue
+      const kId = `${t.id ?? ''}::${norm}`
+      const kName = t.worker_name ? `name:${t.worker_name}::${norm}` : ''
+      if (seenKeys.has(kId) || (kName && seenKeys.has(kName))) continue
+      seenKeys.add(kId)
+      if (kName) seenKeys.add(kName)
+      locks.push({
+        file_path: norm,
+        worker_task_id: t.id,
+        worker_name: t.worker_name || `wt-${t.id}`,
+        worker_role: t.worker_role || 'exploit',
+        wave: t.wave || 'wave-3',
+        status: active ? 'active' : (t.status || 'released'),
+        active,
+      })
+    }
+  }
+
+  const active = locks.filter((l) => l && (l.active === true || String(l.status || '').toLowerCase() === 'active'))
+  const conflicts = (storeMeta && Array.isArray(storeMeta.conflicts) && storeMeta.conflicts.length > 0)
+    ? storeMeta.conflicts
+    : detectShardLockConflicts(locks)
+
+  return Object.assign(
+    {},
+    storeMeta || {},
+    {
+      ok: true,
+      engagement: engagementId,
+      engagement_id: engagementId,
+      locks,
+      shard_locks: locks,
+      items: locks,
+      active,
+      conflicts,
+    },
+  )
 }
 
 async function handleAgentsOp(ctx, request) {
   const AGENT_OPS = [
     'agentsStatus', 'hostSessions', 'setAgentsMax', 'setClusterConfig', 'setPgUrl', 'probePg',
     'pgWriteProbe', 'workflowDag', 'workflowDocWall', 'workflowAction', 'workflowRun',
-    'dagCheckpoint', 'feishuNotify', 'feishuConfig', 'feishuTestPush',
+    'dagCheckpoint', 'feishuNotify', 'pushFeishuNotify', 'feishuConfig', 'feishuConfigSave',
+    'saveFeishuConfig', 'saveFeishuWebhook', 'feishuTestPush',
     'agentSessionDetail', 'activateAgentSession',
     'planApproveWorker', 'submitWorkerDigest', 'decomposeUserPrompt',
-    'refineAndDecomposeWish', 'updateWorkerGoal', 'addCustomWorkerTask', 'retryWorkerTask', 'shardLocks',
+    'refineAndDecomposeWish', 'updateWorkerGoal', 'addCustomWorkerTask', 'retryWorkerTask',
+    'shardLocks', 'listShardLocks',
   ]
   if (!AGENT_OPS.includes(request.op)) return undefined
   /* 并发上限与工具侧的闸门读同一份设置（settings.json → REDTEAM_MAX_AGENTS → 默认 6），
@@ -4623,6 +4813,7 @@ async function handleAgentsOp(ctx, request) {
   const DELEGATED_WORKFLOW_ACTIONS = [
     'planApproveWorker', 'submitWorkerDigest', 'decomposeUserPrompt',
     'refineAndDecomposeWish', 'updateWorkerGoal', 'addCustomWorkerTask', 'retryWorkerTask',
+    'shardLocks', 'listShardLocks', 'feishuConfig', 'feishuConfigSave', 'saveFeishuConfig', 'saveFeishuWebhook',
   ]
   const effectiveOp = (request.op === 'workflowAction' && DELEGATED_WORKFLOW_ACTIONS.includes(request.action))
     ? request.action
@@ -4654,6 +4845,13 @@ async function handleAgentsOp(ctx, request) {
       .filter((v) => v && !isBareRoleName(v))
 
     let workerKey = candidateIds[0] || ''
+    if (!workerKey) {
+      return {
+        ok: false,
+        engagement: currentEng,
+        error: 'missing or bare-role worker_id for planApproveWorker',
+      }
+    }
     const approvalState = String(
       rawPayload.approval_state
       || rawPayload.approvalState
@@ -4856,6 +5054,43 @@ async function handleAgentsOp(ctx, request) {
     )
   }
 
+  const resolveWorkerTaskFromDag = (engId, payloadObj) => {
+    if (!store || !payloadObj || typeof payloadObj !== 'object') return null
+    const rawRefs = [
+      payloadObj.worker_task_id,
+      payloadObj.workerTaskId,
+      payloadObj.worker_id,
+      payloadObj.workerId,
+      payloadObj.session_id,
+      payloadObj.sessionId,
+      payloadObj.agentId,
+      payloadObj.id,
+      payloadObj.worker_name,
+      payloadObj.workerName,
+    ]
+      .map((v) => (v !== undefined && v !== null ? String(v).trim() : ''))
+      .filter(Boolean)
+    if (rawRefs.length === 0) return null
+    const dag = getWorkflowDagDedup(store, engId, reqFlow)
+    const tasks = dag && Array.isArray(dag.worker_tasks) ? dag.worker_tasks : []
+    for (const ref of rawRefs) {
+      const strippedWt = ref.startsWith('wt-') ? ref.slice(3) : ''
+      const hit = tasks.find((t) => {
+        if (!t) return false
+        const tid = String(t.id ?? '')
+        const sid = String(t.session_id ?? '')
+        const wname = String(t.worker_name ?? '').trim()
+        return tid === ref
+          || (strippedWt && tid === strippedWt)
+          || `wt-${tid}` === ref
+          || (sid && sid === ref)
+          || (wname && wname === ref)
+      })
+      if (hit && hit.id !== undefined && hit.id !== null) return hit
+    }
+    return null
+  }
+
   if (effectiveOp === 'refineAndDecomposeWish' || effectiveOp === 'decomposeUserPrompt') {
     const rawPayload = Object.assign(
       {},
@@ -4895,12 +5130,34 @@ async function handleAgentsOp(ctx, request) {
       const storeSpecCandidate = storePreview && typeof storePreview === 'object'
         ? ((storePreview.refined_spec && typeof storePreview.refined_spec === 'object')
           ? storePreview.refined_spec
-          : (Array.isArray(storePreview.proposed_waves) || storePreview.title || storePreview.summary ? storePreview : null))
+          : (Array.isArray(storePreview.proposed_waves) || Array.isArray(storePreview.goals) || storePreview.title || storePreview.summary ? storePreview : null))
         : null
-      const mergedSpec = Object.assign({}, localSpec, storeSpecCandidate || {})
-      if (!Array.isArray(mergedSpec.proposed_waves) || mergedSpec.proposed_waves.length === 0) {
-        mergedSpec.proposed_waves = localSpec.proposed_waves
-      }
+      const rawPreviewGoals = (storePreview && Array.isArray(storePreview.goals) && storePreview.goals.length > 0)
+        ? storePreview.goals
+        : ((storeSpecCandidate && Array.isArray(storeSpecCandidate.proposed_waves) && storeSpecCandidate.proposed_waves.length > 0)
+          ? storeSpecCandidate.proposed_waves
+          : localSpec.proposed_waves)
+      const previewGoals = rawPreviewGoals.map((g, idx) => normalizeWishGoalItem(g, idx))
+      const projectNameText = String(
+        (storePreview && (storePreview.project_name || storePreview.projectName))
+        || (storeSpecCandidate && (storeSpecCandidate.project_name || storeSpecCandidate.title))
+        || localSpec.project_name
+        || localSpec.title,
+      ).trim()
+      const refinedPromptText = String(
+        (storePreview && (storePreview.refined_prompt || storePreview.refinedPrompt))
+        || (storeSpecCandidate && (storeSpecCandidate.refined_prompt || storeSpecCandidate.refinedPrompt))
+        || localSpec.refined_prompt,
+      ).trim()
+      const mergedSpec = Object.assign({}, localSpec, storeSpecCandidate || {}, {
+        title: projectNameText,
+        project_name: projectNameText,
+        projectName: projectNameText,
+        refined_prompt: refinedPromptText,
+        refinedPrompt: refinedPromptText,
+        proposed_waves: previewGoals,
+        goals: previewGoals,
+      })
       return {
         ok: true,
         op: effectiveOp,
@@ -4908,12 +5165,55 @@ async function handleAgentsOp(ctx, request) {
         engagement: currentEng,
         active_engagement: currentEng,
         prompt: promptText,
+        project_name: projectNameText,
+        projectName: projectNameText,
+        refined_prompt: refinedPromptText,
+        refinedPrompt: refinedPromptText,
         template: templateName || localSpec.template,
+        goals: previewGoals,
+        stages: previewGoals,
+        subgoals: previewGoals,
+        proposed_waves: previewGoals,
+        blueprint: {
+          project_name: projectNameText,
+          refined_prompt: refinedPromptText,
+          goals: previewGoals,
+        },
         refined_spec: mergedSpec,
         refinedSpec: mergedSpec,
-        proposed_waves: mergedSpec.proposed_waves,
       }
     }
+
+    const callerExplicitGoals = Array.isArray(rawPayload.goals) && rawPayload.goals.length > 0
+      ? rawPayload.goals
+      : (Array.isArray(rawPayload.proposed_waves) && rawPayload.proposed_waves.length > 0
+        ? rawPayload.proposed_waves
+        : (Array.isArray(rawPayload.waves) && rawPayload.waves.length > 0
+          ? rawPayload.waves
+          : (Array.isArray(rawPayload.stages) && rawPayload.stages.length > 0
+            ? rawPayload.stages
+            : (Array.isArray(rawPayload.subgoals) && rawPayload.subgoals.length > 0 ? rawPayload.subgoals : null))))
+    const sourceGoalsForStore = callerExplicitGoals
+      || (effectiveOp === 'refineAndDecomposeWish' ? localSpec.proposed_waves : null)
+    const normalizedStoreGoals = sourceGoalsForStore
+      ? sourceGoalsForStore.map((g, idx) => {
+        const item = normalizeWishGoalItem(g, idx)
+        return Object.assign({}, g && typeof g === 'object' ? g : {}, item, {
+          wave: `wave-${item.wave}`,
+          wave_num: item.wave,
+          role: item.role,
+          worker_role: item.role,
+          worker_name: item.worker_name,
+          title: item.title,
+          goal: item.goal,
+          objective: item.goal,
+          description: item.goal,
+          assigned_goal: item.goal,
+          files_owned: item.files_owned,
+          ui_priority: item.ui_priority,
+        })
+      })
+      : undefined
 
     const storePayload = Object.assign({}, rawPayload, {
       op: effectiveOp,
@@ -4922,12 +5222,16 @@ async function handleAgentsOp(ctx, request) {
       engagementId: currentEng,
       prompt: promptText,
       user_prompt: promptText,
+      refined_prompt: String(rawPayload.refined_prompt || rawPayload.refinedPrompt || localSpec.refined_prompt || promptText),
       template: templateName,
       preview_only: false,
       refined_spec: localSpec,
       proposed_waves: localSpec.proposed_waves,
       waves: rawPayload.proposed_waves || rawPayload.waves || localSpec.proposed_waves,
     })
+    if (normalizedStoreGoals) {
+      storePayload.goals = normalizedStoreGoals
+    }
 
     let storeResult = null
     if (effectiveOp === 'refineAndDecomposeWish' && store && typeof store.refineAndDecomposeWish === 'function') {
@@ -4992,11 +5296,14 @@ async function handleAgentsOp(ctx, request) {
         op: effectiveOp,
         preview_only: false,
         prompt: promptText,
+        refined_prompt: finalSpec.refined_prompt || localSpec.refined_prompt,
+        project_name: finalSpec.project_name || finalSpec.title,
         refined_spec: finalSpec,
         refinedSpec: finalSpec,
         goals: goalsOut,
         plan_goals: goalsOut,
         worker_tasks: workerTasksOut,
+        proposed_waves: finalSpec.proposed_waves || localSpec.proposed_waves,
         engagement: currentEng,
         active_engagement: currentEng,
         host_sessions: hostSessions,
@@ -5024,11 +5331,21 @@ async function handleAgentsOp(ctx, request) {
     const currentEng = rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId
       || (store ? getCachedActiveEngagementId(store) : null)
       || activeEngagement
+    const matchedTask = resolveWorkerTaskFromDag(currentEng, rawPayload)
+    const resolvedGoalText = rawPayload.assigned_goal ?? rawPayload.assignedGoal ?? rawPayload.goal ?? rawPayload.objective
     const payloadWithEng = Object.assign({}, rawPayload, {
       engagement: currentEng,
       engagement_id: currentEng,
       engagementId: currentEng,
     })
+    if (matchedTask && matchedTask.id !== undefined && matchedTask.id !== null) {
+      payloadWithEng.worker_task_id = matchedTask.id
+      payloadWithEng.id = matchedTask.id
+    }
+    if (resolvedGoalText !== undefined) {
+      payloadWithEng.assigned_goal = resolvedGoalText
+      payloadWithEng.goal = resolvedGoalText
+    }
     let storeResult = null
     if (store && typeof store.updateWorkerGoal === 'function') {
       try {
@@ -5039,13 +5356,14 @@ async function handleAgentsOp(ctx, request) {
     } else if (store && typeof store.db === 'function') {
       try {
         const db = store.db(currentEng)
-        const targetId = String(rawPayload.worker_task_id ?? rawPayload.worker_id ?? rawPayload.id ?? rawPayload.session_id ?? '').trim()
+        const targetId = String(payloadWithEng.worker_task_id ?? rawPayload.worker_id ?? rawPayload.id ?? rawPayload.session_id ?? '').trim()
+        const strippedTarget = targetId.startsWith('wt-') ? targetId.slice(3) : targetId
         const row = targetId
-          ? (db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ? OR session_id = ? OR worker_name = ? LIMIT 1')
-            .get(targetId, targetId, targetId))
+          ? (db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ? OR CAST(id AS TEXT) = ? OR session_id = ? OR worker_name = ? LIMIT 1')
+            .get(targetId, strippedTarget, targetId, targetId))
           : null
         if (!row) return { ok: false, error: `worker_task not found: ${targetId}` }
-        const nextGoalVal = rawPayload.assigned_goal ?? rawPayload.goal ?? rawPayload.objective ?? row.assigned_goal
+        const nextGoalVal = resolvedGoalText ?? row.assigned_goal
         const nextName = rawPayload.worker_name ?? rawPayload.title ?? row.worker_name
         const nextPrio = ['P0', 'P1', 'P2', 'P3'].includes(rawPayload.ui_priority || rawPayload.uiPriority)
           ? (rawPayload.ui_priority || rawPayload.uiPriority)
@@ -5149,10 +5467,18 @@ async function handleAgentsOp(ctx, request) {
     bumpEventSeq('addCustomWorkerTask', { engagement: currentEng })
     const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: currentEng, autoBind: true, reqFlow })
     const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
+    const createdTask = storeResult && storeResult.worker_task && typeof storeResult.worker_task === 'object'
+      ? storeResult.worker_task
+      : null
+    const createdNodeId = createdTask
+      ? (createdTask.session_id || `wt-${createdTask.id}`)
+      : (storeResult && (storeResult.worker_id || storeResult.id)) || undefined
     return Object.assign({}, storeResult && typeof storeResult === 'object' ? storeResult : {}, {
       ok: storeResult && storeResult.ok === false ? false : true,
       op: 'addCustomWorkerTask',
       engagement: currentEng,
+      worker_id: createdNodeId,
+      worker_task_id: createdTask ? createdTask.id : (storeResult && storeResult.worker_task_id),
       nodes: synth.nodes,
       swimlanes: synth.swimlanes,
       collabTasks: synth.collabTasks,
@@ -5170,17 +5496,28 @@ async function handleAgentsOp(ctx, request) {
     const currentEng = rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId
       || (store ? getCachedActiveEngagementId(store) : null)
       || activeEngagement
+    const matchedTask = resolveWorkerTaskFromDag(currentEng, rawPayload)
     const targetWorkerKey = String(
       rawPayload.worker_task_id ?? rawPayload.worker_id ?? rawPayload.workerId ?? rawPayload.session_id ?? rawPayload.id ?? '',
     ).trim()
     if (targetWorkerKey) {
       deleteScopedWorkerOverride(currentEng, targetWorkerKey)
+      if (targetWorkerKey.startsWith('wt-')) deleteScopedWorkerOverride(currentEng, targetWorkerKey.slice(3))
+    }
+    if (matchedTask) {
+      deleteScopedWorkerOverride(currentEng, String(matchedTask.id))
+      deleteScopedWorkerOverride(currentEng, `wt-${matchedTask.id}`)
+      if (matchedTask.session_id) deleteScopedWorkerOverride(currentEng, String(matchedTask.session_id))
     }
     const payloadWithEng = Object.assign({}, rawPayload, {
       engagement: currentEng,
       engagement_id: currentEng,
       engagementId: currentEng,
     })
+    if (matchedTask && matchedTask.id !== undefined && matchedTask.id !== null) {
+      payloadWithEng.worker_task_id = matchedTask.id
+      payloadWithEng.id = matchedTask.id
+    }
     let storeResult = null
     if (store && typeof store.retryWorkerTask === 'function') {
       try {
@@ -5188,11 +5525,13 @@ async function handleAgentsOp(ctx, request) {
       } catch (err) {
         return { ok: false, error: err && err.message ? err.message : String(err) }
       }
-    } else if (store && typeof store.db === 'function' && targetWorkerKey) {
+    } else if (store && typeof store.db === 'function' && (payloadWithEng.worker_task_id || targetWorkerKey)) {
       try {
         const db = store.db(currentEng)
-        const row = db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ? OR session_id = ? OR worker_name = ? LIMIT 1')
-          .get(targetWorkerKey, targetWorkerKey, targetWorkerKey)
+        const lookupKey = String(payloadWithEng.worker_task_id ?? targetWorkerKey)
+        const strippedKey = lookupKey.startsWith('wt-') ? lookupKey.slice(3) : lookupKey
+        const row = db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ? OR CAST(id AS TEXT) = ? OR session_id = ? OR worker_name = ? LIMIT 1')
+          .get(lookupKey, strippedKey, targetWorkerKey || lookupKey, targetWorkerKey || lookupKey)
         if (row) {
           const now = new Date().toISOString()
           db.prepare("UPDATE worker_tasks SET status = 'running', approval_state = 'in_progress', ui_priority = 'P0', updated_at = ? WHERE id = ?")
@@ -5224,12 +5563,12 @@ async function handleAgentsOp(ctx, request) {
     })
   }
 
-  if (effectiveOp === 'shardLocks') {
+  if (effectiveOp === 'shardLocks' || effectiveOp === 'listShardLocks') {
     const currentEng = request.engagement || request.engagement_id || request.engagementId
       || (store ? getCachedActiveEngagementId(store) : null)
       || activeEngagement
     const wfDag = getWorkflowDagDedup(store, currentEng, reqFlow)
-    return computeShardLocksFallback(store, currentEng, wfDag)
+    return computeShardLocksFallback(store, currentEng, wfDag, request)
   }
 
   if (request.op === 'agentSessionDetail') {
@@ -5420,21 +5759,38 @@ async function handleAgentsOp(ctx, request) {
     }
   }
 
-  if (request.op === 'feishuConfig') {
+  if (
+    effectiveOp === 'feishuConfig'
+    || effectiveOp === 'feishuConfigSave'
+    || effectiveOp === 'saveFeishuConfig'
+    || effectiveOp === 'saveFeishuWebhook'
+  ) {
     const currentEng = request.engagement || request.engagement_id || request.engagementId
       || (store ? getCachedActiveEngagementId(store) : null)
       || activeEngagement
-    const feishuPayload = Object.assign(
+    const mergedRaw = Object.assign(
       {},
       request.payload && typeof request.payload === 'object' ? request.payload : {},
       request,
-      { engagement: currentEng, engagement_id: currentEng },
+    )
+    const rawUrl = String(mergedRaw.webhook_url ?? mergedRaw.webhookUrl ?? mergedRaw.webhook ?? mergedRaw.url ?? '').trim()
+    const feishuPayload = Object.assign(
+      {},
+      mergedRaw,
+      {
+        engagement: currentEng,
+        engagement_id: currentEng,
+        webhook_url: rawUrl,
+        webhookUrl: rawUrl,
+      },
     )
     let feishuRes = null
     if (store && typeof store.saveFeishuConfig === 'function') {
       try {
         feishuRes = await invokeStoreMethodCompat(store, 'saveFeishuConfig', currentEng, feishuPayload)
-      } catch { feishuRes = null }
+      } catch (err) {
+        return { ok: false, engagement: currentEng, error: err && err.message ? err.message : String(err) }
+      }
     }
     if (!feishuRes && store && typeof store.workflowAction === 'function') {
       try {
@@ -5449,11 +5805,11 @@ async function handleAgentsOp(ctx, request) {
     }
     bumpEventSeq('feishuConfig', { engagement: currentEng })
     if (feishuRes && typeof feishuRes === 'object') {
-      return Object.assign({ ok: true, engagement: currentEng }, feishuRes)
+      return Object.assign({ ok: true, engagement: currentEng, op: effectiveOp }, feishuRes)
     }
-    const rawUrl = String(feishuPayload.webhook_url ?? feishuPayload.webhookUrl ?? feishuPayload.webhook ?? feishuPayload.url ?? '').trim()
     return {
       ok: true,
+      op: effectiveOp,
       action: 'feishuConfig',
       engagement: currentEng,
       feishu: {
@@ -5465,13 +5821,49 @@ async function handleAgentsOp(ctx, request) {
     }
   }
 
-  if (request.op === 'workflowAction' || request.op === 'workflowRun' || request.op === 'dagCheckpoint' || request.op === 'feishuNotify' || request.op === 'feishuTestPush') {
-    const payload = request.op === 'feishuNotify' || request.op === 'feishuTestPush'
-      ? Object.assign({ action: 'pushFeishuNotify' }, request)
-      : (request.action === 'feishuConfig' ? Object.assign({}, request, { action: 'saveFeishuWebhook' }) : request)
+  const isFeishuPushOp = request.op === 'feishuNotify'
+    || request.op === 'feishuTestPush'
+    || request.op === 'pushFeishuNotify'
+    || (request.op === 'workflowAction' && ['pushFeishuNotify', 'feishuNotify', 'feishuTestPush', 'pushFeishu'].includes(request.action))
+
+  if (isFeishuPushOp) {
+    const currentEng = request.engagement || request.engagement_id || request.engagementId
+      || (store ? getCachedActiveEngagementId(store) : null)
+      || activeEngagement
+    const pushPayload = Object.assign(
+      { action: 'pushFeishuNotify' },
+      request.payload && typeof request.payload === 'object' ? request.payload : {},
+      request,
+      {
+        engagement: currentEng,
+        engagement_id: currentEng,
+        is_test: request.op === 'feishuTestPush' || request.action === 'feishuTestPush' || Boolean(request.is_test ?? request.test),
+      },
+    )
+    if (store && typeof store.pushFeishuNotify === 'function') {
+      try {
+        const pushRes = await invokeStoreMethodCompat(store, 'pushFeishuNotify', currentEng, pushPayload)
+        bumpEventSeq('feishuNotify', { engagement: currentEng })
+        if (pushRes && typeof pushRes === 'object') {
+          return Object.assign({ engagement: currentEng }, pushRes, { ok: Boolean(pushRes.ok) })
+        }
+        return { ok: true, engagement: currentEng }
+      } catch (err) {
+        return { ok: false, engagement: currentEng, error: err && err.message ? err.message : String(err) }
+      }
+    }
     if (store && typeof store.workflowAction === 'function') {
-      const res = Object.assign({ ok: true }, store.workflowAction(activeEngagement, payload))
-      bumpEventSeq('workflowAction', { engagement: activeEngagement, action: payload.action || request.op })
+      const res = await invokeStoreMethodCompat(store, 'workflowAction', currentEng, pushPayload)
+      bumpEventSeq('feishuNotify', { engagement: currentEng })
+      return Object.assign({ ok: true, engagement: currentEng }, res && typeof res === 'object' ? res : {})
+    }
+    return { ok: false, standby: true, engagement: currentEng, error: '当前存储实例未启用飞书 Webhook 推送能力' }
+  }
+
+  if (request.op === 'workflowAction' || request.op === 'workflowRun' || request.op === 'dagCheckpoint') {
+    if (store && typeof store.workflowAction === 'function') {
+      const res = Object.assign({ ok: true }, await invokeStoreMethodCompat(store, 'workflowAction', activeEngagement, request))
+      bumpEventSeq('workflowAction', { engagement: activeEngagement, action: request.action || request.op })
       return res
     }
     return { ok: true, standby: true, engagement: activeEngagement }
@@ -5716,6 +6108,8 @@ const DELTA_SHORT_CIRCUIT_OPS = new Set([
   'workflowDag',
   'pgWriteProbe',
   'consoleDigest',
+  'shardLocks',
+  'listShardLocks',
 ])
 
 const READ_ONLY_STORE_OPS = new Set([
@@ -5724,6 +6118,46 @@ const READ_ONLY_STORE_OPS = new Set([
   'sessionBinding',
   'sessionBindings',
   'stats',
+  'snapshot',
+  'assets',
+  'asset',
+  'graph',
+  'attackGraph',
+  'vulns',
+  'vulnStats',
+  'credentials',
+  'access',
+  'sessions',
+  'webshells',
+  'tunnels',
+  'shots',
+  'shotData',
+  'domains',
+  'web',
+  'httpEvidence',
+  'chain',
+  'report',
+  'scores',
+  'scoreChain',
+  'scoreReport',
+  'activeTests',
+  'testStats',
+  'stages',
+  'reportTargets',
+  'discoveryTimeline',
+  'attackFiles',
+  'readAttackFile',
+  'prompts',
+  'dbEngine',
+  'pocSearch',
+  'pocList',
+  'templateSearch',
+  'templateStats',
+  'pocGet',
+  'pocStats',
+  'listShardLocks',
+  'shardLocks',
+  'refineUserWish',
   'listEngagements',
   'listTargets',
   'getTarget',
@@ -5913,6 +6347,12 @@ export function apply(ctx) {
         if (!request || typeof request !== 'object' || Array.isArray(request)) {
           sendJson(res, 400, { ok: false, error: 'invalid JSON request object' })
           return
+        }
+        if (request.op === 'engagementOpen') {
+          request.op = 'openEngagement'
+          if (!request.name && (request.id || request.engagement)) {
+            request.name = String(request.id || request.engagement)
+          }
         }
 
         /* sinceSeq 零开销短路：只读轮询 op 在 eventSeq 未推进时 <0.1ms 直接返回 unchanged: true */

@@ -8,7 +8,7 @@
 [![lmtex Closed Loop](https://img.shields.io/badge/Orchestrator-WishRefiner_+_1_Plan_+_N_Workers-0EA5E9?style=for-the-badge)](#2-lmtex-闭环调用结构step-0-许愿润色1-plan--n-workers-拆解压缩与审批)
 [![ShardLock Guard](https://img.shields.io/badge/Concurrency-ShardLock_120s_Lease_+_Recursive_DAG-2563EB?style=for-the-badge)](#3-8-角色-gstack-虚拟软件研发团队与运行时-shardlock-排他锁)
 [![PostgreSQL Probe](https://img.shields.io/badge/Fact_Store-PostgreSQL_16_Digest_&_SSE_Stream-4D6BFE?style=for-the-badge&logo=postgresql&logoColor=white)](#5-主题自适应-postgresql-实时写表与摘要压缩探针)
-[![Tests Passing](https://img.shields.io/badge/Tests-20_Suites_·_100%25_PASS-6366F1?style=for-the-badge)](#7-质量门禁与测试验证)
+[![Tests Passing](https://img.shields.io/badge/Tests-21_Suites_·_1105_Assertions_PASS-6366F1?style=for-the-badge)](#7-质量门禁与测试验证)
 
 <p align="center">
   <b>本项目诞生宗旨优化许愿式编程的体验和可控，目的是让即使无编程语言基础也可以通过此项目作为流水线标准开发得到想要的软件，加上此项目，你的提示词不再会因为模型各种幻觉问题自我误导偏离你想要的开发方向，而是规划润色你的提示词，并拆解成目标并派发已经写好对应角色的子代理去开发</b>
