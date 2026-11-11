@@ -2,7 +2,7 @@
 
 # ⚡ LMTAgent (`v0.20.0`)
 
-**为 [DeepSeek Harness (DSH Desktop)](https://github.com/anywhere-labs/dsh-desktop) 打造的「`lmtex` 闭环编排 × `gstack` 8 角色协同」全栈软件研发集群与 60FPS 可视化工作流树工作台**
+**为 [DeepSeek Harness (DSH Desktop)](https://github.com/anywhere-labs/dsh-desktop) 打造的「`lmtex` 闭环编排 × `gstack` 8 角色协同」全栈软件研发集群与工作台**
 
 [![DSH Plugin](https://img.shields.io/badge/DSH_Desktop-LMTAgent_v0.20.0-4D6BFE?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://github.com/ECCVIK/LMTAgent)
 [![lmtex Closed Loop](https://img.shields.io/badge/Orchestrator-1_Plan_+_N_Workers_Closed_Loop-0EA5E9?style=for-the-badge)](#2-lmtex-闭环调用结构1-plan--n-workers-目标拆解摘要压缩与审批派发)
