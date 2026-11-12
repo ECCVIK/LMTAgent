@@ -261,9 +261,16 @@ function normalizeSessionBindingsPayload(raw) {
       if (!item || typeof item !== 'object') continue
       const sid = String(item.session || item.id || item.sessionId || '').trim()
       if (sid) {
+        const eng = item.engagement || item.bound || item.engagement_id || null
         out[sid] = {
-          engagement: item.engagement || item.bound || item.engagement_id || null,
-          name: item.name || item.engagement_name || item.engagement || null,
+          engagement: eng,
+          name: eng ? (item.name || item.engagement_name || eng) : null,
+          session_title: item.session_title || item.title || null,
+          cwd: item.cwd || null,
+          init_state: item.init_state || (eng ? 'initialized' : 'uninitialized'),
+          onboarding_dismissed: typeof item.onboarding_dismissed === 'boolean' ? item.onboarding_dismissed : Boolean(eng),
+          has_conversation: Boolean(item.has_conversation),
+          updated_at: item.updated_at || item.at || null,
           at: item.at || item.updated_at || null,
         }
       }
@@ -302,7 +309,9 @@ function getCachedSessionBindingsMap(store) {
     }
     let agents = {}
     try {
-      if (typeof store.sessionBindings === 'function') {
+      if (typeof store.sessionStates === 'function') {
+        agents = normalizeSessionBindingsPayload(store.sessionStates())
+      } else if (typeof store.sessionBindings === 'function') {
         agents = normalizeSessionBindingsPayload(store.sessionBindings())
       } else {
         const parsed = JSON.parse(readFileSync(filePath, 'utf8'))
@@ -315,7 +324,9 @@ function getCachedSessionBindingsMap(store) {
   if (cached && (now - cached.at) < HOST_META_TTL_MS) return cached.agents
   let agents = {}
   try {
-    if (typeof store.sessionBindings === 'function') {
+    if (typeof store.sessionStates === 'function') {
+      agents = normalizeSessionBindingsPayload(store.sessionStates())
+    } else if (typeof store.sessionBindings === 'function') {
       agents = normalizeSessionBindingsPayload(store.sessionBindings())
     }
   } catch { agents = {} }
@@ -330,24 +341,54 @@ function getCachedSessionBindingEntry(store, sessionId) {
   if (agents && Object.prototype.hasOwnProperty.call(agents, sid) && agents[sid]) {
     const entry = agents[sid]
     if (typeof entry === 'string') {
-      return { bound: entry, name: entry, at: null }
+      return {
+        bound: entry,
+        name: entry,
+        session_title: null,
+        cwd: null,
+        init_state: 'initialized',
+        onboarding_dismissed: true,
+        has_conversation: false,
+        at: null,
+        updated_at: null,
+      }
     }
     if (typeof entry === 'object') {
       const bound = entry.engagement || entry.bound || entry.id || entry.engagement_id || null
+      const explicitInit = typeof entry.init_state === 'string' ? entry.init_state : ''
+      const initState = bound
+        ? (explicitInit || 'initialized')
+        : (explicitInit && explicitInit !== 'initialized' ? explicitInit : 'uninitialized')
       return {
         bound,
-        name: entry.name || entry.engagement_name || bound || null,
-        at: entry.at || entry.updated_at || null,
+        name: bound ? (entry.name || entry.engagement_name || bound || null) : null,
+        session_title: entry.session_title || null,
+        cwd: entry.cwd || null,
+        init_state: initState,
+        onboarding_dismissed: typeof entry.onboarding_dismissed === 'boolean' ? entry.onboarding_dismissed : Boolean(bound),
+        has_conversation: Boolean(entry.has_conversation),
+        at: entry.updated_at || entry.at || null,
+        updated_at: entry.updated_at || entry.at || null,
       }
     }
   }
   if (typeof store.sessionBindings !== 'function' && !store.root) {
     try {
       const b = dispatch(store, { op: 'sessionBinding', session: sid })
-      if (b && (b.bound || (b.engagement && b.engagement.id))) {
-        return {
-          bound: b.bound || (b.engagement && b.engagement.id) || null,
-          name: b.name || (b.engagement && b.engagement.name) || null,
+      if (b && typeof b === 'object') {
+        const bound = b.bound || (b.engagement && b.engagement.id) || null
+        if (bound || b.init_state || b.onboarding_dismissed) {
+          return {
+            bound,
+            name: bound ? (b.name || (b.engagement && b.engagement.name) || bound) : null,
+            session_title: b.session_title || null,
+            cwd: b.cwd || null,
+            init_state: b.init_state || (bound ? 'initialized' : 'uninitialized'),
+            onboarding_dismissed: typeof b.onboarding_dismissed === 'boolean' ? b.onboarding_dismissed : Boolean(bound),
+            has_conversation: Boolean(b.has_conversation),
+            at: b.updated_at || null,
+            updated_at: b.updated_at || null,
+          }
         }
       }
     } catch { /* ignore */ }
@@ -1375,6 +1416,8 @@ export class IncrementalSessionJsonlReader {
       cwd: '',
       delegationPrompt: '',
       lastAssistantText: '',
+      userMessages: 0,
+      hasHeadUser: false,
       turns: 0,
       steps: 0,
       toolCalls: 0,
@@ -1478,7 +1521,10 @@ export class IncrementalSessionJsonlReader {
           status: 'done',
         }
       }
-      if (!isHeadPass) {
+      if (isHeadPass) {
+        acc.hasHeadUser = true
+      } else {
+        acc.userMessages += 1
         acc.turns += 1
         acc.steps += 1
       }
@@ -1600,6 +1646,10 @@ export class IncrementalSessionJsonlReader {
     const stepSummaries = []
     if (acc.firstDelegateStep) stepSummaries.push(acc.firstDelegateStep)
     for (const rs of acc.recentSteps.slice(-4)) stepSummaries.push(rs)
+    const effectiveUserMessages = acc.userMessages || (acc.hasHeadUser ? 1 : 0)
+    const effectiveTurns = acc.turns > 0
+      ? acc.turns
+      : ((acc.hasHeadUser || acc.steps > 0 || totalTokens > 0) ? 1 : 0)
     return {
       filePath,
       mtimeMs: st.mtimeMs,
@@ -1609,7 +1659,8 @@ export class IncrementalSessionJsonlReader {
       cwd: acc.cwd,
       delegationPrompt: acc.delegationPrompt,
       lastAssistantText: acc.lastAssistantText,
-      turns: Math.max(1, acc.turns),
+      userMessages: effectiveUserMessages,
+      turns: effectiveTurns,
       steps: acc.steps,
       toolCalls: acc.toolCalls,
       inputTokens: acc.sumInputTokens,
@@ -2015,7 +2066,16 @@ export function computeWorkerLmtexMeta(node, idx = 0, options = {}) {
     || rawActivity === 'run'
   )
 
-  const turns = Math.max(1, Number(n.turns ?? n.rounds ?? 1) || 1)
+  const rawTurnsVal = n.turns ?? n.rounds
+  const turns = (
+    rawTurnsVal === 0
+    && !isRunning
+    && Number(n.tokens || 0) === 0
+    && Number(n.steps || 0) === 0
+    && Number(n.userMessages || n.user_messages || 0) === 0
+  )
+    ? 0
+    : Math.max(1, Number(rawTurnsVal ?? 1) || 1)
   let toolCalls = 0
   if (n.toolCalls !== undefined || n.tool_calls !== undefined) {
     const tcRaw = n.toolCalls ?? n.tool_calls
@@ -2044,9 +2104,11 @@ export function computeWorkerLmtexMeta(node, idx = 0, options = {}) {
     || Number(n.tokens) > 0
     || Number(n.steps) > 0
     || toolCalls > 0
-    || (rawStatus === '' && (n.turns !== undefined || n.toolCalls !== undefined || n.completionConclusion || n.actionSummary || n.lastAssistantText))
+    || (rawStatus === '' && (Number(n.turns) > 0 || n.toolCalls !== undefined || n.completionConclusion || n.actionSummary || n.lastAssistantText))
   const isIdle = !isRunning && !isError && (
     rawStatus === 'idle'
+    || rawStatus === 'interrupted'
+    || rawActivity === 'interrupted'
     || rawStatus === 'planned'
     || rawStatus === 'queued'
     || rawStatus === 'standby'
@@ -2232,7 +2294,7 @@ export function computeWorkerLmtexMeta(node, idx = 0, options = {}) {
   ).trim()
 
   const rawTokens = Number(digestObj && (digestObj.raw_tokens ?? digestObj.rawTokens))
-    || Math.max(600, turns * 420 + toolCalls * 310)
+    || Math.max(600, Math.max(1, turns) * 420 + toolCalls * 310)
   const compressedTokens = Number(digestObj && (digestObj.compressed_tokens ?? digestObj.compressedTokens))
     || Math.max(65, Math.round(rawTokens * 0.14))
   const compressionPct = Number(digestObj && (digestObj.compression_pct ?? digestObj.compressionPct))
@@ -2284,6 +2346,8 @@ export function computeWorkerLmtexMeta(node, idx = 0, options = {}) {
   return metaResult
 }
 
+const STALE_SESSION_RUNNING_MS = 180_000
+
 function extractSessionTelemetry(s, options = {}) {
   const isRoot = Boolean(options.isRoot)
   const jsonlData = options.jsonlData || null
@@ -2292,7 +2356,10 @@ function extractSessionTelemetry(s, options = {}) {
   const sid = String((s && s.id !== undefined ? s.id : header.id) || options.fallbackId || '')
   const parentRaw = options.parentId !== undefined
     ? options.parentId
-    : (header.parentSession ?? header.parentId ?? header.parent ?? s?.parentSession ?? s?.parentId ?? s?.parent ?? null)
+    : (
+      header.parentSession ?? header.parentSessionId ?? header.parent_session_id ?? header.parentId ?? header.parent
+      ?? s?.parentSession ?? s?.parentSessionId ?? s?.parent_session_id ?? s?.parentId ?? s?.parent ?? null
+    )
   const parentId = !isRoot && parentRaw !== undefined && parentRaw !== null && String(parentRaw).trim() !== ''
     ? String(parentRaw).trim()
     : null
@@ -2421,77 +2488,144 @@ function extractSessionTelemetry(s, options = {}) {
   /* 统一 Token 成本估算口径：¥1.80 / 1M tokens（与前端面板一致） */
   const explicitCost = Number(usage.cost ?? usage.costYuan ?? usage.totalCost ?? meterUsage?.cost ?? jsonlData?.explicitCost ?? 0) || 0
   const costYuan = explicitCost > 0
-    ? Number(explicitCost.toFixed(4))
+    ? Number(((explicitCost)).toFixed(4))
     : (tokens > 0 ? Number(((tokens / 1000000) * 1.8).toFixed(4)) : 0)
 
   const messages = Array.isArray(s && s.messages) ? s.messages : []
+  const msgUserCount = messages.filter((m) => {
+    if (!m || typeof m !== 'object') return false
+    const r = String(m.role || m.sender || m.author || '').toLowerCase()
+    return r === 'user' || r === 'human'
+  }).length
+  const userMessages = Math.max(
+    Number(usage.userMessages ?? usage.user_messages ?? s?.userMessages ?? s?.user_messages ?? header.userMessages ?? 0) || 0,
+    msgUserCount,
+    Number(jsonlData?.userMessages || 0),
+  )
   const steps = Math.max(
     Number(usage.steps ?? s?.steps ?? header.steps ?? 0) || 0,
     messages.length,
     Number(jsonlData?.steps || 0),
     Number((wfNode && wfNode.step_count) || 0),
   )
-  const rounds = Math.max(
+  const explicitRounds = Math.max(
     Number(usage.rounds ?? usage.turns ?? s?.rounds ?? s?.turns ?? 0) || 0,
     Array.isArray(s && s.turns) && s.turns.length > 0 ? s.turns.length : 0,
     messages.length > 0 ? Math.max(1, Math.ceil(messages.length / 2)) : 0,
     Number(jsonlData?.turns || 0),
-    1,
   )
+  const hasExplicitZeroTurns = Boolean(
+    (s && (s.turns === 0 || s.rounds === 0))
+    || (jsonlData && jsonlData.turns === 0 && s?.turns === undefined && s?.rounds === undefined),
+  )
+  const rounds = explicitRounds > 0
+    ? explicitRounds
+    : (((isRoot || hasExplicitZeroTurns) && steps === 0 && tokens === 0 && userMessages === 0) ? 0 : 1)
   const explicitToolCalls = s?.toolCalls ?? s?.tool_calls ?? usage.toolCalls ?? usage.tool_calls
     ?? (jsonlData && jsonlData.toolCalls > 0 ? jsonlData.toolCalls : undefined)
     ?? (wfNode && wfNode.tool_calls)
+
+  const startMs = parseTimestampMs(
+    header.createdAt ?? header.created_at ?? header.startedAt ?? s?.createdAt ?? s?.created_at ?? s?.startedAt ?? usage.startedAt,
+  ) || Number(jsonlData?.firstTimestampMs || 0)
+  const updatedAtMs = parseTimestampMs(
+    header.updatedAt ?? header.updated_at ?? header.completedAt ?? header.endedAt
+    ?? s?.updatedAt ?? s?.updated_at ?? s?.completedAt ?? s?.endedAt ?? usage.updatedAt,
+  ) || 0
+  const fileMtimeMs = Number(s?.fileMtimeMs ?? options.fileMtimeMs ?? jsonlData?.mtimeMs ?? 0) || 0
+  const lastActivityMs = Math.max(
+    Number((jsonlData && jsonlData.mtimeMs) || 0),
+    Number((jsonlData && jsonlData.lastTimestampMs) || 0),
+    updatedAtMs,
+    fileMtimeMs,
+    startMs,
+  )
 
   const rawStatusField = String((s && s.status) || header.status || '').trim().toLowerCase()
   const rawActivityField = String((s && s.activity) || header.activity || '').trim().toLowerCase()
   const combinedRawState = rawStatusField || rawActivityField
   const isError = ERROR_STATUS_SET.has(rawStatusField) || ERROR_STATUS_SET.has(rawActivityField)
-  const isRunning = !isError && (
+  const isStreaming = Boolean((s && s.streaming) || (header && header.streaming))
+  const parentClosed = Boolean(
+    options.parentClosed
+    || s?.closed
+    || header.closed
+    || rawStatusField === 'closed'
+    || rawActivityField === 'closed',
+  )
+  let isRunning = !isError && (
     combinedRawState === 'running'
     || combinedRawState === 'run'
     || combinedRawState === 'active'
     || combinedRawState === 'in_progress'
     || rawActivityField === 'running'
-    || Boolean(s && s.streaming)
-    || Boolean(header && header.streaming)
+    || isStreaming
   )
+
+  let reapedAsStale = false
+  let staleStatusOverride = ''
+  if (
+    isRunning
+    && !isStreaming
+    && (
+      Boolean(options.parentClosed)
+      || (lastActivityMs > 0 && (Date.now() - lastActivityMs > STALE_SESSION_RUNNING_MS))
+    )
+  ) {
+    isRunning = false
+    reapedAsStale = true
+    staleStatusOverride = (steps > 0 || tokens > 0 || userMessages > 0) ? 'completed' : 'interrupted'
+  }
+
+  const isInterrupted = staleStatusOverride === 'interrupted'
+    || combinedRawState === 'interrupted'
+    || rawActivityField === 'interrupted'
   const hasWork = steps > 0
     || tokens > 0
     || messages.length > 0
+    || userMessages > 0
     || combinedRawState === 'completed'
     || combinedRawState === 'done'
     || rawActivityField === 'completed'
     || Boolean(wfNode && wfNode.has_activity)
-  const activity = isError ? 'error' : (isRunning ? 'running' : (hasWork ? 'completed' : 'idle'))
   const status = isError
     ? 'error'
-    : (activity === 'running' ? 'running' : (activity === 'completed' ? 'completed' : 'pending'))
+    : (staleStatusOverride
+      ? staleStatusOverride
+      : (isInterrupted
+        ? 'interrupted'
+        : (isRunning ? 'running' : (hasWork ? 'completed' : 'pending'))))
+  const activity = isError
+    ? 'error'
+    : (staleStatusOverride
+      ? staleStatusOverride
+      : (isInterrupted
+        ? 'interrupted'
+        : (isRunning ? 'running' : (hasWork ? 'completed' : 'idle'))))
 
-  const startMs = parseTimestampMs(
-    header.createdAt ?? header.created_at ?? header.startedAt ?? s?.createdAt ?? s?.created_at ?? s?.startedAt ?? usage.startedAt,
-  ) || Number(jsonlData?.firstTimestampMs || 0)
-
-  const fileMtimeMs = Number(s?.fileMtimeMs ?? options.fileMtimeMs ?? jsonlData?.mtimeMs ?? 0) || 0
-  /* 历史会话耗时修复：非运行态会话绝不用 Date.now() 兜底，改用 updatedAt / JSONL 最后时间 / 文件 mtimeMs / startMs */
+  /* 历史/过期会话耗时修复：非运行态及过期回收会话以实际活动最后时间为上限，绝不继续按 Date.now() 累加 17h+ */
   const endMs = isRunning
     ? Date.now()
-    : (
-      parseTimestampMs(
-        header.updatedAt ?? header.updated_at ?? header.completedAt ?? header.endedAt
-        ?? s?.updatedAt ?? s?.updated_at ?? s?.completedAt ?? s?.endedAt ?? usage.updatedAt,
-      )
-      || Number(jsonlData?.lastTimestampMs || 0)
-      || (fileMtimeMs > 0 ? fileMtimeMs : 0)
-      || startMs
-      || 0
-    )
+    : (reapedAsStale
+      ? (lastActivityMs || startMs || 0)
+      : (
+        updatedAtMs
+        || Number(jsonlData?.lastTimestampMs || 0)
+        || (fileMtimeMs > 0 ? fileMtimeMs : 0)
+        || startMs
+        || 0
+      ))
 
   const explicitDurationMs = Number(
-    usage.durationMs ?? usage.latencyMs ?? s?.durationMs ?? s?.latency_ms ?? header.durationMs ?? (wfNode && wfNode.latency_ms) ?? 0,
+    usage.durationMs ?? usage.latencyMs ?? s?.durationMs ?? s?.duration_ms ?? s?.latency_ms ?? header.durationMs ?? (wfNode && wfNode.latency_ms) ?? 0,
   ) || 0
-  const durationMs = explicitDurationMs > 0
-    ? explicitDurationMs
-    : (startMs > 0 && endMs >= startMs ? (endMs - startMs) : 0)
+  const rawSpanMs = startMs > 0 && endMs >= startMs ? (endMs - startMs) : 0
+  const computedSpanMs = (status === 'interrupted' && explicitDurationMs === 0 && rawSpanMs > STALE_SESSION_RUNNING_MS)
+    ? 0
+    : rawSpanMs
+  const durationMs = (reapedAsStale && explicitDurationMs > Math.max(computedSpanMs, STALE_SESSION_RUNNING_MS))
+    ? computedSpanMs
+    : (explicitDurationMs > 0 ? explicitDurationMs : computedSpanMs)
   const durationLabel = formatDurationLabel(durationMs)
 
   const fallbackSummary = (wfNode && wfNode.summary)
@@ -2499,7 +2633,9 @@ function extractSessionTelemetry(s, options = {}) {
       ? (s?.error_detail || `${label} 执行异常待修复`)
       : (activity === 'running'
         ? `正在执行 ${label} 任务并同步 PostgreSQL 事实库…`
-        : (activity === 'completed' ? `已完成 ${label} 阶段交付并落库核验。` : '等待主控调度派发')))
+        : (activity === 'interrupted'
+          ? `${label} 会话租约超时已回收。`
+          : (activity === 'completed' ? `已完成 ${label} 阶段交付并落库核验。` : '等待主控调度派发'))))
 
   const enrichedSessionForPreview = (jsonlData && (jsonlData.delegationPrompt || jsonlData.lastAssistantText))
     ? Object.assign({}, s, {
@@ -2522,6 +2658,7 @@ function extractSessionTelemetry(s, options = {}) {
     workerName,
     parentId,
     parent: parentId,
+    parentClosed,
     isRoot,
     rawTitle,
     title,
@@ -2550,6 +2687,8 @@ function extractSessionTelemetry(s, options = {}) {
     steps,
     rounds,
     turns: rounds,
+    userMessages,
+    user_messages: userMessages,
     toolCalls: explicitToolCalls !== undefined ? Number(explicitToolCalls) || 0 : undefined,
     filesTouched: mergedFilesTouched,
     files_touched: mergedFilesTouched,
@@ -2598,8 +2737,8 @@ function createRequestFlow() {
 }
 
 function getWorkflowDagDedup(store, engagementId, reqFlow = null, forceRefresh = false) {
-  if (!store || typeof store.workflowDag !== 'function') return null
-  const engKey = String(engagementId || 'default')
+  if (!store || typeof store.workflowDag !== 'function' || !engagementId) return null
+  const engKey = String(engagementId)
   if (reqFlow && !forceRefresh && reqFlow.dagByEng.has(engKey)) {
     return reqFlow.dagByEng.get(engKey)
   }
@@ -2610,20 +2749,25 @@ function getWorkflowDagDedup(store, engagementId, reqFlow = null, forceRefresh =
 }
 
 function syncHostWorkersDedup(store, engagementId, workers, reqFlow = null) {
-  if (!store || typeof store.syncHostWorkersToPg !== 'function') return null
-  const engKey = String(engagementId || 'default')
+  if (!store || typeof store.syncHostWorkersToPg !== 'function' || !engagementId) return null
+  const engKey = String(engagementId)
   const realWorkers = (Array.isArray(workers) ? workers : []).filter(
     (w) => w && !w._fromDbTask && !isSyntheticSessionId(w.id),
   )
   if (realWorkers.length === 0) {
     return { ok: true, engagement_id: engKey, synced: 0, total: 0 }
   }
+  const liveRunningIds = new Set(
+    realWorkers
+      .filter((w) => w && (w.activity === 'running' || w.status === 'running'))
+      .map((w) => String(w.id)),
+  )
   const dedupKey = `${engKey}::${realWorkers.map((w) => `${w.id}:${w.status}:${w.approvalState || ''}`).join(',')}`
   if (reqFlow && reqFlow.syncedEngs.has(dedupKey)) return null
   if (reqFlow) reqFlow.syncedEngs.add(dedupKey)
   try {
-    const res = store.syncHostWorkersToPg(engKey, realWorkers)
-    if (reqFlow && res && res.synced > 0) reqFlow.dagByEng.delete(engKey)
+    const res = store.syncHostWorkersToPg(engKey, realWorkers, { liveRunningIds })
+    if (reqFlow && res && (res.synced > 0 || res.reaped_workers > 0)) reqFlow.dagByEng.delete(engKey)
     return res
   } catch {
     return null
@@ -2647,7 +2791,10 @@ export function resolveRootFromMap(byId, sessionId) {
     const header = node && node.header ? node.header : null
     const rawParent = (header && header.parentSession !== undefined && header.parentSession !== null)
       ? header.parentSession
-      : (header?.parentId ?? header?.parent ?? node?.parentSession ?? node?.parentId ?? node?.parent ?? null)
+      : (
+        header?.parentSessionId ?? header?.parent_session_id ?? header?.parentId ?? header?.parent
+        ?? node?.parentSession ?? node?.parentSessionId ?? node?.parent_session_id ?? node?.parentId ?? node?.parent ?? null
+      )
     const parent = rawParent !== undefined && rawParent !== null ? String(rawParent).trim() : ''
     if (!parent) return cur
     if (parent === cur) return cur
@@ -2720,6 +2867,9 @@ function hydrateChildrenWithDbState(children, wfDag) {
     if (ERROR_STATUS_SET.has(dbStatus)) {
       child.status = dbStatus
       child.activity = 'error'
+    } else if (dbStatus === 'interrupted' && child.activity !== 'running' && child.activity !== 'completed') {
+      child.status = 'interrupted'
+      child.activity = 'interrupted'
     }
     const dbApproval = String(dbTask.approval_state || '').trim()
     if (['approved', 'revision_required', 'pending_approval'].includes(dbApproval)) {
@@ -2766,13 +2916,25 @@ function parseWaveNumber(waveVal, fallbackWave = 3) {
   return fallbackWave
 }
 
+function buildValidEngagementMap(allEngagements) {
+  const validEngagements = filterValidEngagements(Array.isArray(allEngagements) ? allEngagements : [])
+  const byId = new Map()
+  for (const e of validEngagements) {
+    if (!e || !e.id) continue
+    if (isUuidEngagement(e) && isUuidSessionTitle(e.id) && isUuidSessionTitle(e.name)) continue
+    byId.set(String(e.id), e)
+  }
+  return byId
+}
+
 /**
- * 发现宿主 DSH 当前打开的所有根会话与子智能体，并在 store 尚未创建/绑定工作区时自动同步建立绑定，
- * 避免用户在已有会话中打开控制台时看到空白的「未选择工作区」或重复的 UUID 伪工作区。
+ * 发现宿主 DSH 当前打开的所有根会话与子智能体，严格维护 1:1 会话绑定隔离：
+ * - 已有合法显式绑定的会话保持 `init_state = 'initialized'`；
+ * - 指向已删除/伪 UUID 工作区的脏绑定清理为 `unbound`（`engagement: null`），绝不跨会话自动劫持到其他项目！
  */
 async function discoverHostSessions(ctx, store, options = {}) {
   const reqFlow = options.reqFlow || null
-  const cacheKey = `${options.sessionId || ''}::${options.autoBind !== false ? '1' : '0'}`
+  const cacheKey = `${options.sessionId || ''}::${options.engagementId || ''}::${options.autoBind !== false ? '1' : '0'}`
   if (reqFlow && reqFlow.hostSessionsByKey.has(cacheKey)) {
     return reqFlow.hostSessionsByKey.get(cacheKey)
   }
@@ -2791,22 +2953,7 @@ async function discoverHostSessions(ctx, store, options = {}) {
   if (!Array.isArray(rawList)) rawList = []
 
   const allEngagements = store ? getCachedEngagementsList(store) : []
-  const realNamedEngagements = allEngagements.filter((e) => e && !isUuidEngagement(e))
-  const validEngagements = filterValidEngagements(allEngagements)
-
-  const activeEngagementId = options.engagementId
-    || (store ? getCachedActiveEngagementId(store) : null)
-    || (realNamedEngagements[0] && realNamedEngagements[0].id)
-    || (validEngagements[0] && validEngagements[0].id)
-    || 'default'
-
-  const wfDag = getWorkflowDagDedup(store, activeEngagementId, reqFlow)
-  const wfNodeByRole = new Map()
-  if (wfDag && Array.isArray(wfDag.all_nodes || wfDag.nodes)) {
-    for (const n of (wfDag.all_nodes || wfDag.nodes)) {
-      if (n && n.role) wfNodeByRole.set(n.role, n)
-    }
-  }
+  const validEngById = buildValidEngagementMap(allEngagements)
 
   /* O(N) 预构建会话映射表，供 resolveRootFromMap 在常数/有界跳数内完成根解析 */
   const byId = new Map()
@@ -2818,7 +2965,8 @@ async function discoverHostSessions(ctx, store, options = {}) {
   const parentIdOfRaw = (s) => {
     if (!s || typeof s !== 'object') return null
     const h = s.header || {}
-    const p = h.parentSession ?? h.parentId ?? h.parent ?? s.parentSession ?? s.parentId ?? s.parent ?? null
+    const p = h.parentSession ?? h.parentSessionId ?? h.parent_session_id ?? h.parentId ?? h.parent
+      ?? s.parentSession ?? s.parentSessionId ?? s.parent_session_id ?? s.parentId ?? s.parent ?? null
     return p !== undefined && p !== null && String(p).trim() !== '' ? String(p).trim() : null
   }
 
@@ -2854,6 +3002,7 @@ async function discoverHostSessions(ctx, store, options = {}) {
   }
 
   let didAdvanceJsonl = false
+  let bindingsMutated = false
   const items = []
   for (const root of roots) {
     const sid = String(root.id)
@@ -2861,13 +3010,35 @@ async function discoverHostSessions(ctx, store, options = {}) {
     const cwd = String(header.cwd || header.workspace || header.projectDir || root.cwd || '').trim()
     const workspace = cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() || '' : ''
 
-    const cachedBinding = store ? getCachedSessionBindingEntry(store, sid) : null
-    const preBoundEngId = (cachedBinding && cachedBinding.bound) || activeEngagementId
-    const itemDag = preBoundEngId === activeEngagementId
-      ? wfDag
-      : getWorkflowDagDedup(store, preBoundEngId, reqFlow)
-    const itemWfNodeByRole = preBoundEngId === activeEngagementId ? wfNodeByRole : new Map()
-    if (preBoundEngId !== activeEngagementId && itemDag && Array.isArray(itemDag.all_nodes || itemDag.nodes)) {
+    let cachedBinding = store ? getCachedSessionBindingEntry(store, sid) : null
+    const rawBoundId = cachedBinding && cachedBinding.bound ? String(cachedBinding.bound).trim() : ''
+    let sessionBoundEngId = null
+    let sessionBoundEngName = null
+
+    if (rawBoundId) {
+      const validEng = validEngById.get(rawBoundId)
+      const nameIsBogus = isUuidSessionTitle(cachedBinding && cachedBinding.name) && !validEng
+      if (validEng && !nameIsBogus) {
+        sessionBoundEngId = rawBoundId
+        sessionBoundEngName = validEng.name || (cachedBinding && cachedBinding.name) || rawBoundId
+      } else if (store && !isSyntheticSessionId(sid)) {
+        /* 清理指向不存在/已删除/伪 UUID 工作区的脏绑定，绝不自动劫持到其他项目 */
+        try {
+          if (typeof store.setSessionOnboarding === 'function') {
+            store.setSessionOnboarding(sid, { action: 'unbind' })
+          } else if (typeof store.setSessionBinding === 'function') {
+            store.setSessionBinding(sid, null, null)
+          }
+          invalidateSessionBindingsCache(store)
+          bindingsMutated = true
+          cachedBinding = getCachedSessionBindingEntry(store, sid)
+        } catch { /* ignore */ }
+      }
+    }
+
+    const itemDag = sessionBoundEngId ? getWorkflowDagDedup(store, sessionBoundEngId, reqFlow) : null
+    const itemWfNodeByRole = new Map()
+    if (itemDag && Array.isArray(itemDag.all_nodes || itemDag.nodes)) {
       for (const n of (itemDag.all_nodes || itemDag.nodes)) {
         if (n && n.role) itemWfNodeByRole.set(n.role, n)
       }
@@ -2880,11 +3051,11 @@ async function discoverHostSessions(ctx, store, options = {}) {
     const rootTelemetry = extractSessionTelemetry(root, {
       isRoot: true,
       parentId: null,
-      workflowNode: itemWfNodeByRole.get('plan') || null,
+      workflowNode: sessionBoundEngId ? (itemWfNodeByRole.get('plan') || null) : null,
       jsonlData: rootJsonl,
       meterUsage: rootMeter,
       store,
-      engagementId: preBoundEngId,
+      engagementId: sessionBoundEngId || '',
     })
 
     const childRawById = groupedChildrenByRoot.get(sid) ? new Map(groupedChildrenByRoot.get(sid)) : new Map()
@@ -2937,19 +3108,22 @@ async function discoverHostSessions(ctx, store, options = {}) {
       const childTelemetry = extractSessionTelemetry(childObj, {
         isRoot: false,
         parentId: sid,
+        parentClosed: rootTelemetry.parentClosed,
         defaultModel: rootTelemetry.model,
-        workflowNode: itemWfNodeByRole.get(preRole) || null,
+        workflowNode: sessionBoundEngId ? (itemWfNodeByRole.get(preRole) || null) : null,
         roleIndex: curRoleIdx,
         roleSiblingCount: roleCounts.get(preRole) || 1,
         jsonlData: childJsonl,
         meterUsage: childMeter,
         store,
-        engagementId: preBoundEngId,
+        engagementId: sessionBoundEngId || '',
       })
       kids.push(childTelemetry)
     }
 
-    hydrateChildrenWithDbState(kids, itemDag)
+    if (sessionBoundEngId && itemDag) {
+      hydrateChildrenWithDbState(kids, itemDag)
+    }
     kids.sort((a, b) => (a.wave - b.wave) || String(a.id).localeCompare(String(b.id)))
     let completedKidIdx = 0
     for (let i = 0; i < kids.length; i += 1) {
@@ -2957,151 +3131,134 @@ async function discoverHostSessions(ctx, store, options = {}) {
       const kIdx = (k.activity === 'completed' || k.status === 'completed') ? completedKidIdx++ : i
       computeWorkerLmtexMeta(k, kIdx, {
         store,
-        engagementId: preBoundEngId,
+        engagementId: sessionBoundEngId || '',
         recomputeApproval: !k._persistedApproval,
       })
     }
 
     const rawTitle = rootTelemetry.rawTitle
-    const displayLabel = workspace && !rawTitle.includes(workspace) ? (workspace + ' · ' + rawTitle) : rawTitle
+    let displayTitle = rawTitle
+    let displayLabel = workspace && !rawTitle.includes(workspace) ? (workspace + ' · ' + rawTitle) : rawTitle
+    if (isUuidSessionTitle(displayTitle) && sessionBoundEngName && !isUuidSessionTitle(sessionBoundEngName)) {
+      displayTitle = sessionBoundEngName
+      displayLabel = workspace && !sessionBoundEngName.includes(workspace)
+        ? `${workspace} · ${sessionBoundEngName}`
+        : sessionBoundEngName
+    }
+
+    /* 若宿主未暴露子会话但当前已显式绑定的工作区有活跃角色记录，从 workflowDag 补齐子智能体树 */
+    if (kids.length === 0 && sessionBoundEngId && itemDag) {
+      const dagNodes = Array.isArray(itemDag.all_nodes || itemDag.nodes)
+        ? (itemDag.all_nodes || itemDag.nodes)
+        : []
+      for (const wfNode of dagNodes) {
+        if (!wfNode || !wfNode.has_activity || wfNode.role === 'plan') continue
+        const meta = AGENT_ROLE_META[wfNode.role] || AGENT_ROLE_META.exploit
+        const stepCount = Number(wfNode.step_count || (Array.isArray(wfNode.decisions) ? wfNode.decisions.length : 0) || 1)
+        const synthChild = extractSessionTelemetry({
+          id: `sub-${wfNode.role}`,
+          label: meta.defaultTitle,
+          title: meta.defaultTitle,
+          role: wfNode.role,
+          model: rootTelemetry.model,
+          activity: (wfNode.status === 'run' || wfNode.active) ? 'running' : 'completed',
+          tokens: Number(wfNode.tokens) > 0 ? Number(wfNode.tokens) : 0,
+          steps: stepCount,
+          durationMs: Number(wfNode.latency_ms) > 0 ? Number(wfNode.latency_ms) : 0,
+          summary: wfNode.summary || '',
+        }, {
+          isRoot: false,
+          parentId: sid,
+          defaultModel: rootTelemetry.model,
+          workflowNode: wfNode,
+          store,
+          engagementId: sessionBoundEngId,
+        })
+        synthChild._fromDbTask = true
+        kids.push(synthChild)
+      }
+      if (kids.length > 0) {
+        kids.sort((a, b) => (a.wave - b.wave) || String(a.id).localeCompare(String(b.id)))
+        let compIdx = 0
+        for (let i = 0; i < kids.length; i += 1) {
+          const ch = kids[i]
+          const cIdx = (ch.activity === 'completed' || ch.status === 'completed') ? compIdx++ : i
+          computeWorkerLmtexMeta(ch, cIdx, {
+            store,
+            engagementId: sessionBoundEngId,
+            recomputeApproval: !ch._persistedApproval,
+          })
+        }
+      }
+    }
+
+    const realHostKidsCount = kids.filter((c) => !c._fromDbTask).length
+    const hasConversation = Boolean(
+      rootTelemetry.turns > 0
+      || rootTelemetry.userMessages > 0
+      || rootTelemetry.steps > 0
+      || rootTelemetry.tokens > 0
+      || realHostKidsCount > 0
+      || (sessionBoundEngId && kids.length > 0),
+    )
+
+    const persistedInitState = sessionBoundEngId
+      ? 'initialized'
+      : (cachedBinding && cachedBinding.init_state === 'skipped' ? 'skipped' : 'uninitialized')
+    const onboardingDismissed = sessionBoundEngId
+      ? true
+      : Boolean(cachedBinding && cachedBinding.onboarding_dismissed)
+
+    /* 当真实根会话在 sessions.json 中已有记录且会话元数据变化时增量同步 */
+    if (
+      store
+      && !isSyntheticSessionId(sid)
+      && cachedBinding
+      && typeof store.setSessionOnboarding === 'function'
+      && (
+        Boolean(cachedBinding.has_conversation) !== hasConversation
+        || (rawTitle && cachedBinding.session_title !== rawTitle)
+        || (cwd && cachedBinding.cwd !== cwd)
+      )
+    ) {
+      try {
+        store.setSessionOnboarding(sid, {
+          action: 'sync',
+          title: rawTitle || undefined,
+          cwd: cwd || undefined,
+          hasConversation,
+        })
+        bindingsMutated = true
+      } catch { /* ignore */ }
+    }
 
     items.push(Object.assign({}, rootTelemetry, {
       id: sid,
       rawTitle,
-      title: rawTitle,
+      title: displayTitle,
       label: displayLabel,
       cwd,
       workspace,
       displayLabel,
+      engagementId: sessionBoundEngId,
+      engagementName: sessionBoundEngName,
+      hasConversation,
+      has_conversation: hasConversation,
+      initState: persistedInitState,
+      init_state: persistedInitState,
+      onboardingDismissed,
+      onboarding_dismissed: onboardingDismissed,
       children: kids,
       running_children: kids.filter((c) => c.activity === 'running').length,
     }))
   }
 
-  /* 若宿主已有根会话，执行自动绑定与 UUID 伪工作区清洗（使用缓存读取，仅在实际变更时写盘） */
-  if (options.autoBind !== false && store && items.length > 0) {
-    try {
-      const targetSid = options.sessionId ? resolveRootFromMap(byId, options.sessionId) : items[0].id
-      const targetSession = items.find((x) => x.id === targetSid) || items[0]
-
-      if (allEngagements.length === 0 && targetSession && !isSyntheticSessionId(targetSession.id)) {
-        /* 绝不以原始 UUID 会话标题自动创建工作区！ */
-        const candidateTitle = targetSession.rawTitle || targetSession.title || ''
-        if (candidateTitle && !isUuidSessionTitle(candidateTitle) && !isUuidSessionTitle(targetSession.displayLabel)) {
-          const opened = dispatch(store, {
-            op: 'openEngagement',
-            name: targetSession.displayLabel || candidateTitle,
-            note: targetSession.cwd ? ('自动同步自 DSH 会话工作目录 ' + targetSession.cwd) : '自动同步自 DSH 当前会话',
-          })
-          invalidateEngagementCaches(store)
-          if (opened && opened.ok && opened.engagement && opened.engagement.id) {
-            dispatch(store, {
-              op: 'bindSessionEngagement',
-              session: targetSession.id,
-              engagement: opened.engagement.id,
-              id: opened.engagement.id,
-              name: opened.engagement.name || targetSession.displayLabel || candidateTitle,
-            })
-            invalidateSessionBindingsCache(store)
-          }
-        }
-      } else {
-        /* 当存在真实命名项目工作区时，始终将未绑定或误绑到 UUID 伪工作区的真实根会话绑定到真实项目工作区 */
-        const preferredPool = realNamedEngagements.length > 0 ? realNamedEngagements : validEngagements
-        for (const item of items) {
-          if (isSyntheticSessionId(item.id)) continue
-          const binding = getCachedSessionBindingEntry(store, item.id)
-          const boundId = binding && binding.bound
-          const boundName = binding && binding.name
-          const boundIsBogus = isUuidSessionTitle(boundId) || isUuidSessionTitle(boundName)
-          const needRebind = !boundId || (realNamedEngagements.length > 0 && boundIsBogus)
-          if (needRebind && preferredPool.length > 0) {
-            const matched = preferredPool.find((e) => e.name === item.displayLabel || e.name === item.title)
-              || preferredPool.find((e) => e.id === activeEngagementId && !isUuidEngagement(e))
-              || preferredPool[0]
-            if (matched && matched.id) {
-              dispatch(store, {
-                op: 'bindSessionEngagement',
-                session: item.id,
-                engagement: matched.id,
-                id: matched.id,
-                name: matched.name || matched.id,
-              })
-              invalidateSessionBindingsCache(store)
-              if (item.id === targetSession.id && typeof store.setActiveEngagement === 'function') {
-                store.setActiveEngagement(matched.id)
-                invalidateEngagementCaches(store)
-              }
-            }
-          }
-        }
-      }
-
-      /* 为每个宿主会话附带其绑定的工作区 ID，并在标题为原始 UUID 时用真实项目名美化展示 */
-      for (const item of items) {
-        try {
-          const b = getCachedSessionBindingEntry(store, item.id)
-          item.engagementId = (b && b.bound) || null
-          item.engagementName = (b && b.name) || null
-          if (isUuidSessionTitle(item.title) && item.engagementName && !isUuidSessionTitle(item.engagementName)) {
-            item.title = item.engagementName
-            item.displayLabel = item.workspace && !item.engagementName.includes(item.workspace)
-              ? `${item.workspace} · ${item.engagementName}`
-              : item.engagementName
-            item.label = item.displayLabel
-          }
-          /* 若宿主未暴露子会话但当前绑定的工作区已有活跃角色记录，从 workflowDag 补齐子智能体树（标记 _fromDbTask 避免回写污染） */
-          if (item.children.length === 0 && item.engagementId && typeof store.workflowDag === 'function') {
-            const itemDag = getWorkflowDagDedup(store, item.engagementId, reqFlow)
-            const dagNodes = (itemDag && Array.isArray(itemDag.all_nodes || itemDag.nodes))
-              ? (itemDag.all_nodes || itemDag.nodes)
-              : []
-            for (const wfNode of dagNodes) {
-              if (!wfNode || !wfNode.has_activity || wfNode.role === 'plan') continue
-              const meta = AGENT_ROLE_META[wfNode.role] || AGENT_ROLE_META.exploit
-              const stepCount = Number(wfNode.step_count || (Array.isArray(wfNode.decisions) ? wfNode.decisions.length : 0) || 1)
-              const synthChild = extractSessionTelemetry({
-                id: `sub-${wfNode.role}`,
-                label: meta.defaultTitle,
-                title: meta.defaultTitle,
-                role: wfNode.role,
-                model: item.model,
-                activity: (wfNode.status === 'run' || wfNode.active) ? 'running' : 'completed',
-                tokens: Number(wfNode.tokens) > 0 ? Number(wfNode.tokens) : 0,
-                steps: stepCount,
-                durationMs: Number(wfNode.latency_ms) > 0 ? Number(wfNode.latency_ms) : 0,
-                summary: wfNode.summary || '',
-              }, {
-                isRoot: false,
-                parentId: item.id,
-                defaultModel: item.model,
-                workflowNode: wfNode,
-                store,
-                engagementId: item.engagementId,
-              })
-              synthChild._fromDbTask = true
-              item.children.push(synthChild)
-            }
-            item.children.sort((a, b) => (a.wave - b.wave) || String(a.id).localeCompare(String(b.id)))
-            let compIdx = 0
-            for (let i = 0; i < item.children.length; i += 1) {
-              const ch = item.children[i]
-              const cIdx = (ch.activity === 'completed' || ch.status === 'completed') ? compIdx++ : i
-              computeWorkerLmtexMeta(ch, cIdx, {
-                store,
-                engagementId: item.engagementId,
-                recomputeApproval: !ch._persistedApproval,
-              })
-            }
-            item.running_children = item.children.filter((c) => c.activity === 'running').length
-          }
-        } catch { /* ignore */ }
-      }
-    } catch { /* 自动绑定异常不影响会话发现 */ }
+  if (bindingsMutated) {
+    invalidateSessionBindingsCache(store)
   }
 
   let finalItems = items
-  /* p2 单窗口根会话唯一性：若同一工作区存在有实质活动的主会话，过滤掉无任何 token/步骤/子代理的空 UUID 幽灵会话 */
+  /* p2 单窗口根会话唯一性：若存在有实质活动或真实标题的主会话，过滤掉无任何 token/步骤/子代理的空 UUID 幽灵会话 */
   if (items.length > 1) {
     const requestedRootId = options.sessionId ? resolveRootFromMap(byId, options.sessionId) : ''
     const hasActivePrimary = items.some((x) => !isUuidSessionTitle(x.rawTitle) || x.tokens > 0 || x.steps > 0 || x.children.length > 0)
@@ -3117,21 +3274,24 @@ async function discoverHostSessions(ctx, store, options = {}) {
     }
   }
 
-  /* 自动同步宿主真实子智能体至 PostgreSQL / SQLite 事实库：
-     严禁将其他工作区根会话的 children 混入当前工作区！仅同步绑定到 activeEngagementId 的根会话下的真实宿主子智能体。 */
+  /* 自动同步宿主真实子智能体至对应显式绑定的工作区事实库（严禁混入未绑定或其他工作区） */
   try {
-    if (store && typeof store.syncHostWorkersToPg === 'function' && activeEngagementId) {
-      const activeHostKids = []
+    if (store && typeof store.syncHostWorkersToPg === 'function') {
+      const kidsByEng = new Map()
       for (const it of finalItems) {
-        if (!it || it.engagementId !== activeEngagementId) continue
+        if (!it || !it.engagementId) continue
+        if (!kidsByEng.has(it.engagementId)) kidsByEng.set(it.engagementId, [])
+        const bucket = kidsByEng.get(it.engagementId)
         for (const ch of (Array.isArray(it.children) ? it.children : [])) {
           if (ch && !ch._fromDbTask && !isSyntheticSessionId(ch.id)) {
-            activeHostKids.push(ch)
+            bucket.push(ch)
           }
         }
       }
-      if (activeHostKids.length > 0) {
-        syncHostWorkersDedup(store, activeEngagementId, activeHostKids, reqFlow)
+      for (const [engId, engKids] of kidsByEng.entries()) {
+        if (engKids.length > 0) {
+          syncHostWorkersDedup(store, engId, engKids, reqFlow)
+        }
       }
     }
   } catch { /* ignore PG sync errors */ }
@@ -3147,60 +3307,149 @@ async function discoverHostSessions(ctx, store, options = {}) {
 }
 
 /**
- * 清洗 bootstrap / sessionBinding 返回结果中的空 UUID 伪工作区，确保下拉选择器与当前绑定始终指向真实项目。
+ * 清洗 bootstrap / sessionBinding / sessionOnboarding 返回结果中的伪 UUID 工作区，
+ * 并严格保持未初始化/未绑定会话的 `bound: null` / `current: null`（零跨会话劫持）。
  */
-function handleBootstrap(store, request, result) {
+function handleBootstrap(store, request, result, hostSessions = null) {
   if (!result || typeof result !== 'object') return result
+  const allEngs = store ? getCachedEngagementsList(store) : (Array.isArray(result.engagements) ? result.engagements : [])
+  const validEngById = buildValidEngagementMap(allEngs)
+
   if (Array.isArray(result.engagements)) {
     result.engagements = filterValidEngagements(result.engagements)
     const realNamed = result.engagements.filter((e) => e && !isUuidEngagement(e))
-    if (realNamed.length > 0 && (!result.current || isUuidSessionTitle(result.current) || !result.engagements.some((e) => e.id === result.current))) {
-      result.current = realNamed[0].id
-      try {
-        if (store && typeof store.setActiveEngagement === 'function') {
-          store.setActiveEngagement(realNamed[0].id)
-          invalidateEngagementCaches(store)
-        }
-      } catch { /* ignore */ }
+    /* 仅在未传入 request.session 时才使用全局默认工作区兜底；传入了 session 时严格由该会话自身的绑定决定 current！ */
+    if (!request.session) {
+      if (realNamed.length > 0 && (!result.current || isUuidSessionTitle(result.current) || !result.engagements.some((e) => e.id === result.current))) {
+        result.current = realNamed[0].id
+        try {
+          if (store && typeof store.setActiveEngagement === 'function') {
+            store.setActiveEngagement(realNamed[0].id)
+            invalidateEngagementCaches(store)
+          }
+        } catch { /* ignore */ }
+      }
     }
   }
-  if ((request.op === 'sessionBinding' || request.op === 'sessionBindings') && store) {
-    try {
-      const allEngs = getCachedEngagementsList(store)
-      const realNamed = filterValidEngagements(allEngs).filter((e) => e && !isUuidEngagement(e))
-      if (realNamed.length > 0) {
-        if (!result.bound || isUuidSessionTitle(result.bound) || isUuidSessionTitle(result.name)) {
-          const target = realNamed[0]
-          result.bound = target.id
-          result.name = target.name || target.id
-          result.current = target.id
-          if (result.root_session && !isSyntheticSessionId(result.root_session) && typeof store.setSessionBinding === 'function') {
-            store.setSessionBinding(result.root_session, target.id, target.name || target.id)
-            invalidateSessionBindingsCache(store)
-          }
-        }
-        if (result.agents && typeof result.agents === 'object') {
-          for (const [k, v] of Object.entries(result.agents)) {
-            if (v && (isUuidSessionTitle(v.engagement) || isUuidSessionTitle(v.name))) {
-              result.agents[k] = Object.assign({}, v, {
-                engagement: realNamed[0].id,
-                name: realNamed[0].name || realNamed[0].id,
-              })
-            }
-          }
+
+  const rawReqSession = typeof request.session === 'string' ? request.session.trim() : ''
+  const resolvedRootSid = String(
+    result.root_session
+    || (result.session_binding && result.session_binding.session)
+    || (rawReqSession && typeof request.resolveRoot === 'function' ? request.resolveRoot(rawReqSession) : rawReqSession)
+    || '',
+  ).trim()
+
+  const liveSessionItem = (resolvedRootSid && Array.isArray(hostSessions))
+    ? (hostSessions.find((s) => s && String(s.id) === resolvedRootSid) || null)
+    : null
+
+  const normalizeBindingView = (baseObj, sid) => {
+    const src = baseObj && typeof baseObj === 'object' ? baseObj : {}
+    let boundId = src.bound ?? src.engagement ?? null
+    let boundName = src.name ?? null
+    let initState = src.init_state || src.initState || (boundId ? 'initialized' : 'uninitialized')
+    let onboardingDismissed = Boolean(boundId || src.onboarding_dismissed || src.onboardingDismissed)
+
+    if (boundId && !validEngById.has(String(boundId))) {
+      boundId = null
+      boundName = null
+      initState = 'uninitialized'
+      onboardingDismissed = false
+      if (store && sid && !isSyntheticSessionId(sid) && typeof store.setSessionOnboarding === 'function') {
+        try {
+          store.setSessionOnboarding(sid, { action: 'unbind' })
+          invalidateSessionBindingsCache(store)
+        } catch { /* ignore */ }
+      }
+    } else if (boundId) {
+      const validEng = validEngById.get(String(boundId))
+      boundName = (validEng && validEng.name) || boundName || String(boundId)
+      initState = 'initialized'
+      onboardingDismissed = true
+    } else if (initState === 'initialized') {
+      initState = 'uninitialized'
+    }
+
+    const hasConversation = liveSessionItem
+      ? Boolean(liveSessionItem.hasConversation)
+      : Boolean(src.has_conversation ?? src.hasConversation)
+    const sessionTitle = (liveSessionItem && liveSessionItem.rawTitle)
+      || src.session_title
+      || src.sessionTitle
+      || null
+    const cwd = (liveSessionItem && liveSessionItem.cwd)
+      || src.cwd
+      || null
+
+    return {
+      session: sid || src.session || null,
+      root_session: sid || src.root_session || src.session || null,
+      bound: boundId,
+      name: boundName,
+      init_state: initState,
+      onboarding_dismissed: onboardingDismissed,
+      has_conversation: hasConversation,
+      session_title: sessionTitle,
+      cwd,
+      updated_at: src.updated_at || null,
+    }
+  }
+
+  if (request.op === 'bootstrap' && rawReqSession) {
+    const rawState = (store && resolvedRootSid && typeof store.getSessionState === 'function')
+      ? store.getSessionState(resolvedRootSid)
+      : (result.session_binding || {})
+    const normalizedBinding = normalizeBindingView(rawState, resolvedRootSid)
+    result.session_binding = normalizedBinding
+    result.current = normalizedBinding.bound
+  }
+
+  if (
+    request.op === 'sessionBinding'
+    || request.op === 'sessionBindings'
+    || request.op === 'sessionOnboarding'
+  ) {
+    const rawState = (store && resolvedRootSid && typeof store.getSessionState === 'function')
+      ? store.getSessionState(resolvedRootSid)
+      : result
+    const normalizedBinding = normalizeBindingView(rawState, resolvedRootSid)
+    result.session = rawReqSession || normalizedBinding.session
+    result.root_session = normalizedBinding.root_session
+    result.bound = normalizedBinding.bound
+    result.name = normalizedBinding.name
+    result.init_state = normalizedBinding.init_state
+    result.onboarding_dismissed = normalizedBinding.onboarding_dismissed
+    result.has_conversation = normalizedBinding.has_conversation
+    result.session_title = normalizedBinding.session_title
+    result.cwd = normalizedBinding.cwd
+    result.current = normalizedBinding.bound
+    result.session_binding = normalizedBinding
+
+    if (result.agents && typeof result.agents === 'object') {
+      for (const [k, v] of Object.entries(result.agents)) {
+        if (v && v.engagement && !validEngById.has(String(v.engagement))) {
+          result.agents[k] = Object.assign({}, v, {
+            engagement: null,
+            name: null,
+            init_state: 'uninitialized',
+            onboarding_dismissed: false,
+          })
         }
       }
-    } catch { /* ignore */ }
+    }
   }
+
   return result
 }
 
 /**
  * 合成多智能体拓扑树（`agentNetwork`）、泳道（`swimlanes`）、跨智能体协作事件（`collabEvents`）与协作任务列表（`collabTasks`）。
  * 同时支持从宿主真实子会话（`sessions.list()` + `subagents.listChildren()`）与 `store.workflowDag(activeEngagement)`（含 `worker_tasks` / `plan_goals` / `worker_digests`）合成。
+ * 当 `activeEngagement` 为空/null（未绑定会话）时，严格返回零泄漏的本会话洁净拓扑，绝不读取任何其他项目工作区！
  */
 function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, requestedSessionId = '', reqFlow = null) {
-  const wfDag = getWorkflowDagDedup(store, activeEngagement, reqFlow)
+  const wfDag = activeEngagement ? getWorkflowDagDedup(store, activeEngagement, reqFlow) : null
   const wfNodes = (wfDag && Array.isArray(wfDag.all_nodes || wfDag.nodes))
     ? (wfDag.all_nodes || wfDag.nodes)
     : []
@@ -3231,25 +3480,26 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
     }
   }
 
-  /* 严格按 activeEngagement 选择当前工作区的宿主根会话，绝不跨工作区借用其他项目的宿主会话！ */
+  /* 严格按 activeEngagement 或 requestedSessionId 选择宿主根会话，绝不跨工作区借用其他项目的宿主会话！ */
   const safeHostList = Array.isArray(hostSessions) ? hostSessions : []
-  const matchingHosts = safeHostList.filter((s) => {
-    if (!s) return false
-    if (s.engagementId) return s.engagementId === activeEngagement
-    return false
-  })
-  const unboundFallbackHosts = (matchingHosts.length === 0 && safeHostList.every((s) => !s || !s.engagementId))
-    ? safeHostList.filter(Boolean)
-    : []
-  const candidateHosts = matchingHosts.length > 0 ? matchingHosts : unboundFallbackHosts
-  const primaryHost = (requestedSessionId && candidateHosts.find((s) => s.id === requestedSessionId))
-    || candidateHosts.find((s) => s.children && s.children.length > 0)
-    || candidateHosts[0]
-    || null
+  let primaryHost = null
+  if (!activeEngagement) {
+    primaryHost = (requestedSessionId && safeHostList.find((s) => s && s.id === requestedSessionId)) || null
+  } else {
+    const matchingHosts = safeHostList.filter((s) => s && s.engagementId === activeEngagement)
+    const unboundFallbackHosts = (!requestedSessionId && matchingHosts.length === 0 && safeHostList.every((s) => !s || !s.engagementId))
+      ? safeHostList.filter(Boolean)
+      : []
+    const candidateHosts = matchingHosts.length > 0 ? matchingHosts : unboundFallbackHosts
+    primaryHost = (requestedSessionId && candidateHosts.find((s) => s.id === requestedSessionId))
+      || candidateHosts.find((s) => s.children && s.children.length > 0)
+      || candidateHosts[0]
+      || null
+  }
 
-  const planWfNode = wfNodeByRole.get('plan') || null
-  const engList = store ? getCachedEngagementsList(store) : []
-  const activeEngMeta = engList.find((e) => e && e.id === activeEngagement) || null
+  const planWfNode = activeEngagement ? (wfNodeByRole.get('plan') || null) : null
+  const engList = (store && activeEngagement) ? getCachedEngagementsList(store) : []
+  const activeEngMeta = activeEngagement ? (engList.find((e) => e && e.id === activeEngagement) || null) : null
   const dbHasRunning = dbTasks.some((t) => {
     const st = String(t && t.status || '').toLowerCase()
     return st === 'running' || st === 'run' || st === 'in_progress'
@@ -3273,13 +3523,14 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       role: 'plan',
       tokens: (planWfNode && planWfNode.tokens) || 0,
       steps: (planWfNode && planWfNode.step_count) || 0,
-      activity: rootActivityFallback,
+      turns: activeEngagement ? undefined : 0,
+      activity: activeEngagement ? rootActivityFallback : 'idle',
     }, {
       isRoot: true,
       parentId: null,
       workflowNode: planWfNode,
       store,
-      engagementId: activeEngagement,
+      engagementId: activeEngagement || '',
     })
 
   const childNodes = Array.isArray(primaryHost && primaryHost.children)
@@ -3288,11 +3539,11 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       .map((c) => Object.assign({}, c, { isRoot: false, parentId: rootNode.id, parent: rootNode.id }))
     : []
 
-  /* 1) 将 DB 中的 worker_tasks / worker_digests 持久化状态（approval_state, ui_priority, assigned_goal, files_owned_json, error_detail）水合到已匹配的宿主子智能体 */
-  const matchedTaskIds = hydrateChildrenWithDbState(childNodes, wfDag)
+  /* 1) 将 DB 中的 worker_tasks / worker_digests 持久化状态水合到已匹配的宿主子智能体 */
+  const matchedTaskIds = activeEngagement ? hydrateChildrenWithDbState(childNodes, wfDag) : new Set()
 
-  /* 2) 将尚未出现在宿主子会话中的 wfDag.worker_tasks 转化为真实拓扑/泳道/任务节点（即使 attack_step 为空，decomposeUserPrompt 后立即展示） */
-  const unmatchedDbTasks = dbTasks.filter((t) => t && !matchedTaskIds.has(String(t.id)))
+  /* 2) 将尚未出现在宿主子会话中的 wfDag.worker_tasks 转化为真实拓扑/泳道/任务节点 */
+  const unmatchedDbTasks = activeEngagement ? dbTasks.filter((t) => t && !matchedTaskIds.has(String(t.id))) : []
   if (unmatchedDbTasks.length > 0) {
     const dbRoleCounts = new Map()
     for (const t of unmatchedDbTasks) {
@@ -3313,9 +3564,10 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       const rawSt = String(t.status || 'pending').trim().toLowerCase()
       const isErr = ERROR_STATUS_SET.has(rawSt)
       const isRun = !isErr && (rawSt === 'running' || rawSt === 'run' || rawSt === 'active' || rawSt === 'in_progress')
-      const isDone = !isErr && !isRun && (rawSt === 'completed' || rawSt === 'done' || rawSt === 'finished' || rawSt === 'approved')
-      const taskActivity = isErr ? 'error' : (isRun ? 'running' : (isDone ? 'completed' : 'idle'))
-      const taskStatus = isErr ? rawSt : (isRun ? 'running' : (isDone ? 'completed' : 'pending'))
+      const isInterrupted = !isErr && !isRun && rawSt === 'interrupted'
+      const isDone = !isErr && !isRun && !isInterrupted && (rawSt === 'completed' || rawSt === 'done' || rawSt === 'finished' || rawSt === 'approved')
+      const taskActivity = isErr ? 'error' : (isRun ? 'running' : (isInterrupted ? 'interrupted' : (isDone ? 'completed' : 'idle')))
+      const taskStatus = isErr ? rawSt : (isRun ? 'running' : (isInterrupted ? 'interrupted' : (isDone ? 'completed' : 'pending')))
 
       const filesOwned = parseJsonArraySafe(t.files_owned ?? t.files_owned_json)
       const filesTouched = parseJsonArraySafe(
@@ -3344,7 +3596,7 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
         status: taskStatus,
         tokens: Number(t.tokens || (linkedDigest && linkedDigest.raw_tokens) || 0) || 0,
         steps: Number(t.steps || t.turns || 0) || 0,
-        turns: Math.max(1, Number(t.turns || 1) || 1),
+        turns: isInterrupted && Number(t.turns || 0) === 0 ? 0 : Math.max(1, Number(t.turns || 1) || 1),
         toolCalls: Number(t.tool_calls ?? 0) || 0,
         durationMs: Number(t.latency_ms || t.duration_ms || 0) || 0,
         summary: (linkedDigest && linkedDigest.what_was_done) || assignedGoal,
@@ -3381,6 +3633,9 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       if (taskActivity === 'idle') {
         dbChild.activity = 'idle'
         dbChild.status = 'pending'
+      } else if (taskActivity === 'interrupted') {
+        dbChild.activity = 'interrupted'
+        dbChild.status = 'interrupted'
       } else if (taskActivity === 'error') {
         dbChild.activity = 'error'
         dbChild.status = 'error'
@@ -3409,7 +3664,7 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       }
       childNodes.push(dbChild)
     }
-  } else if (childNodes.length === 0 && dbGoals.length > 0) {
+  } else if (activeEngagement && childNodes.length === 0 && dbGoals.length > 0) {
     /* 若仅有 plan_goals 尚无 worker_tasks 行，按子目标展示已拆解波次节点 */
     const subGoals = dbGoals.filter((g) => g && g.parent_goal_id !== null && g.parent_goal_id !== undefined)
     const goalsToRender = subGoals.length > 0 ? subGoals : dbGoals
@@ -3455,36 +3710,38 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
     }
   }
 
-  /* 3) 若 store.workflowDag 中存在真实已有 attack_step 活动（has_activity === true）的角色节点且未出现在子列表中，合成为节点 */
-  const existingRoles = new Set(childNodes.map((c) => c.role))
-  const WORKER_ROLES = ['designer', 'recon', 'assess', 'exploit', 'vuln-scan', 'qa', 'internal']
-  for (const role of WORKER_ROLES) {
-    const wfNode = wfNodeByRole.get(role)
-    if (!wfNode || !wfNode.has_activity || existingRoles.has(role)) continue
-    const meta = AGENT_ROLE_META[role] || AGENT_ROLE_META.exploit
-    const stepCount = Number(wfNode.step_count || (Array.isArray(wfNode.decisions) ? wfNode.decisions.length : 0) || 1)
-    const synthChild = extractSessionTelemetry({
-      id: `sub-${role}`,
-      label: `${meta.defaultTitle}`,
-      title: `${meta.defaultTitle}`,
-      role,
-      model: rootNode.model || 'deepseek-v4.1-flash (max)',
-      activity: (wfNode.status === 'run' || wfNode.active) ? 'running' : 'completed',
-      tokens: Number(wfNode.tokens) > 0 ? Number(wfNode.tokens) : 0,
-      steps: stepCount,
-      durationMs: Number(wfNode.latency_ms) > 0 ? Number(wfNode.latency_ms) : 0,
-      summary: wfNode.summary || '',
-    }, {
-      isRoot: false,
-      parentId: rootNode.id,
-      defaultModel: rootNode.model,
-      workflowNode: wfNode,
-      store,
-      engagementId: activeEngagement,
-    })
-    synthChild._fromDbTask = true
-    childNodes.push(synthChild)
-    existingRoles.add(role)
+  /* 3) 若 store.workflowDag 中存在真实已有活动（has_activity === true）的角色节点且未出现在子列表中，合成为节点 */
+  if (activeEngagement) {
+    const existingRoles = new Set(childNodes.map((c) => c.role))
+    const WORKER_ROLES = ['designer', 'recon', 'assess', 'exploit', 'vuln-scan', 'qa', 'internal']
+    for (const role of WORKER_ROLES) {
+      const wfNode = wfNodeByRole.get(role)
+      if (!wfNode || !wfNode.has_activity || existingRoles.has(role)) continue
+      const meta = AGENT_ROLE_META[role] || AGENT_ROLE_META.exploit
+      const stepCount = Number(wfNode.step_count || (Array.isArray(wfNode.decisions) ? wfNode.decisions.length : 0) || 1)
+      const synthChild = extractSessionTelemetry({
+        id: `sub-${role}`,
+        label: `${meta.defaultTitle}`,
+        title: `${meta.defaultTitle}`,
+        role,
+        model: rootNode.model || 'deepseek-v4.1-flash (max)',
+        activity: (wfNode.status === 'run' || wfNode.active) ? 'running' : 'completed',
+        tokens: Number(wfNode.tokens) > 0 ? Number(wfNode.tokens) : 0,
+        steps: stepCount,
+        durationMs: Number(wfNode.latency_ms) > 0 ? Number(wfNode.latency_ms) : 0,
+        summary: wfNode.summary || '',
+      }, {
+        isRoot: false,
+        parentId: rootNode.id,
+        defaultModel: rootNode.model,
+        workflowNode: wfNode,
+        store,
+        engagementId: activeEngagement,
+      })
+      synthChild._fromDbTask = true
+      childNodes.push(synthChild)
+      existingRoles.add(role)
+    }
   }
 
   childNodes.sort((a, b) => (a.wave - b.wave) || String(a.id).localeCompare(String(b.id)))
@@ -3497,7 +3754,7 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
     const effIdx = isChildCompleted ? completedWorkerIdx++ : i
     computeWorkerLmtexMeta(child, effIdx, {
       store,
-      engagementId: activeEngagement,
+      engagementId: activeEngagement || '',
       recomputeApproval: !child._persistedApproval && !child._fromDbTask,
     })
   }
@@ -3523,12 +3780,14 @@ function synthesizeAgentCollaboration(store, activeEngagement, hostSessions, req
       }
     }
   }
-  computeWorkerLmtexMeta(rootNode, 0, { store, engagementId: activeEngagement })
+  computeWorkerLmtexMeta(rootNode, 0, { store, engagementId: activeEngagement || '' })
   rootNode.children = childNodes
   rootNode.running_children = childNodes.filter((c) => c.activity === 'running').length
 
-  /* 仅同步真实宿主子会话（排除 _fromDbTask 与合成 ID），并通过 reqFlow 去重避免同请求重复写库 */
-  syncHostWorkersDedup(store, activeEngagement || 'default', childNodes, reqFlow)
+  /* 仅在当前会话已显式绑定工作区时同步真实宿主子会话，绝不向 'default' 混写未绑定会话数据 */
+  if (activeEngagement) {
+    syncHostWorkersDedup(store, activeEngagement, childNodes, reqFlow)
+  }
 
   /* 生成跨智能体协作事件流（collabEvents）：按波次生成 spawn / progress / error / complete */
   const collabEvents = []
@@ -4681,6 +4940,19 @@ function detectShardLockConflicts(locksList) {
 }
 
 function computeShardLocksFallback(store, engagementId, wfDag = null, filterOpts = null) {
+  if (!engagementId) {
+    return {
+      ok: true,
+      unbound: true,
+      engagement: null,
+      engagement_id: null,
+      locks: [],
+      shard_locks: [],
+      items: [],
+      active: [],
+      conflicts: [],
+    }
+  }
   const cleanFilter = {}
   let hasFilter = false
   if (filterOpts && typeof filterOpts === 'object') {
@@ -4703,6 +4975,8 @@ function computeShardLocksFallback(store, engagementId, wfDag = null, filterOpts
     }
   }
 
+  const dag = wfDag || (store && typeof store.workflowDag === 'function' ? store.workflowDag(engagementId) : null)
+
   let dbLocks = []
   let storeMeta = null
   if (store && typeof store.listShardLocks === 'function') {
@@ -4724,24 +4998,40 @@ function computeShardLocksFallback(store, engagementId, wfDag = null, filterOpts
     }
   }
 
-  const dag = wfDag || (store && typeof store.workflowDag === 'function' ? store.workflowDag(engagementId) : null)
   const tasks = (dag && Array.isArray(dag.worker_tasks)) ? dag.worker_tasks : []
   const seenKeys = new Set()
+  const locks = []
   for (const existing of dbLocks) {
     if (!existing || typeof existing !== 'object') continue
-    const fp = normalizeTouchedFilePath(existing.file_path || existing.filePath || '') || String(existing.file_path || existing.filePath || '').trim()
-    if (!fp) continue
-    seenKeys.add(`${existing.worker_task_id ?? ''}::${fp}`)
-    if (existing.worker_name) seenKeys.add(`name:${existing.worker_name}::${fp}`)
+    const rawFp = existing.file_path || existing.filePath || existing.file_pattern || ''
+    const fp = normalizeTouchedFilePath(rawFp) || String(rawFp).trim()
+    const isRowActive = existing.active !== undefined
+      ? Boolean(existing.active)
+      : (String(existing.status || 'active').toLowerCase() === 'active')
+    if (fp) {
+      seenKeys.add(`${existing.worker_task_id ?? ''}::${fp}`)
+      if (existing.worker_name) seenKeys.add(`name:${existing.worker_name}::${fp}`)
+    }
+    locks.push(Object.assign({}, existing, {
+      file_path: fp || rawFp,
+      file_pattern: existing.file_pattern || fp || rawFp,
+      active: isRowActive,
+    }))
   }
 
-  const locks = dbLocks.slice()
   for (const t of tasks) {
     if (!t) continue
     if (cleanFilter.worker_task_id !== undefined && String(t.id) !== String(cleanFilter.worker_task_id)) continue
     if (cleanFilter.wave && String(t.wave || '') !== cleanFilter.wave) continue
     const st = String(t.status || '').toLowerCase()
-    const active = st !== 'cancelled' && st !== 'archived' && st !== 'released'
+    const active = st !== 'cancelled'
+      && st !== 'archived'
+      && st !== 'released'
+      && st !== 'interrupted'
+      && st !== 'completed'
+      && st !== 'done'
+      && st !== 'finished'
+      && st !== 'approved'
     if (cleanFilter.activeOnly && !active) continue
     if (cleanFilter.status && st !== cleanFilter.status.toLowerCase()) continue
     const files = parseJsonArraySafe(t.files_owned ?? t.files_owned_json)
@@ -4755,6 +5045,7 @@ function computeShardLocksFallback(store, engagementId, wfDag = null, filterOpts
       if (kName) seenKeys.add(kName)
       locks.push({
         file_path: norm,
+        file_pattern: norm,
         worker_task_id: t.id,
         worker_name: t.worker_name || `wt-${t.id}`,
         worker_role: t.worker_role || 'exploit',
@@ -4804,11 +5095,34 @@ async function handleAgentsOp(ctx, request) {
   const reqFlow = createRequestFlow()
   const root = (() => { try { return store && store.root } catch { return undefined } })()
   const resolvedRootSession = request.session ? resolveRootSessionId(ctx, request.session) : ''
-  const activeEngagement = request.engagement
-    || request.engagement_id
-    || request.engagementId
-    || (store ? getCachedActiveEngagementId(store) : null)
-    || 'default'
+  const explicitReqEng = String(request.engagement || request.engagement_id || request.engagementId || '').trim()
+
+  let sessionScopedDefined = false
+  let sessionBoundEngagement = null
+  if (!explicitReqEng && resolvedRootSession && store) {
+    sessionScopedDefined = true
+    const allEngs = getCachedEngagementsList(store)
+    const validEngById = buildValidEngagementMap(allEngs)
+    const bState = typeof store.getSessionState === 'function'
+      ? store.getSessionState(resolvedRootSession)
+      : getCachedSessionBindingEntry(store, resolvedRootSession)
+    const candBound = bState && (bState.bound || bState.engagement)
+      ? String(bState.bound || bState.engagement).trim()
+      : ''
+    if (candBound && validEngById.has(candBound)) {
+      sessionBoundEngagement = candBound
+    }
+  }
+
+  const resolveSessionAwareEngagement = (explicitOverride = '') => {
+    const exp = String(explicitOverride || explicitReqEng || '').trim()
+    if (exp) return exp
+    if (sessionScopedDefined) return sessionBoundEngagement
+    return (store ? getCachedActiveEngagementId(store) : null) || 'default'
+  }
+
+  const activeEngagement = explicitReqEng
+    || (sessionScopedDefined ? sessionBoundEngagement : ((store ? getCachedActiveEngagementId(store) : null) || 'default'))
 
   const DELEGATED_WORKFLOW_ACTIONS = [
     'planApproveWorker', 'submitWorkerDigest', 'decomposeUserPrompt',
@@ -5564,20 +5878,21 @@ async function handleAgentsOp(ctx, request) {
   }
 
   if (effectiveOp === 'shardLocks' || effectiveOp === 'listShardLocks') {
-    const currentEng = request.engagement || request.engagement_id || request.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
+    const currentEng = resolveSessionAwareEngagement()
+    if (!currentEng) {
+      return Object.assign({ active_engagement: null }, computeShardLocksFallback(store, null, null, request))
+    }
     const wfDag = getWorkflowDagDedup(store, currentEng, reqFlow)
-    return computeShardLocksFallback(store, currentEng, wfDag, request)
+    return Object.assign({ active_engagement: currentEng }, computeShardLocksFallback(store, currentEng, wfDag, request))
   }
 
   if (request.op === 'agentSessionDetail') {
-    return await extractAgentSessionDetail(ctx, store, activeEngagement, request, reqFlow)
+    return await extractAgentSessionDetail(ctx, store, activeEngagement || 'default', request, reqFlow)
   }
 
   if (request.op === 'activateAgentSession') {
     const targetSid = String(request.sessionId || request.agentId || request.session || '').trim()
-    const currentEng = (store ? getCachedActiveEngagementId(store) : null) || activeEngagement
+    const currentEng = explicitReqEng || sessionBoundEngagement || (store ? getCachedActiveEngagementId(store) : null) || 'default'
 
     /* 验证 targetSid 是否为真实 DSH 宿主会话，严禁将 'root' / 'root-main' / 'sub-*' / 'wt-*' 合成 ID 写入 sessions.json！ */
     let sessions = null
@@ -5673,7 +5988,7 @@ async function handleAgentsOp(ctx, request) {
   if (request.op === 'hostSessions') {
     const explicitEng = request.engagement || request.engagement_id || request.engagementId || ''
     const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: explicitEng || undefined, autoBind: true, reqFlow })
-    const currentEng = explicitEng || (store ? getCachedActiveEngagementId(store) : null) || activeEngagement
+    const currentEng = resolveSessionAwareEngagement(explicitEng)
     const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
     return {
       ok: true,
@@ -5691,17 +6006,67 @@ async function handleAgentsOp(ctx, request) {
   }
 
   if (request.op === 'pgWriteProbe') {
+    const currentEng = resolveSessionAwareEngagement()
+    if (!currentEng) {
+      const zeroCounts = { plan_goals: 0, worker_tasks: 0, worker_digests: 0, shard_locks: 0 }
+      return {
+        ok: true,
+        unbound: true,
+        engagement: null,
+        engagement_id: null,
+        active_engagement: null,
+        ready: false,
+        counts: zeroCounts,
+        row_counts: zeroCounts,
+        total_rows: 0,
+      }
+    }
     const probe = store && typeof store.pgWriteProbe === 'function'
-      ? store.pgWriteProbe(activeEngagement)
-      : getPgWriteProbe(activeEngagement)
-    return Object.assign({ ok: true }, probe)
+      ? store.pgWriteProbe(currentEng)
+      : getPgWriteProbe(currentEng)
+    return Object.assign(
+      {
+        ok: true,
+        active_engagement: currentEng,
+        counts: (probe && (probe.counts || probe.row_counts)) || {},
+      },
+      probe,
+    )
   }
 
   if (request.op === 'workflowDag' || request.op === 'workflowDocWall') {
     const explicitEng = request.engagement || request.engagement_id || request.engagementId || ''
     const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: explicitEng || undefined, autoBind: true, reqFlow })
-    const currentEng = explicitEng || (store ? getCachedActiveEngagementId(store) : null) || activeEngagement
+    const currentEng = resolveSessionAwareEngagement(explicitEng)
     const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
+    if (!currentEng) {
+      return {
+        ok: true,
+        standby: true,
+        unbound: true,
+        engagement: null,
+        active_engagement: null,
+        runId: null,
+        status: 'standby',
+        nodes: [],
+        all_nodes: [],
+        active_nodes: [],
+        worker_tasks: [],
+        plan_goals: [],
+        worker_digests: [],
+        edges: [],
+        activeRoles: [],
+        docWall: [],
+        host_sessions: hostSessions,
+        agentNetwork: synth.agentNetwork,
+        agent_network: synth.agentNetwork,
+        swimlanes: [],
+        collabEvents: [],
+        collab_events: [],
+        collabTasks: [],
+        collab_tasks: [],
+      }
+    }
     const rawDagData = getWorkflowDagDedup(store, currentEng, reqFlow)
     if (rawDagData) {
       const dagData = Object.assign({}, rawDagData)
@@ -5861,12 +6226,13 @@ async function handleAgentsOp(ctx, request) {
   }
 
   if (request.op === 'workflowAction' || request.op === 'workflowRun' || request.op === 'dagCheckpoint') {
+    const targetEng = activeEngagement || (store ? getCachedActiveEngagementId(store) : null) || 'default'
     if (store && typeof store.workflowAction === 'function') {
-      const res = Object.assign({ ok: true }, await invokeStoreMethodCompat(store, 'workflowAction', activeEngagement, request))
-      bumpEventSeq('workflowAction', { engagement: activeEngagement, action: request.action || request.op })
+      const res = Object.assign({ ok: true }, await invokeStoreMethodCompat(store, 'workflowAction', targetEng, request))
+      bumpEventSeq('workflowAction', { engagement: targetEng, action: request.action || request.op })
       return res
     }
-    return { ok: true, standby: true, engagement: activeEngagement }
+    return { ok: true, standby: true, engagement: targetEng }
   }
 
   if (request.op === 'setClusterConfig') {
@@ -5943,14 +6309,67 @@ async function handleAgentsOp(ctx, request) {
     return Object.assign({ db_engine: cfg }, probe)
   }
 
-  /* op === 'agentsStatus'：即使 ctx.get('subagents') 不可用也绝不返回 ok: false，优雅回退至 sessions.list() + workflowDag */
+  /* op === 'agentsStatus'：即使 ctx.get('subagents') 不可用也绝不返回 ok: false；
+     当传入的 request.session 未绑定任何工作区时，严格返回零泄漏的洁净状态！ */
   const max = maxAgentsOf(root, process.env)
   const thinkingEffort = thinkingEffortOf(root, process.env)
   const maxDepth = maxDepthOf(root, process.env)
   const explicitEng = request.engagement || request.engagement_id || request.engagementId || ''
   const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: explicitEng || undefined, autoBind: true, reqFlow })
-  const currentEng = explicitEng || (store ? getCachedActiveEngagementId(store) : null) || activeEngagement
+  const currentEng = resolveSessionAwareEngagement(explicitEng)
   const dbEngine = store && typeof store.dbEngineInfo === 'function' ? store.dbEngineInfo() : resolvePgConfig(root)
+
+  if (!currentEng) {
+    const synth = synthesizeAgentCollaboration(store, null, hostSessions, resolvedRootSession, reqFlow)
+    const ownChildren = synth.childNodes
+    const ownRunning = ownChildren.filter((c) => c.activity === 'running')
+    return {
+      ok: true,
+      unbound: true,
+      max,
+      maxAgents: max,
+      used: ownRunning.length,
+      free: Math.max(max - ownRunning.length, 0),
+      running: ownRunning.slice(0, 20),
+      children: ownChildren,
+      total_children: ownChildren.length,
+      host_sessions: hostSessions,
+      hostSessions,
+      active_engagement: null,
+      agentNetwork: synth.agentNetwork,
+      agent_network: synth.agentNetwork,
+      nodes: synth.nodes,
+      swimlanes: synth.swimlanes,
+      collabEvents: synth.collabEvents,
+      collab_events: synth.collabEvents,
+      collabTasks: synth.collabTasks,
+      collab_tasks: synth.collabTasks,
+      source: maxAgentsSourceOf(root, process.env),
+      limit: MAX_AGENTS_LIMIT,
+      default_max: DEFAULT_MAX_AGENTS,
+      thinking: thinkingEffort,
+      thinking_effort: thinkingEffort,
+      thinkingEffort,
+      default_thinking_effort: DEFAULT_THINKING_EFFORT,
+      valid_thinking_efforts: VALID_THINKING_EFFORTS,
+      max_depth: maxDepth,
+      maxDepth,
+      default_max_depth: DEFAULT_MAX_DEPTH,
+      max_depth_limit: MAX_DEPTH_LIMIT,
+      db_engine: dbEngine,
+      pg_probe: {
+        ok: true,
+        unbound: true,
+        engagement: null,
+        engagement_id: null,
+        ready: false,
+        row_counts: { plan_goals: 0, worker_tasks: 0, worker_digests: 0, shard_locks: 0 },
+        total_rows: 0,
+      },
+      note: '当前会话尚未绑定工程工作区；初始化后将启用 4-Wave Bounded DAG 并发调度。',
+    }
+  }
+
   const pgProbe = store && typeof store.pgWriteProbe === 'function'
     ? store.pgWriteProbe(currentEng)
     : getPgWriteProbe(currentEng)
@@ -5958,8 +6377,8 @@ async function handleAgentsOp(ctx, request) {
   const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
   const currentEngChildren = []
   for (const hs of hostSessions) {
-    if (hs && hs.engagementId && hs.engagementId !== currentEng) continue
-    for (const c of Array.isArray(hs && hs.children) ? hs.children : []) {
+    if (!hs || hs.engagementId !== currentEng) continue
+    for (const c of Array.isArray(hs.children) ? hs.children : []) {
       currentEngChildren.push(c)
     }
   }
@@ -6386,10 +6805,13 @@ export function apply(ctx) {
           sendJsonWithSeq(res, 200, skillResult)
           return
         }
-        /* bootstrap / sessionBinding 时同步发现宿主 DSH 会话并确保当前会话已绑定工作区 */
+        /* bootstrap / sessionBinding 时同步发现宿主 DSH 会话（严格保持未绑定会话隔离） */
         let hostSessions = null
         const reqFlow = createRequestFlow()
-        if (request.op === 'bootstrap' || request.op === 'sessionBinding' || request.op === 'sessionBindings') {
+        const isPreDiscoverOp = request.op === 'bootstrap'
+          || request.op === 'sessionBinding'
+          || request.op === 'sessionBindings'
+        if (isPreDiscoverOp) {
           try {
             hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true, reqFlow })
           } catch { hostSessions = [] }
@@ -6407,7 +6829,41 @@ export function apply(ctx) {
           invalidateSessionBindingsCache(store)
           bumpEventSeq(String(request.op))
         }
-        handleBootstrap(store, request, result)
+        const isPostDiscoverSessionOp = request.op === 'sessionOnboarding'
+          || (Boolean(request.session) && (
+            request.op === 'openEngagement'
+            || request.op === 'bindSessionEngagement'
+            || request.op === 'activateEngagement'
+          ))
+        if (isPostDiscoverSessionOp) {
+          try {
+            hostSessions = await discoverHostSessions(ctx, store, {
+              sessionId: request.session,
+              autoBind: true,
+              reqFlow: createRequestFlow(),
+            })
+          } catch { hostSessions = [] }
+        }
+        handleBootstrap(store, withRoot, result, hostSessions)
+        if (
+          request.op === 'openEngagement'
+          && request.session
+          && result
+          && typeof result === 'object'
+          && store
+          && typeof store.getSessionState === 'function'
+        ) {
+          const rSid = typeof withRoot.resolveRoot === 'function'
+            ? withRoot.resolveRoot(request.session)
+            : String(request.session)
+          const st = store.getSessionState(rSid)
+          result.session = request.session
+          result.root_session = rSid
+          result.bound = st.bound
+          result.init_state = st.init_state
+          result.onboarding_dismissed = st.onboarding_dismissed
+          result.session_binding = st
+        }
         if (hostSessions !== null && result && typeof result === 'object') {
           result.host_sessions = hostSessions
         }

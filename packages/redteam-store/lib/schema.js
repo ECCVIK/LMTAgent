@@ -451,6 +451,7 @@ CREATE TABLE IF NOT EXISTS worker_tasks (
   error_detail     TEXT NOT NULL DEFAULT '',
   tool_calls       INTEGER NOT NULL DEFAULT 0,
   turns            INTEGER NOT NULL DEFAULT 0,
+  duration_ms      INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT '',
   updated_at       TEXT NOT NULL DEFAULT ''
 );
@@ -784,6 +785,7 @@ export function migrate(db) {
       error_detail     TEXT NOT NULL DEFAULT '',
       tool_calls       INTEGER NOT NULL DEFAULT 0,
       turns            INTEGER NOT NULL DEFAULT 0,
+      duration_ms      INTEGER NOT NULL DEFAULT 0,
       created_at       TEXT NOT NULL DEFAULT '',
       updated_at       TEXT NOT NULL DEFAULT ''
     );
@@ -823,6 +825,7 @@ export function migrate(db) {
   } catch { /* 表已存在或并发建表，忽略 */ }
   ensure('worker_tasks', 'files_owned_json', "TEXT NOT NULL DEFAULT '[]'")
   ensure('worker_tasks', 'error_detail', "TEXT NOT NULL DEFAULT ''")
+  ensure('worker_tasks', 'duration_ms', 'INTEGER NOT NULL DEFAULT 0')
   ensure('score_hit', 'self_created', 'INTEGER DEFAULT 0')
   /* 得分落在哪个「服务」上：账号类得分按 (资产, 端口) 封顶，同一服务只算一次最高权限。
      端口在写入时解析（工具传的 port → target 里的端口 → 该资产唯一登记的端口）；老数据打开靶标时按 target 回填一次。 */

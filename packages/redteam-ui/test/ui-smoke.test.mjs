@@ -124,7 +124,7 @@ moduleExports.apply({
     if (typeof dispose === 'function') cleanups.push(dispose)
   },
 })
-ok(registeredSlots.length >= 4, `apply 注册了多区域工作台槽位（实际 ${registeredSlots.length} 个）`)
+ok(registeredSlots.length === 6, `apply 注册了精准去重后的 6 个工作台槽位（实际 ${registeredSlots.length} 个）`)
 ok(appended.length >= 2, `apply 注入了样式标签（实际 ${appended.length} 个）`)
 for (const dispose of cleanups) {
   try { dispose() } catch { /* 忽略 */ }
@@ -193,8 +193,9 @@ ok(
   'client.js 在 .rt-bento-row-canvas 中渲染全宽 HarnessWorkflowDeck 画布',
 )
 ok(
-  /rt-analytics-trio[\s\S]*Token 统计[\s\S]*耗时与并发吞吐统计[\s\S]*PgWriteProbeCard/.test(source),
-  'client.js 在 .rt-analytics-trio 中聚合 Token / Latency / PgWriteProbeCard',
+  /rt-ov-kpi-grid[\s\S]*沟通与执行[\s\S]*并发集群[\s\S]*上下文与缓存[\s\S]*交付里程碑/.test(source)
+  && !source.includes("className: 'rt-analytics-trio'"),
+  'client.js 在 OverviewTab 使用精简 .rt-ov-kpi-grid 四宫格指标卡并彻底剔除重复 .rt-analytics-trio 环形图堆砌',
 )
 ok(
   source.includes('activeSlots') && /Math\.min\(\s*max\s*,/.test(source),
@@ -279,11 +280,12 @@ for (const token of V020_TREE_AND_LMTEX_TOKENS) {
   ok(source.includes(token), `client.js 包含 v0.20.0 横向/纵向开发树切换、全宽底部流程区与 lmtex 闭环标记「${token}」`)
 }
 
+const bRowKpiIdx = source.indexOf("className: 'rt-ov-kpi-grid'")
 const bRowCanvasIdx = source.indexOf("className: 'rt-bento-row-canvas'")
-const bRowControlIdx = source.indexOf("className: 'rt-bento-row-1'")
+const bRowHeroIdx = source.indexOf("className: 'rt-ov-hero'")
 ok(
-  bRowCanvasIdx !== -1 && bRowControlIdx !== -1 && bRowCanvasIdx < bRowControlIdx,
-  'OverviewTab 中全宽 Workflow Tree 画布 (.rt-bento-row-canvas) 位于页面最上方（先于 .rt-bento-row-1 与 .rt-analytics-trio）',
+  bRowKpiIdx !== -1 && bRowCanvasIdx !== -1 && bRowHeroIdx !== -1 && bRowKpiIdx < bRowCanvasIdx && bRowCanvasIdx < bRowHeroIdx,
+  'OverviewTab 采用 v0.22.0 极简三段结构：4-KPI 指标条 (.rt-ov-kpi-grid) -> 实时路线图画布 (.rt-bento-row-canvas) -> 四阶段里程碑条 (.rt-ov-hero)',
 )
 
 /* ── 8. v0.21.0 架构根治与零攻防残留契约 ────────────────────────────────── */
@@ -321,7 +323,48 @@ ok(
   'styles.js (PANEL_CSS) 包含 svg.rt-h-wave-branch-line 背景重置（background: none）',
 )
 
+/* ── 9. v0.22.0 1:1 会话强隔离、独立「协同与审批」页、单一视图切换器、SVG 绝对定位与 6 槽位去重契约 ── */
+console.log('— 冒烟九：v0.22.0 1:1 会话强隔离、独立协同页、单一 UiModeSwitcher、SVG 几何修复与宿主槽位去重')
+const uiModeMountCount = (source.match(/h\(\s*UiModeSwitcher\b/g) || []).length
+ok(
+  uiModeMountCount === 1,
+  `全局仅在 Panel 顶栏挂载 1 处 UiModeSwitcher（消除总览与向导重复胶囊，实际 ${uiModeMountCount} 处）`,
+)
+
+const expectedSlotNames = [
+  'shell.overlay',
+  'main',
+  'sidebar.panellist',
+  'conversation.view',
+  'conversation.session.header.utilities',
+  'settings.section',
+]
+const actualSlotNames = registeredSlots.map((s) => s.meta.name)
+ok(
+  expectedSlotNames.every((n) => actualSlotNames.includes(n)) && actualSlotNames.length === 6,
+  `宿主槽位收敛为精准 6 项（${actualSlotNames.join(', ')}）`,
+)
+ok(
+  !source.includes('ComposerDockBar')
+    && !source.includes('conversation.input.dock')
+    && !source.includes('conversation.session.header.actions')
+    && !source.includes('sidebar.footer.action'),
+  '已彻底移除 ComposerDockBar、conversation.input.dock、header.actions 与 sidebar.footer.action 重复入口',
+)
+ok(
+  !source.includes('WorkBuddy Cluster · p3') && source.includes('RolePromptsHubTab'),
+  '集群「智能体与并发」已升级为 p5 实时工作台，并将 8 角色提示词拆分为独立 RolePromptsHubTab',
+)
+ok(
+  source.includes('useScopedSession') && source.includes('sessionOnboarding') && source.includes('协同与审批'),
+  '包含 useScopedSession 1:1 会话隔离、sessionOnboarding 跳过/重开状态机与独立「协同与审批」一级页签',
+)
+ok(
+  (PANEL_CSS.includes('.rt-h-fanout-col') || source.includes('rt-h-fanout-col'))
+    && (/\.rt-h-root-fanout-svg\s*\{[^}]*position\s*:\s*absolute/s.test(PANEL_CSS)
+      || /rt-h-root-fanout-svg[\s\S]{0,260}position\s*:\s*['"]absolute['"]/.test(source)),
+  '横向派生树扇出连线采用 .rt-h-fanout-col 容器 + .rt-h-root-fanout-svg 绝对定位几何，消除流式高度撑大错位',
+)
+
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)
-
-

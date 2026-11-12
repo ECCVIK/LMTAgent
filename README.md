@@ -1,14 +1,14 @@
 <div align="center">
 
-# ⚡ LMTAgent (`v0.21.0`)
+# ⚡ LMTAgent (`v0.22.0`)
 
 **为 [DeepSeek Harness (DSH Desktop)](https://github.com/anywhere-labs/dsh-desktop) 打造的「`lmtex` 闭环编排 × `gstack` 8 角色协同」全栈软件研发集群与工作台**
 
-[![DSH Plugin](https://img.shields.io/badge/DSH_Desktop-LMTAgent_v0.21.0-4D6BFE?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://github.com/ECCVIK/LMTAgent)
-[![lmtex Closed Loop](https://img.shields.io/badge/Orchestrator-WishRefiner_+_1_Plan_+_N_Workers-0EA5E9?style=for-the-badge)](#2-lmtex-闭环调用结构step-0-许愿润色1-plan--n-workers-拆解压缩与审批)
-[![ShardLock Guard](https://img.shields.io/badge/Concurrency-ShardLock_120s_Lease_+_Recursive_DAG-2563EB?style=for-the-badge)](#3-8-角色-gstack-虚拟软件研发团队与运行时-shardlock-排他锁)
+[![DSH Plugin](https://img.shields.io/badge/DSH_Desktop-LMTAgent_v0.22.0-4D6BFE?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://github.com/ECCVIK/LMTAgent)
+[![Session Isolation](https://img.shields.io/badge/Session_Guard-1:1_Workbench_Isolation_+_Onboarding-0EA5E9?style=for-the-badge)](#1-核心工作台架构与可视化交互能力概览v0220)
+[![ShardLock Guard](https://img.shields.io/badge/Concurrency-ShardLock_+_3min_Zombie_Reaper-2563EB?style=for-the-badge)](#3-8-角色-gstack-虚拟软件研发团队与运行时-shardlock-排他锁)
 [![PostgreSQL Probe](https://img.shields.io/badge/Fact_Store-PostgreSQL_16_Digest_&_SSE_Stream-4D6BFE?style=for-the-badge&logo=postgresql&logoColor=white)](#5-主题自适应-postgresql-实时写表与摘要压缩探针)
-[![Tests Passing](https://img.shields.io/badge/Tests-21_Suites_·_1105_Assertions_PASS-6366F1?style=for-the-badge)](#7-质量门禁与测试验证)
+[![Tests Passing](https://img.shields.io/badge/Tests-22_Suites_·_1130_Assertions_PASS-6366F1?style=for-the-badge)](#7-质量门禁与测试验证)
 
 <p align="center">
   <b>本项目诞生宗旨优化许愿式编程的体验和可控，目的是让即使无编程语言基础也可以通过此项目作为流水线标准开发得到想要的软件，加上此项目，你的提示词不再会因为模型各种幻觉问题自我误导偏离你想要的开发方向，而是规划润色你的提示词，并拆解成目标并派发已经写好对应角色的子代理去开发</b>
@@ -18,31 +18,30 @@
 
 ---
 
-## ✨ 1. 核心工作台架构与可视化交互能力概览（`v0.21.0`）
+## ✨ 1. 核心工作台架构与可视化交互能力概览（`v0.22.0`）
 
-LMTAgent 专为解决大模型「许愿式编程（Wishful Programming）」中**需求模糊幻觉、上下文膨胀、多代理并发踩踏与黑盒不可控**痛点而生，融合 [Garry Tan `gstack`](https://github.com/garrytan/gstack)、[chumingjun/dsh-harness-one](https://github.com/chumingjun/dsh-harness-one)、ComfyUI / n8n 节点编排交互以及 `lmtex` 主从闭环思想。在 `v0.21.0` 中完成了五大架构级升级：
+LMTAgent 专为解决大模型「许愿式编程（Wishful Programming）」中**需求模糊幻觉、跨会话状态串台、上下文膨胀、多代理并发踩踏与黑盒不可控**痛点而生，融合 [Garry Tan `gstack`](https://github.com/garrytan/gstack)、[chumingjun/dsh-harness-one](https://github.com/chumingjun/dsh-harness-one)、ComfyUI / n8n 节点编排交互以及 `lmtex` 主从闭环思想。在 `v0.22.0` 中完成了五大关键重构：
 
-- **✨ Step 0 许愿润色与拆解向导（`WishRefinerWizard`）+ 双模式视图 + 空白态零假数据**：
-  - 首屏顶部内置可折叠的 **`WishRefinerWizard`**（对应后端 `refineAndDecomposeWish` 动作），引导用户先将模糊口语愿望润色为无歧义研发契约，自动拆解阶段目标（`plan_goals`）与无交集文件分片；
-  - 顶栏支持 **`🌱 新手简洁 ⇄ 🔧 专家视图`** 一键切换：新手模式自动收敛底层数据库与工程术语，专注「许愿 ➔ 进度 ➔ 验收交付」；专家模式完整展开 PG 事务流、Token 计量与分片锁矩阵；空白会话遵循**零假数据契约**，绝不注入虚构演示数据或历史残留标签。
-- **🔒 运行时文件独占分片锁（`ShardLock`）+ 并发槽 `120s` 租约自动回收 + 递归深度感知**：
-  - 新增运行时 `shard_locks` 排他锁校验引擎，Worker 声明或写入重叠文件路径时即时拦截冲突，保障并行编码零互相覆盖；
-  - 并发槽（`1–12` 可调）内置 **`120s` 租约（Lease TTL）心跳与超时自动回收机制**，彻底杜绝子代理异常中断导致的僵尸槽位永久卡死，并精准感知 `maxDepth: 3` 递归子代理树层级关系。
-- **🖼️ 动态 `ResizeObserver` 精准贝塞尔连线 + 自适应无限画布边界 + 原位重跑/改目标**：
-  - 60–120 FPS 零 React 重绘平移缩放画布默认采用 **`➔ 横向向右派生`** 布局（可通过 **`⚙️ 树布局设置`** 切换纵向视图），接入 `ResizeObserver` 实时测量真实 DOM 锚点绘制无遮挡水平三次贝塞尔连线，并随展开节点规模自适应扩展画布边界；
-  - 下方全宽**两步式节点探针抽屉**新增 **`✏️ 编辑目标`**（`updateWorkerGoal`）、**`🔄 重跑该分片`**（`retryWorkerTask`）、可编辑下一阶段目标（`nextGoal`）的 **`✓ Plan 审批通过并下达新目标`**，以及 **`💬 跳转侧边聊天框打开该 Agent 会话 ↗`**（顶栏配备一键 **`✕ 退出全屏 (Esc)`**）。
-- **⚡ 宿主 `.jsonl` 字节偏移增量尾读 + 原生 `tokenMeter` 接入 + `GET /redteam/events` SSE 实时流**：
-  - 宿主桥接层优先接入原生 `tokenMeter` 服务，并对会话 `.jsonl` 日志采用**字节偏移增量尾读（Byte-Offset Tail Reader）**替代全文件重复解析，内存与 IO 开销降低一个数量级；同时通过 **`GET /redteam/events`** Server-Sent Events（SSE）实时向前端推送状态与写表变更。
-- **🧩 前端 `packages/redteam-ui/src/` 零依赖模块化架构 + `build.mjs` 根目录自动同步校验**：
-  - 将原本万行级的单文件前端与样式彻底拆分为 `packages/redteam-ui/src/` 模块化源码目录，通过零外部依赖组装脚本（`assemble-styles.mjs` / `assemble-client.mjs`）确定性编译，并由 `build.mjs` 自动同步与校验仓库根目录 `lib/` 产物一致性。
+- **🧭 1:1 会话专属工作台强隔离与独立「协同与审批」首屏卡片页（`CollabApprovalTab`）**：
+  - 按点开的 DSH 会话（`props.sessionId` 权威实例隔离 + `$DSH_HOME/redteam/sessions.json` 状态机）建立 1:1 专属工作台状态，彻底根除新会话或未初始化会话自动串台绑定旧项目的问题；
+  - 新增置顶独立一级分区 **「协同与审批」**，集中承载**会话初始化指引卡**（支持一键创建当前会话工作台、**`跳过指引`** 及**未产生对话时随时一键重新获取指引**）、**需求澄清对话与分片立项卡**以及 **Plan & Worker 待审批决策队列卡**。
+- **🧹 界面降噪去重与宿主挂载槽位精简（单一视图切换 · 6 核心槽位）**：
+  - 彻底清除重复堆叠的视图切换器（仅在顶栏保留唯一紧凑切换）、重复标题栏、冗余环形图与口号式标签；将宿主槽位收敛为 6 个精准入口（移除遮挡对话输入的底部冗余条与重复侧栏文字）。
+- **🖼️ 零反馈死循环水平贝塞尔派生树 + `集群 -> 智能体与并发` 全面升级至真实 `p5` 拓扑**：
+  - 将水平连线 `<svg>` 置于独立绝对定位轨道（`.rt-h-fanout-col`），彻底根除 `ResizeObserver` 外框内边距反向撑高导致的画布空白问题；
+  - 真实 **`集群 -> 智能体与并发`** 页签全面升级为实时 **`p5` 集群工作台**（紧凑并发与租约控制条 + 横/纵 Wave 派生树 + 两步式节点透视抽屉 + 常驻可见的 **`P0 → P3` 全宽跨 Agent 3 段式执行泳道**），并将 8 角色提示词模板解耦至独立 **`角色与提示词`** 子页签。
+- **🔒 `ShardLock` 文件排他锁 + `3min` 无心跳僵尸并发槽自动回收**：
+  - 运行时 `shard_locks` 排他锁即时拦截重叠文件声明；存储与遥测双层内置 **`3min` 无活跃流/日志心跳自动回收器（`reapExpiredAgentLeases`）**，冻结真实结束耗时并自动释放僵尸 `RUNNING` 槽位与文件锁。
+- **⚡ `.jsonl` 字节增量尾读 + `GET /redteam/events` SSE + 100% 真实插件面板截图**：
+  - 采用字节偏移增量尾读与 SSE 实时推送，并彻底移除文档截图中任何非插件自身的伪造宿主外壳，确保所见即所得。
 
-| **① Step 0 许愿润色向导、双模式切换与 60FPS 横向工作流树** | **② Wave 3 横向派生展开、原位编辑/重跑探针抽屉与全宽泳道** |
+| **① 独立「协同与审批」卡片页：1:1 会话初始化指引、需求澄清与审批队列** | **② 升级版「集群 -> 智能体与并发」（`p5` 实时拓扑 + 两步透视 + 全宽泳道）** |
 | :---: | :---: |
-| ![Overview Bento Workbench](docs/assets/ui-overview-workbench.png) | ![Visual Multi-Agent DAG & Concurrency](docs/assets/ui-agents-dag.png) |
-| *顶部可折叠 `WishRefinerWizard`（`🌱 新手简洁 ⇄ 🔧 专家视图`）+ `➔ 横向向右派生` 动态贝塞尔树、`P0~P3` 优先级与 `-86%` 压缩胶囊* | *支持 `✏️ 编辑目标`、`🔄 重跑该分片`、自定义 `nextGoal` 闭环审批、`💬 跳转侧边聊天框` 与 `P0 → P3` 全宽 3 段式执行泳道* |
-| **③ `ShardLock` 文件排他锁矩阵与 PG 16 摘要压缩探针** | **④ `lmtex` 闭环交付文稿主从墙与飞书群聊 Webhook 推送** |
+| ![Standalone Collab & Onboarding Page](docs/assets/ui-overview-workbench.png) | ![Visual Multi-Agent DAG & Concurrency](docs/assets/ui-agents-dag.png) |
+| *未绑定会话独立进入初始化指引（支持 `跳过指引` 与未对话一键重开）+ 对话式分片立项 + `-86%` 压缩摘要审批队列* | *真实 `AgentsTab` 首屏承载自适应并发租约控制、横向派生树、原位编辑/重跑透视抽屉与常驻 `P0 → P3` 3 段式泳道* |
+| **③ `ShardLock` 文件排他锁矩阵、会话隔离表与 PG 16 摘要压缩探针** | **④ `lmtex` 闭环交付文稿主从墙与飞书群聊 Webhook 推送** |
 | ![PostgreSQL Live Write Probe & Shards](docs/assets/ui-assets-pg.png) | ![Doc Wall & Feishu Bot Delivery](docs/assets/ui-report-v2.png) |
-| *`shard_locks` 文件所有权矩阵（`120s` 租约自动回收）+ PostgreSQL 16 实时写表监控（`plan_goals` / `worker_tasks` / `worker_digests`）* | *基于 `worker_digests` 自动汇编研发交付文稿主从墙，支持 `feishuConfig` 在线配置与真实飞书群聊卡片推送回执* |
+| *`session_onboarding` 1:1 强隔离 + `shard_locks` 文件所有权矩阵（`3min` 僵尸锁回收）+ PG 16 实时写表监控* | *基于 `worker_digests` 自动汇编研发交付文稿主从墙，支持 `feishuConfig` 在线配置与真实飞书群聊卡片推送回执* |
 
 ---
 
@@ -131,7 +130,7 @@ LMTAgent 专为解决大模型「许愿式编程（Wishful Programming）」中*
 
 打开 **[DSH Desktop](https://github.com/anywhere-labs/dsh-desktop)** → 进入「插件市场」→ 点击右上角 **「导入插件」**，粘贴以下描述即可自动识别并安装：
 
-> 我想安装 LMTAgent（v0.21.0）全栈软件研发集群与可视化多智能体工作流插件，仓库地址是 https://github.com/ECCVIK/LMTAgent ，主包路径在仓库根目录（或 packages/redteam-bundle），入口补丁配置是 cordis.patch.yml，前端工作台入口是 lib/client.js。它内置了 Step 0 许愿润色与拆解向导（新手简洁 / 专家视图双模式）、lmtex（1 Plan + N Workers）闭环摘要压缩审批、运行时 ShardLock 文件排他锁与 120s 并发槽租约自动回收、8 位 gstack 软件研发角色（支持子代理递归派发 maxDepth: 3，默认 thinking: low）、60FPS 动态贝塞尔横向工作流树画布（支持原位编辑目标与单分片重跑）、GET /redteam/events SSE 实时流以及主题自适应 PostgreSQL 写表探针，请帮我直接安装并启用该插件。
+> 我想安装 LMTAgent（v0.22.0）全栈软件研发集群与可视化多智能体工作流插件，仓库地址是 https://github.com/ECCVIK/LMTAgent ，主包路径在仓库根目录（或 packages/redteam-bundle），入口补丁配置是 cordis.patch.yml，前端工作台入口是 lib/client.js。它内置了 1:1 会话专属工作台隔离与可跳过/可重开的初始化指引、独立「协同与审批」对话与审批卡片页、精简高信噪比总览、升级版 p5 集群实时拓扑与全宽跨 Agent 泳道、运行时 ShardLock 文件排他锁与 3min 无心跳僵尸并发槽自动回收、8 位 gstack 软件研发角色（支持 maxDepth: 3 递归子代理）以及 GET /redteam/events SSE 实时流，请帮我直接安装并启用该插件。
 
 ### 方式二：通过命令行安装
 
@@ -151,25 +150,25 @@ node packages/redteam-bundle/tools/build.mjs --check
 # 敏感内容闸门自检与全仓扫描（确保 0 命中）
 node scripts/check-no-confidential.mjs --all
 
-# 运行全量 20 个测试套件（含 closed-loop-and-shardlock 与 ui-smoke 冒烟八，100% 通过）
+# 运行全量 22 个测试套件（含 session-isolation-v022、tabs-render 与 ui-smoke，1130 条断言 100% 通过）
 npm test
 ```
 
 ---
 
-## 🪞 8. 诚实自省与演进路线（Resolved in `v0.21.0` & Frontier Roadmap）
+## 🪞 8. 诚实自省与演进路线（Resolved in `v0.22.0` & Frontier Roadmap）
 
-我们坚持对每一版真实能力边界保持诚实透明——在 `v0.21.0` 中，此前 `v0.20.0` 自省列出的五大核心痛点已完成工程根治，同时我们也清晰列出下一阶段的前沿演进目标：
+我们坚持对每一版真实用户体验与能力边界保持诚实透明——在 `v0.22.0` 中，针对真机实测暴露出的五大核心交互与隔离缺陷完成了彻底修复：
 
-### ✅ 已在 `v0.21.0` 完成根治的 `v0.20.0` 局限
+### ✅ 已在 `v0.22.0` 完成根治的真机体验缺陷
 
-1. **零基础「许愿引导」与低术语模式已落地**：新增 **Step 0 `WishRefinerWizard` 许愿润色与拆解向导**及 **`🌱 新手简洁 / 🔧 专家视图` 双模式切换**，并彻底清空空白会话演示假数据与历史攻防残留文案。
-2. **文件分片软约束已升级为运行时 `ShardLock` 排他锁与 `120s` 租约回收**：通过数据库层 `shard_locks` 独占登记与冲突拦截，配合并发槽 `120s` 心跳超时自动释放，解决了并行踩踏与异常断连死锁问题。
-3. **画布已支持动态测量连线与单节点原位调控**：接入 `ResizeObserver` 精准锚点测量与自适应画布边界，支持在探针抽屉中直接 **`✏️ 编辑目标`**、**`🔄 重跑该分片`** 与自定义 **`nextGoal`** 闭环审批。
-4. **全量日志轮询已升级为 `.jsonl` 字节增量尾读 + `tokenMeter` + SSE 推送**：大幅降低高频同步 IO 开销，实现 `GET /redteam/events` 实时变更流驱动。
-5. **前端万行单文件已完成零依赖模块化拆分**：拆解至 `packages/redteam-ui/src/` 并配备 `assemble-styles.mjs` / `assemble-client.mjs` 与 `build.mjs` 根目录自动同步校验。
+1. **根治跨会话自动串台劫持，实现 1:1 会话专属工作台与初始化状态机**：移除了 `discoverHostSessions`、`handleBootstrap` 与前端 `Panel` 将未绑定会话强制回退绑定至旧项目的所有隐式劫持逻辑；每个点开的会话独立拥有 `uninitialized / skipped / initialized` 状态，支持一键创建当前会话工作台、**`跳过指引`**，并在会话尚未产生对话时保留一键**重新获取初始化指引**入口。
+2. **新增独立「协同与审批」一级卡片页，彻底分离人机交互与监控遥测**：将会话初始化指引、需求澄清对话立项与 Plan/Worker 阶段审批全部收纳进置顶独立卡片页，不再挤占总览画布或深藏于折叠抽屉。
+3. **修复 `ResizeObserver` `+56px/帧` 连线膨胀导致的总览画布白屏**：将水平扇出 `<svg>` 改为独立轨道内 `position: absolute; inset: 0`，对父级网格高度零反向反馈，恢复首屏即见的水平贝塞尔工作流路线图。
+4. **清除同一屏 4 处重复模式开关、冗余宿主槽位与口号式噪声**：仅在顶栏保留唯一视图切换器，移除输入框上方的冗余 `ComposerDockBar` 与侧栏重复文字，并将总览收敛为「4 项核心 KPI + 路线图 + 四阶段里程碑条」。
+5. **升级真实 `集群 -> 智能体与并发` 至 `p5` 拓扑，并剔除一切伪造宿主外壳截图**：将旧版 `SLOT #1..#12` 列表替换为自适应并发租约条 + 实时派生树 + 两步透视抽屉 + 常驻 `P0 → P3` 泳道（角色提示词独立为 `角色与提示词` 子页签），同时补齐 `3min` 无心跳僵尸 `RUNNING` 槽位回收与 100% 真实插件面板截图。
 
-### 🔭 下一步前沿攻坚方向（`v0.22+` Frontier Milestones）
+### 🔭 下一步前沿攻坚方向（`v0.23+` Frontier Milestones）
 
 1. **Cordis 内核级 `fs` 系统调用硬沙箱拦截（Kernel-Level `fs` Pre-Hook Sandbox）**：
    - 当前 `ShardLock` 已在工作流编排与任务锁层拦截越界声明，但若子代理通过原生 `tool-bash` 直接执行底层 shell 重定向写文件，仍需在 Cordis 宿主工具内核层挂载 `fs-write / bash` Pre-Hook 白名单硬拦截。

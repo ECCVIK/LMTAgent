@@ -465,11 +465,53 @@ export {
  */
 export function dispatch(store, req = {}) {
   const op = req.op
+  const resolveSessionRoot = (raw) => {
+    const sid = typeof raw === 'string' ? raw.trim() : ''
+    if (!sid) return ''
+    if (typeof req.resolveRoot === 'function') {
+      try {
+        const resolved = req.resolveRoot(sid)
+        if (typeof resolved === 'string' && resolved.trim()) return resolved.trim()
+      } catch { /* 解析器异常时保留原始会话 ID */ }
+    }
+    return sid
+  }
   try {
     if (op === 'bootstrap') {
       const engagements = store.listEngagements()
-      /* 优先沿用「当前靶标」指针，其次才是最近创建的靶标 */
       const active = typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : undefined
+      const rawSession = typeof req.session === 'string' ? req.session.trim() : ''
+      if (rawSession) {
+        const rootSid = resolveSessionRoot(rawSession)
+        const state = typeof store.getSessionState === 'function'
+          ? store.getSessionState(rootSid)
+          : {
+            session: rootSid,
+            bound: store.sessionBinding(rootSid) || null,
+            name: null,
+            session_title: null,
+            cwd: null,
+            init_state: store.sessionBinding(rootSid) ? 'initialized' : 'uninitialized',
+            onboarding_dismissed: Boolean(store.sessionBinding(rootSid)),
+            has_conversation: false,
+            updated_at: null,
+          }
+        const boundMeta = state.bound ? engagements.find((e) => e.id === state.bound) : null
+        const sessionBinding = Object.assign({}, state, {
+          session: rawSession,
+          root_session: rootSid,
+          name: state.bound ? ((boundMeta && boundMeta.name) || state.name || state.bound) : null,
+        })
+        return {
+          ok: true,
+          root: store.root,
+          engagements,
+          current: req.engagement || sessionBinding.bound || null,
+          session_binding: sessionBinding,
+          dbEngine: typeof store.dbEngineInfo === 'function' ? store.dbEngineInfo() : null,
+        }
+      }
+      /* 未传入 req.session 时才回退全局当前指针 */
       return {
         ok: true, root: store.root, engagements,
         current: req.engagement || active || (engagements[0] && engagements[0].id) || null,
@@ -480,53 +522,127 @@ export function dispatch(store, req = {}) {
       return Object.assign({ ok: true }, typeof store.dbEngineInfo === 'function' ? store.dbEngineInfo() : {})
     }
     if (op === 'openEngagement') {
-      return { ok: true, engagement: store.openEngagement(req.name, req.scope) }
+      const engagement = store.openEngagement(req.name, req.scope)
+      const rawSession = typeof req.session === 'string' ? req.session.trim() : ''
+      if (rawSession && engagement && engagement.id) {
+        const rootSid = resolveSessionRoot(rawSession)
+        store.setSessionBinding(rootSid, engagement.id, engagement.name || req.name || engagement.id, {
+          title: req.session_title ?? req.title,
+          cwd: req.cwd,
+          hasConversation: req.has_conversation ?? req.hasConversation,
+        })
+        const state = typeof store.getSessionState === 'function' ? store.getSessionState(rootSid) : null
+        return {
+          ok: true,
+          engagement,
+          session: rawSession,
+          root_session: rootSid,
+          bound: state ? state.bound : engagement.id,
+          init_state: state ? state.init_state : 'initialized',
+          onboarding_dismissed: state ? state.onboarding_dismissed : true,
+          session_binding: state,
+        }
+      }
+      return { ok: true, engagement }
     }
     if (op === 'activateEngagement') {
       const activated = store.setActiveEngagement(req.engagement)
-      /* 顺手把"这个会话在用哪个靶标"记下来：面板据此跟随会话切换。
-         没有 session 时只动全局指针（命令行调用就是这种情形）。 */
-      if (activated && typeof req.session === 'string' && req.session) {
-        store.setSessionBinding(req.session, req.engagement, req.name)
+      /* 仅在显式激活时记录当前会话对应的工作区；没有 session 时只更新全局指针 */
+      if (activated && typeof req.session === 'string' && req.session.trim()) {
+        const rootSid = resolveSessionRoot(req.session)
+        store.setSessionBinding(rootSid, req.engagement, req.name, {
+          title: req.session_title ?? req.title,
+          cwd: req.cwd,
+          hasConversation: req.has_conversation ?? req.hasConversation,
+        })
       }
       return { ok: activated, current: store.activeEngagementId() }
     }
-    /* 会话 → 靶标：面板在会话切换时问"这个会话该看哪个靶标"。
-       答不出来（没绑过）返回 bound: null，由面板回落到"最后一次绑定的靶标"。
-       `req.resolveRoot` 是宿主注入的"沿 parentSession 走到根会话"的解析器：
-       绑定表只记根会话键，用户在界面里点开的是哪个会话（含子智能体的会话）都能对上。 */
-    if (op === 'sessionBinding' || op === 'sessionBindings') {
-      const rawSession = typeof req.session === 'string' ? req.session : ''
-      let root = rawSession
-      if (rawSession && typeof req.resolveRoot === 'function') {
-        try {
-          const resolved = req.resolveRoot(rawSession)
-          if (typeof resolved === 'string' && resolved) root = resolved
-        } catch { /* 解析器坏掉时按原样处理：最差也只是回落到"最后绑定的靶标" */ }
+    if (op === 'sessionOnboarding') {
+      const rawSession = typeof req.session === 'string' ? req.session.trim() : ''
+      if (!rawSession) return { ok: false, error: 'session required' }
+      const rootSid = resolveSessionRoot(rawSession)
+      const state = typeof store.setSessionOnboarding === 'function'
+        ? store.setSessionOnboarding(rootSid, {
+          action: req.action,
+          title: req.title ?? req.session_title,
+          cwd: req.cwd,
+          hasConversation: req.hasConversation ?? req.has_conversation,
+          engagement: req.engagement,
+          name: req.name,
+        })
+        : null
+      if (!state) return { ok: false, error: 'failed to update session onboarding state' }
+      return {
+        ok: true,
+        session: rawSession,
+        root_session: rootSid,
+        bound: state.bound,
+        name: state.name,
+        init_state: state.init_state,
+        onboarding_dismissed: state.onboarding_dismissed,
+        has_conversation: state.has_conversation,
+        session_title: state.session_title,
+        cwd: state.cwd,
+        updated_at: state.updated_at,
+        session_binding: state,
       }
-      const bound = root ? store.sessionBinding(root) : undefined
+    }
+    /* 会话 → 工作区 1:1 绑定查询：未绑定时严格返回 bound: null，绝不跨会话串绑 */
+    if (op === 'sessionBinding' || op === 'sessionBindings') {
+      const rawSession = typeof req.session === 'string' ? req.session.trim() : ''
+      const root = resolveSessionRoot(rawSession)
+      const state = root && typeof store.getSessionState === 'function' ? store.getSessionState(root) : null
+      const bound = state ? state.bound : (root ? store.sessionBinding(root) : undefined)
       const meta = bound ? store.listEngagements().find((e) => e.id === bound) : undefined
       const base = {
         ok: true,
         session: rawSession || null,
         root_session: root || null,
         bound: bound || null,
-        name: bound ? ((meta && meta.name) || bound) : null,
-        current: store.activeEngagementId() || null,
+        name: bound ? ((meta && meta.name) || (state && state.name) || bound) : null,
+        init_state: state ? state.init_state : (bound ? 'initialized' : 'uninitialized'),
+        onboarding_dismissed: state ? state.onboarding_dismissed : Boolean(bound),
+        has_conversation: Boolean(state && state.has_conversation),
+        session_title: state ? state.session_title : null,
+        cwd: state ? state.cwd : null,
+        updated_at: state ? state.updated_at : null,
+        current: rawSession ? (bound || null) : (store.activeEngagementId() || null),
       }
       if (op === 'sessionBinding') return base
       const agents = store.sessionBindings()
       const existing = new Set(store.listEngagements().map((e) => e.id))
       const cleaned = {}
       for (const [key, value] of Object.entries(agents)) if (existing.has(value.engagement)) cleaned[key] = value
-      return Object.assign(base, { agents: cleaned })
+      const states = typeof store.listSessionBindings === 'function' ? store.listSessionBindings() : cleaned
+      return Object.assign(base, { agents: cleaned, states })
     }
-    /* 界面手动切靶标 → 写入本会话绑定（面板刷新后仍跟着这个会话走） */
+    /* 界面手动切工作区 → 写入本会话绑定（面板刷新后仍跟着这个根会话走） */
     if (op === 'bindSessionEngagement') {
-      const id = typeof req.session === 'string' ? req.session : ''
-      if (!id) return { ok: false, error: 'session required' }
-      const written = store.setSessionBinding(id, req.engagement, req.name)
-      return { ok: written, session: id, bound: written ? req.engagement : null }
+      const rawSession = typeof req.session === 'string' ? req.session.trim() : ''
+      if (!rawSession) return { ok: false, error: 'session required' }
+      const rootSid = resolveSessionRoot(rawSession)
+      const written = store.setSessionBinding(rootSid, req.engagement, req.name, {
+        title: req.session_title ?? req.title,
+        cwd: req.cwd,
+        hasConversation: req.has_conversation ?? req.hasConversation,
+      })
+      const state = written && typeof store.getSessionState === 'function' ? store.getSessionState(rootSid) : null
+      return {
+        ok: written,
+        session: rawSession,
+        root_session: rootSid,
+        bound: written ? req.engagement : null,
+        init_state: state ? state.init_state : (written ? 'initialized' : 'uninitialized'),
+        onboarding_dismissed: state ? state.onboarding_dismissed : Boolean(written),
+      }
+    }
+    if (op === 'reapExpiredAgentLeases') {
+      const targetEng = req.engagement || req.engagement_id || (typeof store.activeEngagementId === 'function' ? store.activeEngagementId() : null)
+      if (!targetEng || typeof store.reapExpiredAgentLeases !== 'function') {
+        return { ok: true, reaped_tasks: 0, released_locks: 0, sanitized_dag_nodes: 0 }
+      }
+      return Object.assign({ ok: true }, store.reapExpiredAgentLeases(targetEng, req))
     }
     /* 知识库是全局的（跨靶标共享），所以这几个 op 不需要 engagement */
     if (op === 'pocSearch') {
@@ -862,73 +978,263 @@ export class RedteamStore {
     return true
   }
 
-  /* ---------- 会话 → 靶标绑定 ---------- */
+  /* ---------- 会话 → 工作区 1:1 状态机与绑定 ---------- */
 
   /** 绑定表落盘路径：与 `current` 同级，纯文本 JSON，方便人工核对与备份。 */
   sessionBindingsPath() { return join(this.root, 'sessions.json') }
 
-  /**
-   * 读出全部会话绑定（容错：文件缺失 / 半截 JSON 都当作"还没绑过"）。
-   *
-   * 形状 `{ v: 1, agents: { <根会话 id>: { engagement, name, at } } }`。
-   * 只记**根会话**：子智能体沿父链继承，面板拿到子会话 id 时由调用方解析到根。
-   */
-  sessionBindings() {
+  #readSessionStateRecords() {
     let parsed = null
     try { parsed = JSON.parse(readFileSync(this.sessionBindingsPath(), 'utf8')) } catch { parsed = null }
     const agents = parsed && parsed.agents && typeof parsed.agents === 'object' ? parsed.agents : {}
     const out = {}
     for (const [key, value] of Object.entries(agents)) {
-      if (!value || typeof value !== 'object') continue
-      const engagement = typeof value.engagement === 'string' ? value.engagement : ''
-      if (!engagement) continue
+      if (!key || !value || typeof value !== 'object') continue
+      const rawEng = typeof value.engagement === 'string' && value.engagement.trim() ? value.engagement.trim() : null
+      const engValid = Boolean(rawEng && existsSync(this.dbPathOf(rawEng)))
+      const engagement = engValid ? rawEng : null
+      const name = engagement
+        ? (typeof value.name === 'string' && value.name.trim() ? value.name.trim() : engagement)
+        : null
+      const rawInit = typeof value.init_state === 'string' ? value.init_state.trim() : ''
+      const validInit = ['uninitialized', 'skipped', 'initialized'].includes(rawInit) ? rawInit : ''
+      const initState = engagement
+        ? (validInit || 'initialized')
+        : (validInit && validInit !== 'initialized' ? validInit : 'uninitialized')
+      const onboardingDismissed = typeof value.onboarding_dismissed === 'boolean'
+        ? (rawEng && !engValid ? false : value.onboarding_dismissed)
+        : Boolean(engagement)
+      const updatedAt = typeof value.updated_at === 'string' && value.updated_at
+        ? value.updated_at
+        : (typeof value.at === 'string' && value.at ? value.at : null)
       out[key] = {
         engagement,
-        name: typeof value.name === 'string' && value.name ? value.name : engagement,
-        at: typeof value.at === 'string' ? value.at : null,
+        name,
+        session_title: typeof value.session_title === 'string' && value.session_title ? value.session_title : null,
+        cwd: typeof value.cwd === 'string' && value.cwd ? value.cwd : null,
+        init_state: initState,
+        onboarding_dismissed: onboardingDismissed,
+        has_conversation: Boolean(value.has_conversation),
+        updated_at: updatedAt,
+        at: updatedAt,
       }
     }
     return out
   }
 
-  /** 某个会话绑定的靶标 id（没绑过返回 undefined）。 */
+  #writeSessionStateRecords(records) {
+    const entries = Object.entries(records || {})
+      .filter(([key, val]) => Boolean(key && val && typeof val === 'object'))
+      .sort((a, b) => String(b[1].updated_at || b[1].at || '').localeCompare(String(a[1].updated_at || a[1].at || '')))
+      .slice(0, 200)
+    const pruned = {}
+    for (const [key, value] of entries) {
+      if (value.engagement && !existsSync(this.dbPathOf(value.engagement))) {
+        continue
+      }
+      pruned[key] = value
+    }
+    mkdirSync(this.root, { recursive: true })
+    try {
+      writeFileSync(this.sessionBindingsPath(), JSON.stringify({ v: 1, agents: pruned }, null, 2), 'utf8')
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** 返回所有根会话的完整状态机记录（包含未绑定 / skipped 会话）。 */
+  sessionStates() {
+    return this.#readSessionStateRecords()
+  }
+
+  /** 枚举全部会话状态机记录（供 UI / 诊断使用）。 */
+  listSessionBindings() {
+    const raw = this.#readSessionStateRecords()
+    const out = {}
+    for (const key of Object.keys(raw)) {
+      out[key] = this.getSessionState(key)
+    }
+    return out
+  }
+
+  /**
+   * 读出全部已绑定工作区的会话映射（向后兼容旧版 `{ [sid]: { engagement, name, at } }` 契约）。
+   * 未绑定（`engagement === null`）的引导状态记录不混入此表，避免旧调用方误把 null 当成工作区 ID。
+   */
+  sessionBindings() {
+    const records = this.#readSessionStateRecords()
+    const out = {}
+    for (const [key, value] of Object.entries(records)) {
+      if (!value || !value.engagement) continue
+      out[key] = {
+        engagement: value.engagement,
+        name: value.name || value.engagement,
+        session_title: value.session_title,
+        cwd: value.cwd,
+        init_state: value.init_state,
+        onboarding_dismissed: value.onboarding_dismissed,
+        has_conversation: value.has_conversation,
+        updated_at: value.updated_at,
+        at: value.updated_at,
+      }
+    }
+    return out
+  }
+
+  /** 某个会话绑定的工作区 id（未绑定返回 undefined）。 */
   sessionBinding(sessionId) {
     if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined
     const entry = this.sessionBindings()[sessionId]
     return entry ? entry.engagement : undefined
   }
 
-  /**
-   * 写入一条会话绑定。
-   *
-   * 写入方有两处，都只写**根会话 id**：
-   *   · 智能体工具（redteam_engagement_open / redteam_session_bind 解析出靶标时）；
-   *   · 控制台（用户在下拉里手动切靶标时）。
-   * 这样"用户在界面切到哪个靶标"与"智能体写哪个靶标库"看的是同一张表，
-   * 面板在会话切换时才有据可依（见 UI 的 sessionEngagement 跟随逻辑）。
-   *
-   * @param sessionId - 根会话 id。
-   * @param engagement - 靶标 id（目录名）。
-   * @param name - 展示名（可空，回落到 id）。
-   * @returns 是否写入成功（靶标不存在时不写，避免留下指向已删靶标的绑定）。
-   */
-  setSessionBinding(sessionId, engagement, name) {
-    if (typeof sessionId !== 'string' || sessionId.length === 0) return false
-    if (typeof engagement !== 'string' || engagement.length === 0) return false
-    if (!existsSync(this.dbPathOf(engagement))) return false
-    const all = this.sessionBindings()
-    all[sessionId] = { engagement, name: typeof name === 'string' && name ? name : engagement, at: nowIso() }
-    /* 只留最近 200 条（按时间倒序），并顺手清掉指向已删靶标的绑定：
-       绑定表是"界面跟着会话走"的索引，不是审计记录，留着死条目只会误导面板。 */
-    const pruned = {}
-    for (const [key, value] of Object.entries(all).sort((a, b) => String(b[1].at).localeCompare(String(a[1].at))).slice(0, 200)) {
-      if (existsSync(this.dbPathOf(value.engagement))) pruned[key] = value
+  /** 读取单个根会话的归一化工作台状态机对象。 */
+  getSessionState(sessionId) {
+    const sid = typeof sessionId === 'string' ? sessionId.trim() : ''
+    const records = sid ? this.#readSessionStateRecords() : {}
+    const entry = sid ? records[sid] : null
+    const bound = (entry && entry.engagement) || null
+    const explicitInit = entry && typeof entry.init_state === 'string' ? entry.init_state : ''
+    const initState = bound
+      ? (explicitInit || 'initialized')
+      : (explicitInit && explicitInit !== 'initialized' ? explicitInit : 'uninitialized')
+    const onboardingDismissed = entry && typeof entry.onboarding_dismissed === 'boolean'
+      ? entry.onboarding_dismissed
+      : Boolean(bound)
+    return {
+      session: sid || null,
+      bound,
+      name: bound ? (entry?.name || bound) : null,
+      session_title: entry?.session_title || null,
+      cwd: entry?.cwd || null,
+      init_state: initState,
+      onboarding_dismissed: onboardingDismissed,
+      has_conversation: Boolean(entry?.has_conversation),
+      updated_at: entry?.updated_at || null,
     }
-    mkdirSync(this.root, { recursive: true })
-    try {
-      writeFileSync(this.sessionBindingsPath(), JSON.stringify({ v: 1, agents: pruned }, null, 2), 'utf8')
-    } catch { return false }
-    return true
+  }
+
+  getSessionBinding(sessionId) {
+    return this.getSessionState(sessionId)
+  }
+
+  /**
+   * 写入一条根会话 → 工作区 1:1 绑定，并自动将状态机推进至 `initialized` / `onboarding_dismissed: true`。
+   */
+  setSessionBinding(sessionId, engagement, name, meta = {}) {
+    if (typeof sessionId !== 'string' || sessionId.trim().length === 0) return false
+    if (typeof engagement !== 'string' || engagement.trim().length === 0) return false
+    const sid = sessionId.trim()
+    const engId = engagement.trim()
+    if (!existsSync(this.dbPathOf(engId))) return false
+    const all = this.#readSessionStateRecords()
+    const prev = all[sid] || null
+    const ts = nowIso()
+    const nextTitle = meta && (meta.title !== undefined || meta.session_title !== undefined)
+      ? (String(meta.title ?? meta.session_title ?? '').trim() || null)
+      : (prev?.session_title || null)
+    const nextCwd = meta && meta.cwd !== undefined
+      ? (String(meta.cwd || '').trim() || null)
+      : (prev?.cwd || null)
+    const nextHasConv = meta && (meta.hasConversation !== undefined || meta.has_conversation !== undefined)
+      ? Boolean(meta.hasConversation ?? meta.has_conversation)
+      : Boolean(prev?.has_conversation)
+    all[sid] = {
+      engagement: engId,
+      name: typeof name === 'string' && name.trim() ? name.trim() : engId,
+      session_title: nextTitle,
+      cwd: nextCwd,
+      init_state: 'initialized',
+      onboarding_dismissed: true,
+      has_conversation: nextHasConv,
+      updated_at: ts,
+      at: ts,
+    }
+    return this.#writeSessionStateRecords(all)
+  }
+
+  /**
+   * 更新根会话引导状态机（skip / reopen / initialize / unbind / sync）。
+   */
+  setSessionOnboarding(sessionId, payload = {}) {
+    const sid = typeof sessionId === 'string' ? sessionId.trim() : ''
+    if (!sid) return null
+    const opts = payload && typeof payload === 'object' ? payload : {}
+    const action = String(opts.action || 'sync').trim().toLowerCase()
+    const all = this.#readSessionStateRecords()
+    const prev = all[sid] || null
+    const ts = nowIso()
+
+    const sessionTitle = opts.title !== undefined || opts.session_title !== undefined
+      ? (String(opts.title ?? opts.session_title ?? '').trim() || null)
+      : (prev?.session_title || null)
+    const cwd = opts.cwd !== undefined
+      ? (String(opts.cwd || '').trim() || null)
+      : (prev?.cwd || null)
+    const hasConversation = opts.hasConversation !== undefined || opts.has_conversation !== undefined
+      ? Boolean(opts.hasConversation ?? opts.has_conversation)
+      : Boolean(prev?.has_conversation)
+
+    let engagement = prev?.engagement || null
+    let name = prev?.name || null
+    let initState = prev?.init_state || (engagement ? 'initialized' : 'uninitialized')
+    let onboardingDismissed = typeof prev?.onboarding_dismissed === 'boolean'
+      ? prev.onboarding_dismissed
+      : Boolean(engagement)
+
+    const requestedEng = typeof opts.engagement === 'string' && opts.engagement.trim()
+      ? opts.engagement.trim()
+      : null
+    const requestedEngValid = Boolean(requestedEng && existsSync(this.dbPathOf(requestedEng)))
+
+    if (action === 'skip') {
+      if (requestedEngValid) {
+        const metaEng = this.listEngagements().find((e) => e.id === requestedEng)
+        engagement = requestedEng
+        name = (typeof opts.name === 'string' && opts.name.trim()) || (metaEng && metaEng.name) || requestedEng
+      } else {
+        engagement = null
+        name = null
+      }
+      initState = 'skipped'
+      onboardingDismissed = true
+    } else if (action === 'reopen') {
+      if (requestedEngValid) {
+        const metaEng = this.listEngagements().find((e) => e.id === requestedEng)
+        engagement = requestedEng
+        name = (typeof opts.name === 'string' && opts.name.trim()) || (metaEng && metaEng.name) || requestedEng
+      }
+      initState = 'uninitialized'
+      onboardingDismissed = false
+    } else if (action === 'initialize' || action === 'bind') {
+      const targetEng = requestedEngValid ? requestedEng : (engagement && existsSync(this.dbPathOf(engagement)) ? engagement : null)
+      if (!targetEng) return null
+      const metaEng = this.listEngagements().find((e) => e.id === targetEng)
+      engagement = targetEng
+      name = (typeof opts.name === 'string' && opts.name.trim()) || (metaEng && metaEng.name) || name || targetEng
+      initState = 'initialized'
+      onboardingDismissed = true
+    } else if (action === 'unbind' || action === 'reset') {
+      engagement = null
+      name = null
+      initState = 'uninitialized'
+      onboardingDismissed = false
+    }
+
+    all[sid] = {
+      engagement,
+      name: engagement ? (name || engagement) : null,
+      session_title: sessionTitle,
+      cwd,
+      init_state: initState,
+      onboarding_dismissed: onboardingDismissed,
+      has_conversation: hasConversation,
+      updated_at: ts,
+      at: ts,
+    }
+    this.#writeSessionStateRecords(all)
+    return this.getSessionState(sid)
   }
 
   /* ---------- 路径 ---------- */
@@ -1165,6 +1471,7 @@ export class RedteamStore {
   }
 
   snapshot(id) {
+    try { this.reapExpiredAgentLeases(id) } catch { /* 收割异常不阻断快照读取 */ }
     const meta = readMeta(this.metaPathOf(id)) || {}
     const stats = this.stats(id)
     const tests = this.testStats(id)
@@ -1179,6 +1486,202 @@ export class RedteamStore {
       tests,
       segments,
       pg_probe: pgProbe,
+    }
+  }
+
+  /**
+   * 收割超时僵死（如 17h RUNNING）的 worker_tasks 槽位、shard_locks 分片锁与 workflow-dag.json 僵尸节点。
+   * 默认租约过期阈值 `staleMs = 180_000`（3 分钟）；若传入 `options.liveRunningIds: Set<string>`，
+   * 对不在宿主实时运行集合中且已超过 15 秒缓冲期的会话立即收割。
+   */
+  reapExpiredAgentLeases(engagementId, options = {}) {
+    const opts = options && typeof options === 'object' ? options : {}
+    const staleMs = Number.isFinite(Number(opts.staleMs)) && Number(opts.staleMs) > 0
+      ? Number(opts.staleMs)
+      : 180_000
+    const liveGraceMs = Number.isFinite(Number(opts.liveGraceMs)) && Number(opts.liveGraceMs) >= 0
+      ? Number(opts.liveGraceMs)
+      : 15_000
+    const liveRunningIds = opts.liveRunningIds instanceof Set
+      ? opts.liveRunningIds
+      : (Array.isArray(opts.liveRunningIds) ? new Set(opts.liveRunningIds.map((x) => String(x))) : null)
+    const nowMs = Number.isFinite(Number(opts.nowMs)) ? Number(opts.nowMs) : Date.now()
+    const nowStr = new Date(nowMs).toISOString()
+
+    const rawTarget = String(engagementId || this.activeEngagementId() || '').trim()
+    if (!rawTarget) {
+      return { ok: true, engagement_id: null, reaped_tasks: 0, released_locks: 0, sanitized_dag_nodes: 0 }
+    }
+
+    const { resolvedId, db } = this.#openClosedLoopDb(rawTarget, false)
+    let reapedTasks = 0
+    let releasedLocks = 0
+    let sanitizedDagNodes = 0
+    const reapedTaskIds = new Set()
+    const liveDbRoles = new Set()
+
+    if (db) {
+      try {
+        const digestTaskIds = new Set(
+          db.prepare('SELECT DISTINCT CAST(worker_task_id AS TEXT) AS tid FROM worker_digests')
+            .all()
+            .map((r) => String(r.tid || ''))
+            .filter(Boolean),
+        )
+        const runningRows = db.prepare(
+          "SELECT * FROM worker_tasks WHERE LOWER(COALESCE(status, '')) IN ('running', 'in_progress', 'active', 'run')",
+        ).all()
+        const updTaskStmt = db.prepare(`
+          UPDATE worker_tasks
+          SET status = ?,
+              approval_state = ?,
+              ui_priority = ?,
+              priority_weight = ?,
+              duration_ms = ?,
+              updated_at = ?
+          WHERE id = ?
+        `)
+
+        for (const t of runningRows) {
+          const tsMs = Date.parse(t.updated_at || t.created_at || '') || 0
+          const ageMs = tsMs > 0 ? (nowMs - tsMs) : (staleMs + 1)
+          const sessId = String(t.session_id || '').trim()
+          const expiredByAge = ageMs > staleMs
+          const expiredByMissingLive = Boolean(
+            liveRunningIds && sessId && !liveRunningIds.has(sessId) && ageMs > liveGraceMs,
+          )
+          if (!expiredByAge && !expiredByMissingLive) {
+            if (t.worker_role) liveDbRoles.add(String(t.worker_role).trim().toLowerCase())
+            continue
+          }
+
+          const hasOutput = (Number(t.turns) || 0) > 0
+            || (Number(t.tool_calls) || 0) > 0
+            || digestTaskIds.has(String(t.id))
+          const nextStatus = hasOutput ? 'completed' : 'interrupted'
+          const prevApproval = String(t.approval_state || '').trim()
+          const nextApproval = nextStatus === 'completed'
+            ? (['approved', 'pending_approval', 'revision_required'].includes(prevApproval) ? prevApproval : 'approved')
+            : (prevApproval === 'approved' ? 'approved' : 'interrupted')
+          const nextPrio = nextStatus === 'completed'
+            ? (nextApproval === 'pending_approval' || nextApproval === 'revision_required' ? 'P0' : 'P2')
+            : 'P3'
+          const nextWeight = nextPrio === 'P0' ? 100 : (nextPrio === 'P2' ? 50 : 20)
+
+          const createdMs = Date.parse(t.created_at || '') || 0
+          const prevUpdatedMs = Date.parse(t.updated_at || '') || 0
+          const existingDur = Number(t.duration_ms) || 0
+          let frozenDurationMs = existingDur > 0 && existingDur <= staleMs
+            ? existingDur
+            : (createdMs > 0 && prevUpdatedMs >= createdMs ? Math.min(staleMs, prevUpdatedMs - createdMs) : 0)
+          if (frozenDurationMs === 0 && nextStatus === 'completed') frozenDurationMs = 1000
+
+          updTaskStmt.run(nextStatus, nextApproval, nextPrio, nextWeight, frozenDurationMs, nowStr, t.id)
+          reapedTaskIds.add(String(t.id))
+          reapedTasks += 1
+        }
+      } catch { /* ignore worker_tasks reap error */ }
+
+      try {
+        const allTasks = db.prepare('SELECT id, worker_name, status, approval_state FROM worker_tasks').all()
+        const taskById = new Map()
+        for (const t of allTasks) {
+          taskById.set(String(t.id), t)
+        }
+        const activeLocks = db.prepare("SELECT * FROM shard_locks WHERE status = 'active'").all()
+        const relLockStmt = db.prepare("UPDATE shard_locks SET status = 'released', released_at = ? WHERE id = ?")
+        for (const lk of activeLocks) {
+          const acqMs = Date.parse(lk.acquired_at || '') || 0
+          const lockAgeMs = acqMs > 0 ? (nowMs - acqMs) : (staleMs + 1)
+          const ownerId = String(lk.worker_task_id || '').trim()
+          const ownerTask = ownerId ? taskById.get(ownerId) : null
+          let ownerNoLongerRunning = false
+          if (ownerId && reapedTaskIds.has(ownerId)) {
+            ownerNoLongerRunning = true
+          } else if (ownerTask) {
+            const st = String(ownerTask.status || '').toLowerCase()
+            const ap = String(ownerTask.approval_state || '').toLowerCase()
+            if (['interrupted', 'cancelled', 'failed', 'error', 'timeout', 'archived', 'released'].includes(st)) {
+              ownerNoLongerRunning = true
+            } else if (ap === 'approved') {
+              ownerNoLongerRunning = true
+            } else if ((st === 'completed' || st === 'done') && ap !== 'pending_approval' && ap !== 'revision_required') {
+              ownerNoLongerRunning = true
+            }
+          } else if (ownerId && lockAgeMs > liveGraceMs) {
+            ownerNoLongerRunning = true
+          }
+
+          if (lockAgeMs > staleMs || ownerNoLongerRunning) {
+            relLockStmt.run(nowStr, lk.id)
+            releasedLocks += 1
+          }
+        }
+      } catch { /* ignore shard_locks reap error */ }
+
+      try {
+        const runningGoals = db.prepare(
+          "SELECT id, status, created_at, updated_at FROM plan_goals WHERE LOWER(COALESCE(status, '')) IN ('running', 'in_progress')",
+        ).all()
+        const updGoalStmt = db.prepare("UPDATE plan_goals SET status = 'completed', updated_at = ? WHERE id = ?")
+        for (const g of runningGoals) {
+          const gMs = Date.parse(g.updated_at || g.created_at || '') || 0
+          if ((gMs > 0 ? (nowMs - gMs) : (staleMs + 1)) > staleMs && liveDbRoles.size === 0) {
+            updGoalStmt.run(nowStr, g.id)
+          }
+        }
+      } catch { /* ignore plan_goals reap error */ }
+    }
+
+    try {
+      const wfPath = this.#workflowStatePathOf(resolvedId)
+      if (wfPath && existsSync(wfPath)) {
+        const parsed = JSON.parse(readFileSync(wfPath, 'utf8'))
+        if (parsed && Array.isArray(parsed.nodes)) {
+          let dirty = false
+          for (const n of parsed.nodes) {
+            if (!n || typeof n !== 'object') continue
+            const nodeRunning = n.status === 'run' || n.state === 'run' || n.active === true
+            if (!nodeRunning) continue
+            const nodeTsMs = Date.parse(n.updated_at || parsed.updated_at || '') || 0
+            const nodeAgeMs = nodeTsMs > 0 ? (nowMs - nodeTsMs) : (staleMs + 1)
+            const hasLiveWorker = liveDbRoles.has(String(n.role || '').toLowerCase())
+              || liveDbRoles.has(String(n.id || '').toLowerCase())
+            if (!hasLiveWorker && nodeAgeMs > staleMs) {
+              const hadWork = (Number(n.tokens) || 0) > 0
+                || (Number(n.step_count) || 0) > 0
+                || (Array.isArray(n.decisions) && n.decisions.length > 0)
+              n.status = hadWork ? 'done' : 'pending'
+              n.state = hadWork ? 'done' : 'standby'
+              n.statusLabel = hadWork ? '已执行' : '待命'
+              n.active = false
+              if ((Number(n.latency_ms) || 0) > staleMs) {
+                n.latency_ms = staleMs
+              }
+              sanitizedDagNodes += 1
+              dirty = true
+            }
+          }
+          if (parsed.status === 'running' && liveDbRoles.size === 0) {
+            const rootTsMs = Date.parse(parsed.updated_at || '') || 0
+            if ((rootTsMs > 0 ? (nowMs - rootTsMs) : (staleMs + 1)) > staleMs) {
+              parsed.status = 'standby'
+              dirty = true
+            }
+          }
+          if (dirty) {
+            writeFileSync(wfPath, JSON.stringify(parsed, null, 2) + '\n', 'utf8')
+          }
+        }
+      }
+    } catch { /* ignore workflow-dag.json sanitize error */ }
+
+    return {
+      ok: true,
+      engagement_id: resolvedId,
+      reaped_tasks: reapedTasks,
+      released_locks: releasedLocks,
+      sanitized_dag_nodes: sanitizedDagNodes,
     }
   }
 
@@ -1226,6 +1729,7 @@ export class RedteamStore {
           error_detail TEXT NOT NULL DEFAULT '',
           tool_calls INTEGER NOT NULL DEFAULT 0,
           turns INTEGER NOT NULL DEFAULT 0,
+          duration_ms INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL DEFAULT '',
           updated_at TEXT NOT NULL DEFAULT ''
         );
@@ -1268,6 +1772,9 @@ export class RedteamStore {
         }
         if (!cols.has('error_detail')) {
           try { db.exec("ALTER TABLE worker_tasks ADD COLUMN error_detail TEXT NOT NULL DEFAULT ''") } catch { /* ignore */ }
+        }
+        if (!cols.has('duration_ms')) {
+          try { db.exec('ALTER TABLE worker_tasks ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0') } catch { /* ignore */ }
         }
       }
     } catch { /* ignore */ }
@@ -1323,6 +1830,7 @@ export class RedteamStore {
       priority_weight: Number(t.priority_weight) || 0,
       tool_calls: Number(t.tool_calls) || 0,
       turns: Number(t.turns) || 0,
+      duration_ms: Number(t.duration_ms) || 0,
       tags: Array.isArray(tags) ? tags : [],
       tags_json: typeof t.tags_json === 'string' ? t.tags_json : JSON.stringify(Array.isArray(tags) ? tags : []),
       files_owned: Array.isArray(filesOwned) ? filesOwned : [],
@@ -3117,20 +3625,36 @@ export class RedteamStore {
    * 4. 幂等同步宿主子智能体会话到 `plan_goals`、`worker_tasks` 与 `worker_digests`。
    *    通过 `this._syncedWorkerSig`（上限 512 条）过滤未变化的轮询，避免重复写库。
    */
-  syncHostWorkersToPg(engagementId, workers = []) {
+  syncHostWorkersToPg(engagementId, workers = [], options = {}) {
     let resolvedInputId = engagementId
     let list = workers
+    let syncOpts = options && typeof options === 'object' ? options : {}
     if (Array.isArray(engagementId)) {
       list = engagementId
       resolvedInputId = null
     } else if (engagementId && typeof engagementId === 'object') {
       list = engagementId.workers || engagementId.items || workers || []
       resolvedInputId = engagementId.engagement_id || engagementId.engagement || null
+      syncOpts = Object.assign({}, engagementId, syncOpts)
     }
     if (!Array.isArray(list)) list = []
     if (!this._syncedWorkerSig) this._syncedWorkerSig = new Map()
 
     const { resolvedId, db } = this.#openClosedLoopDb(resolvedInputId, true)
+    const liveRunningSet = syncOpts.liveRunningIds instanceof Set
+      ? syncOpts.liveRunningIds
+      : new Set(
+        list
+          .filter((w) => w && ['running', 'run', 'active', 'in_progress'].includes(String(w.status || w.activity || w.state || '').toLowerCase()))
+          .map((w) => String(w.sessionId || w.session_id || w.id || '').trim())
+          .filter(Boolean),
+      )
+    try {
+      this.reapExpiredAgentLeases(resolvedId, Object.assign({}, syncOpts, {
+        liveRunningIds: syncOpts.liveRunningIds instanceof Set || list.length > 0 ? liveRunningSet : undefined,
+      }))
+    } catch { /* ignore reap errors during sync */ }
+
     const now = nowIso()
     const priorityWeights = { P0: 100, P1: 80, P2: 50, P3: 20 }
     const goalIntPk = this.#isTableIntPk(db, 'plan_goals')
@@ -3145,6 +3669,7 @@ export class RedteamStore {
       const status = String(w.status || w.state || 'running').trim()
       const turns = Number(w.turns ?? w.turnCount ?? 1) || 0
       const toolCalls = Number(w.toolCalls ?? w.tool_calls ?? w.tools ?? 1) || 0
+      const durationMs = Math.max(0, Number(w.durationMs ?? w.duration_ms ?? w.latency_ms ?? 0) || 0)
       const approvalState = String(
         w.approvalState ?? w.approval_state ?? (status === 'completed' || status === 'done' ? 'pending_approval' : 'working'),
       ).trim()
@@ -3177,6 +3702,12 @@ export class RedteamStore {
       const filesOwnedJson = JSON.stringify(filesOwned)
       const assignedGoal = String(w.assigned_goal || w.goal || w.objective || w.title || `执行 ${workerName} 子任务`).trim()
       const whatWasDone = String(w.what_was_done || w.whatWasDone || w.summary || w.digest || `${workerName} 执行 ${turns} 轮 / ${toolCalls} 次工具调用：${assignedGoal}`).trim()
+      const rowCreatedAt = typeof (w.createdAt || w.created_at) === 'string' && (w.createdAt || w.created_at)
+        ? String(w.createdAt || w.created_at)
+        : now
+      const rowUpdatedAt = typeof (w.updatedAt || w.updated_at) === 'string' && (w.updatedAt || w.updated_at)
+        ? String(w.updatedAt || w.updated_at)
+        : now
 
       /* 1) Upsert plan_goals */
       let existingGoal = db.prepare('SELECT id FROM plan_goals WHERE title = ? OR CAST(id AS TEXT) = ? LIMIT 1')
@@ -3184,6 +3715,9 @@ export class RedteamStore {
       let goalId = existingGoal ? existingGoal.id : null
       if (goalId === null) {
         const bindGoalId = goalIntPk ? null : String(w.goal_id || `goal-${rawKey}`)
+        const goalStatus = approvalState === 'approved'
+          ? 'approved'
+          : (status === 'completed' || status === 'interrupted' ? 'completed' : 'running')
         const gRes = db.prepare(`
           INSERT INTO plan_goals (
             id, engagement_id, parent_goal_id, prompt_hash, user_prompt,
@@ -3201,11 +3735,11 @@ export class RedteamStore {
           wave,
           uiPriority,
           priorityWeight,
-          approvalState === 'approved' ? 'approved' : (status === 'completed' ? 'completed' : 'running'),
+          goalStatus,
           '',
-          approvalState === 'approved' ? now : null,
-          now,
-          now,
+          approvalState === 'approved' ? rowUpdatedAt : null,
+          rowCreatedAt,
+          rowUpdatedAt,
         )
         goalId = bindGoalId !== null ? bindGoalId : Number(gRes.lastInsertRowid)
       } else {
@@ -3213,7 +3747,7 @@ export class RedteamStore {
           UPDATE plan_goals
           SET ui_priority = ?, priority_weight = ?, updated_at = ?
           WHERE id = ?
-        `).run(uiPriority, priorityWeight, now, goalId)
+        `).run(uiPriority, priorityWeight, rowUpdatedAt, goalId)
       }
 
       /* 2) Upsert worker_tasks */
@@ -3227,8 +3761,8 @@ export class RedteamStore {
           INSERT INTO worker_tasks (
             id, engagement_id, goal_id, session_id, worker_name, worker_role,
             wave, ui_priority, priority_weight, tags_json, files_owned_json, assigned_goal,
-            status, approval_state, next_goal, error_detail, tool_calls, turns, created_at, updated_at
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            status, approval_state, next_goal, error_detail, tool_calls, turns, duration_ms, created_at, updated_at
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         `).run(
           bindTaskId,
           resolvedId,
@@ -3248,8 +3782,9 @@ export class RedteamStore {
           String(w.error_detail || ''),
           toolCalls,
           turns,
-          now,
-          now,
+          durationMs,
+          rowCreatedAt,
+          rowUpdatedAt,
         )
         taskId = bindTaskId !== null ? bindTaskId : Number(tRes.lastInsertRowid)
       } else {
@@ -3258,13 +3793,13 @@ export class RedteamStore {
           SET goal_id = ?, session_id = ?, worker_name = ?, worker_role = ?,
               wave = ?, ui_priority = ?, priority_weight = ?, tags_json = ?,
               assigned_goal = ?, status = ?, approval_state = ?,
-              tool_calls = ?, turns = ?, updated_at = ?
+              tool_calls = ?, turns = ?, duration_ms = CASE WHEN ? > 0 THEN ? ELSE COALESCE(duration_ms, 0) END, updated_at = ?
           WHERE id = ?
         `).run(
           goalId, sessId, workerName, workerRole,
           wave, uiPriority, priorityWeight, tagsJson,
           assignedGoal, status, approvalState,
-          toolCalls, turns, now,
+          toolCalls, turns, durationMs, durationMs, rowUpdatedAt,
           taskId,
         )
       }
@@ -3595,6 +4130,11 @@ export class RedteamStore {
    */
   workflowDag(id, options = {}) {
     const resolvedId = id || this.activeEngagementId() || 'default'
+    const staleMs = options && Number.isFinite(Number(options.staleMs)) && Number(options.staleMs) > 0
+      ? Number(options.staleMs)
+      : 180_000
+    const nowMs = Date.now()
+    try { this.reapExpiredAgentLeases(resolvedId, options) } catch { /* ignore reap errors */ }
     const state = this.#readWorkflowState(resolvedId)
     const probe = this.pgWriteProbe(resolvedId)
     const closedLoop = this.#readClosedLoopState(resolvedId)
@@ -3657,7 +4197,9 @@ export class RedteamStore {
     }
 
     for (const g of closedLoop.plan_goals) {
-      if (g.status === 'running' || g.status === 'pending' || g.status === 'in_progress') runningRoles.add('plan')
+      const gTsMs = Date.parse(g.updated_at || g.created_at || '') || 0
+      const gFresh = gTsMs > 0 && (nowMs - gTsMs) <= staleMs
+      if (gFresh && (g.status === 'running' || g.status === 'pending' || g.status === 'in_progress')) runningRoles.add('plan')
       pushDecision('plan', {
         id: `goal-${g.id}`,
         kind: 'goal',
@@ -3690,11 +4232,18 @@ export class RedteamStore {
     for (const wt of closedLoop.worker_tasks) {
       const dagRole = mapWorkerRoleToDag(wt.worker_role, wt.wave)
       taskRoleById.set(String(wt.id), dagRole)
+      const wtTsMs = Date.parse(wt.updated_at || wt.created_at || '') || 0
+      const wtFresh = wtTsMs > 0 && (nowMs - wtTsMs) <= staleMs
       if (
         wt.status === 'running'
-        || wt.status === 'pending'
-        || wt.approval_state === 'pending_approval'
-        || wt.approval_state === 'revision_required'
+        || wt.status === 'in_progress'
+        || wt.status === 'active'
+        || wt.status === 'run'
+        || (wtFresh && (
+          wt.status === 'pending'
+          || wt.approval_state === 'pending_approval'
+          || wt.approval_state === 'revision_required'
+        ))
       ) {
         runningRoles.add(dagRole)
       }
@@ -3784,7 +4333,10 @@ export class RedteamStore {
       || closedLoop.plan_goals.length > 0
       || closedLoop.worker_tasks.length > 0
       || closedLoop.worker_digests.length > 0
-    const latestActiveRole = steps.length > 0 ? (steps[0].agent || null) : null
+    const latestStepMs = steps.length > 0 ? (Date.parse(steps[0].recorded_at || '') || 0) : 0
+    const latestActiveRole = (steps.length > 0 && latestStepMs > 0 && (nowMs - latestStepMs) <= staleMs)
+      ? (steps[0].agent || null)
+      : null
     const explicitRuns = Array.isArray(state.runs) ? state.runs : []
 
     const enrichedNodes = state.nodes.map((n) => {

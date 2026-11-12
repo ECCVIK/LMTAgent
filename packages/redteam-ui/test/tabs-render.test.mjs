@@ -274,10 +274,13 @@ const VULN = {
   found_at: '2026-01-02T03:04:05Z', http_evidence: [], note: '',
 }
 const ENG = { id: ENGINE, name: ENGINE, scope: [], status: 'active', created_at: '2026-01-01T00:00:00Z' }
-/* 第二个靶标 + 会话绑定表：验证「切会话 → 面板跟着换靶标」（见文末那组断言） */
+/* 第二个靶标 + 额外历史工作区 + 1:1 会话绑定与初始化引导状态表 */
 const ENGINE_B = '另一个单位'
 const ENG_B = { id: ENGINE_B, name: ENGINE_B, scope: [], status: 'active', created_at: '2026-01-02T00:00:00Z' }
+const ENG_DELTA = { id: '三角洲行动', name: '三角洲行动', scope: [], status: 'active', created_at: '2026-01-03T00:00:00Z' }
+const ENG_QINGJI = { id: '轻记 微信小程序', name: '轻记 微信小程序', scope: [], status: 'active', created_at: '2026-01-04T00:00:00Z' }
 const SESSION_BOUND = { 's-A': ENGINE, 's-B': ENGINE_B }
+const SESSION_ONBOARDING = {}
 
 function makeResponses(shape) {
   const broken = shape === 'error'
@@ -286,18 +289,43 @@ function makeResponses(shape) {
   const w = (v) => (broken ? ERR : v)
   const arr = (items) => (empty ? [] : items)
   return {
-    bootstrap: w({ ok: true, root: '/tmp/rt', engagements: [ENG, ENG_B], current: ENGINE }),
-    /* 面板每次换会话都问一次：这个会话绑的是哪个靶标 */
-    sessionBinding: (body) => w({
-      ok: true, session: body.session, root_session: body.session,
-      bound: SESSION_BOUND[body.session] || null,
-      name: SESSION_BOUND[body.session] || null, current: ENGINE,
-    }),
+    bootstrap: w({ ok: true, root: '/tmp/rt', engagements: [ENG, ENG_B, ENG_DELTA, ENG_QINGJI], current: ENGINE }),
+    /* 面板每次换会话都问一次：这个会话 1:1 绑的是哪个工作区与初始化指引状态 */
+    sessionBinding: (body) => {
+      const bound = SESSION_BOUND[body.session] || null
+      const ob = SESSION_ONBOARDING[body.session] || {}
+      const dismissed = Boolean(ob.dismissed)
+      return w({
+        ok: true,
+        session: body.session,
+        root_session: body.session,
+        bound,
+        name: bound,
+        init_state: bound ? 'initialized' : (dismissed ? 'skipped' : 'uninitialized'),
+        onboarding_dismissed: dismissed,
+        has_conversation: Boolean(ob.has_conversation),
+        session_title: body.title || null,
+        current: ENGINE,
+      })
+    },
+    sessionOnboarding: (body) => {
+      const skip = body.action === 'skip'
+      SESSION_ONBOARDING[body.session] = Object.assign({}, SESSION_ONBOARDING[body.session] || {}, {
+        dismissed: skip,
+      })
+      return w({
+        ok: true,
+        session: body.session,
+        onboarding_dismissed: skip,
+        init_state: skip ? 'skipped' : 'uninitialized',
+      })
+    },
     sessionBindings: (body) => w({
       ok: true, session: body.session, root_session: body.session,
       bound: SESSION_BOUND[body.session] || null, current: ENGINE, agents: SESSION_BOUND,
     }),
-    bindSessionEngagement: (body) => w({ ok: true, session: body.session, bound: body.engagement }),
+    bindSessionEngagement: (body) => w({ ok: true, session: body.session, bound: body.engagement || body.id }),
+    openEngagement: (body) => w({ ok: true, engagement: { id: body.name, name: body.name, status: 'active' } }),
     /* 快照要如实回显**请求里的**靶标：切会话跟随之后，面板显示的应该是新靶标 */
     snapshot: (body) => w({ ok: true, engagement: body.engagement === ENGINE_B ? ENG_B : ENG,
       stats: { segments: 1, assets: 1, liveAssets: 1, openPorts: 1, fingerprints: 1, vulns: 1, passiveSignals: 0, activeSignals: 1 },
@@ -313,7 +341,9 @@ function makeResponses(shape) {
     activeTests: w({ ok: true, testing: arr([{ ...ASSET, vulns: 1, webshells: 0, tunnels: 0 }]),
       recent: arr([{ ...ASSET, test_status: 'tested' }]), queue: arr([{ ...ASSET, test_status: 'untested' }]), untested: 1,
       stats: { testing: 1, untested: 1, tested: 0, abandoned: 0, blocked: 0, no_surface: 0 } }),
-    agentsStatus: w({ ok: true, max: 3, used: 1, free: 2, total_children: 1, running: [{ parent: 's1', label: '信息收集', activity: 'running', mode: 'child' }] }),
+    agentsStatus: (body) => w(body && body.engagement
+      ? { ok: true, max: 3, used: 1, free: 2, total_children: 1, running: [{ parent: 's1', label: '信息收集', activity: 'running', mode: 'child' }] }
+      : { ok: true, max: 3, used: 0, free: 3, total_children: 0, running: [] }),
     shotData: w({ ok: true, id: 11, mime: 'image/png', bytes: 8, base64: 'iVBORw0KGgo=' }),
     prompts: w({ ok: true, roles: arr([
       { role: 'plan', title: '主会话', content: '# 指挥', updated_at: '2026-01-01T00:00:00Z', planner: true },
@@ -434,12 +464,10 @@ async function openFirstScoreRow() {
   return true
 }
 
-/* 已并入父页：
-   · 「智能体提示词」→「智能体」（并发配置 + 提示词编辑同页）
-   · 「当前测试」→「资产测绘」（左侧与 C 段分组同级的入口）
-   · 「攻击文件」→「漏洞战果」（子页签 + 每条漏洞的关联文件）
-   故共 9 个页签（新增「凭据与文件」资源页；攻击链页已删除）。 */
-const TAB_LABELS = ['模块与服务', '智能体与并发', '运行环境', '构建产物', '代码审查与缺陷', '交付里程碑', '研发交付报告', '工程模式库', '研发技能库']
+/* v0.22.0 页签结构：
+   · 一级分区（6 个）：协同与审批（居首） / 总览 / 架构 / 质量 / 报告 / 集群
+   · 二级子页签（10 个）：智能体与并发（p5 实时拓扑）与 角色与提示词（8 角色 Markdown 模板）解耦分离 */
+const TAB_LABELS = ['模块与服务', '智能体与并发', '角色与提示词', '运行环境', '构建产物', '代码审查与缺陷', '交付里程碑', '研发交付报告', '工程模式库', '研发技能库']
 
 /* ══════════════════════════════════════════════════════════════════════════
    ⑥ 断言
@@ -452,14 +480,16 @@ for (const shape of ['data', 'empty', 'error']) {
   let out = ''
   try { out = (await renderAll()).texts } catch (error) { err = error }
   ok(err === null && out.length > 0, `[${shape}] 面板渲染不抛异常且有输出（输出 ${out.length} 字符）` + (err ? '：' + err.message : ''))
-  if (shape === 'data') ok(TAB_LABELS.every((t) => out.includes(t)), '9 个页签标签都渲染出来')
+  if (shape === 'data') ok(TAB_LABELS.every((t) => out.includes(t)), '10 个子页签标签都渲染出来')
 }
 
-console.log('\n— 9 个页签逐个渲染（有数据 / 空 / 报错）')
+console.log('\n— 10 个子页签 + 独立「协同与审批」一级页签逐个渲染（有数据 / 空 / 报错）')
 for (const shape of ['data', 'empty', 'error']) {
   responses = makeResponses(shape)
   resetInstances()
   await renderAll()
+  const collabR = await switchTab('协同与审批')
+  ok(collabR !== null && collabR.texts.length > 0, `[${shape}] 一级页签「协同与审批」渲染成功`)
   for (const label of TAB_LABELS) {
     const r = await switchTab(label)
     if (r === null) { ok(false, `[${shape}] 找不到页签「${label}」的点击入口`); continue }
@@ -476,9 +506,10 @@ console.log('\n— 有数据时的关键内容（渲染确实用了接口返回�
   ok(overviewBtn !== undefined, '一级分区有「总览」入口')
   if (overviewBtn) overviewBtn.handlers.onClick()
   const ov = await renderAll()
-  ok(ov.texts.includes('实时角色决策流') || ov.texts.includes('DAG 工作流画布'), '总览页：首屏给出实时角色决策流与工作流画布')
-  ok(ov.texts.includes('PG 写表活动探针') && ov.texts.includes('Token 统计'), '总览页：展示 Token 统计与 PG 写表活动探针')
-  ok(['总览', '架构', '质量', '报告', '集群'].every((x) => ov.texts.includes(x)), '一级分区收敛为 5 个')
+  ok(ov.texts.includes('实时角色决策流') || ov.texts.includes('DAG 工作流画布') || ov.texts.includes('工作流'), '总览页：首屏给出实时角色决策流与工作流画布')
+  ok(['沟通与执行', '并发集群', '上下文与缓存', '交付里程碑'].every((k) => ov.texts.includes(k)), '总览页：展示精简高信噪比 4 项核心 KPI 指标卡（零重复环形图堆砌）')
+  ok(['协同与审批', '总览', '架构', '质量', '报告', '集群'].every((x) => ov.texts.includes(x)), '一级分区升级为 6 个（新增独立「协同与审批」）')
+  ok(ov.texts.indexOf('协同与审批') < ov.texts.indexOf('总览'), '「协同与审批」位于「总览」之前（居一级导航首位）')
   const dataR = await switchTab('模块与服务')
   ok(dataR.hosts.some((x) => x.props.className === 'rt-dock'), '数据密集页：默认保留侧栏，不自动全屏')
   const r = await switchTab('模块与服务')
@@ -493,15 +524,17 @@ console.log('\n— 有数据时的关键内容（渲染确实用了接口返回�
   ok(f.texts.includes("后台管理员"), "代码审查与缺陷：分组右侧显示影响摘要")
   ok(f.texts.includes('只看关键缺陷') || f.texts.includes('只看关键项'), '代码审查与缺陷：默认只看关键修复/审查项（有切换按钮）')
   const s = await switchTab('智能体与并发')
-  ok(s.texts.includes('主会话') || s.texts.includes('信息收集') || s.texts.includes('Captain'), '智能体页：角色列表渲染出来')
-  ok(s.texts.includes('并发数量') || s.texts.includes('并发槽'), '智能体页：并发数量配置渲染出来')
-  ok(s.texts.includes('编队状态') || s.texts.includes('执行智能体') || s.texts.includes('运行中'), '智能体页：有编队状态/在跑列表')
-  ok(!s.texts.includes('e45') && !s.texts.includes('Admin@123'), '智能体页：不包含会话口令/凭据明文')
-  ok(!s.texts.includes('**'), '智能体页：不再露出 Markdown 粗体标记 **')
-  ok(!s.texts.includes('`'), '智能体页：不再露出行内代码反引号')
-  ok(s.texts.includes('redteam_agent_slot') && (s.texts.includes('同时最多 3 个执行智能体') || s.texts.includes('3')),
-    '智能体页：粗体/行内代码里的文字仍然可读')
-  ok(!s.texts.includes('# 指挥') && s.texts.includes('指挥'), '智能体页：角色提示词默认渲染预览（不露 # 标题标记）')
+  ok(s.texts.includes('Captain') || s.texts.includes('树状图') || s.texts.includes('团队任务板'), '智能体与并发页：直出实时 p5 集群拓扑与泳道画布')
+  ok(s.texts.includes('并发槽 1/3') && s.texts.includes('3min 无心跳自动回收 · 分片排他锁'), '智能体与并发页：紧凑自适应并发槽与 3min 租约锁状态渲染出来')
+  ok(!s.texts.includes('WorkBuddy Cluster · p3') && !s.texts.includes('SLOT #1'), '智能体与并发页：已彻底移除旧版 12 槽方块墙与夸大标语')
+  ok(!s.texts.includes('e45') && !s.texts.includes('Admin@123'), '智能体与并发页：不包含会话口令/凭据明文')
+  ok(!s.texts.includes('**'), '智能体与并发页：不再露出 Markdown 粗体标记 **')
+  ok(!s.texts.includes('`'), '智能体与并发页：不再露出行内代码反引号')
+  ok(s.texts.includes('redteam_agent_slot') && s.texts.includes('同时最多 3 个执行智能体'),
+    '智能体与并发页：槽位核验说明清晰可读')
+  const pTab = await switchTab('角色与提示词')
+  ok(pTab.texts.includes('Captain') && pTab.texts.includes('角色与提示词'), '角色与提示词页：独立承载 2×4 gstack 角色卡片网格')
+  ok(!pTab.texts.includes('# 指挥') && pTab.texts.includes('指挥'), '角色与提示词页：角色提示词默认渲染 Markdown 预览（不露 # 标题标记）')
   const sess = await switchTab('运行环境')
   ok(sess.texts.includes('••••••••') && !sess.texts.includes('e45'), '运行环境：敏感密钥默认掩码，不直显')
   const k = await switchTab('研发技能库')
@@ -561,7 +594,7 @@ console.log('\n— 空数据态给出"下一步怎么做"的引导（不是白�
   resetInstances()
   await renderAll()
   const f = await switchTab('代码审查与缺陷')
-  ok(/没有已验证|没有已确认|没有已利用|暂无/.test(f.texts), '代码审查与缺陷：空态文案渲染（' + (f.texts.match(/没有已[^ ]*|暂无[^ ]*/) || ['无'])[0] + '）')
+  ok(/没有已验证|没有已确认|没有已利用|暂无|尚未初始化/.test(f.texts), '代码审查与缺陷：空态文案渲染（' + (f.texts.match(/没有已[^ ]*|暂无[^ ]*|尚未初始化[^ ]*/) || ['无'])[0] + '）')
   const a = await switchTab('代码审查与缺陷')
   ok(a.texts.length > 0, '代码审查与缺陷：空态不崩')
 }
@@ -573,7 +606,7 @@ console.log('\n— 页签合并后的入口（实时验证→模块与服务 / �
   await renderAll()
   const a = await switchTab('模块与服务')
   ok(/当前验证|当前测试|实时验证/.test(a.texts), '模块与服务页有「实时验证」入口')
-  const f = await switchTab('代码审查与缺陷')
+  await switchTab('代码审查与缺陷')
   const art = await switchTab('构建产物')
   ok(art.texts.includes('配置与构建产物') && (art.texts.includes('构建与验证脚本') || art.texts.includes('构建脚本')), '配置/会话/构建脚本已移到集群分区的「构建产物」页')
 }
@@ -649,14 +682,14 @@ console.log('\n— 键盘可达性（回归护栏：不要再往页面里塞没�
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   ⑥ 会话跟随断言
+   ⑥ 1:1 会话强隔离与初始化引导闭环断言（v0.22.0）
    ══════════════════════════════════════════════════════════════════════════ */
 const shownEngagement = (hosts) => {
   const el = hosts.find((x) => {
     const kids = x.props && x.props.children
-    return typeof kids === 'string' && (kids.startsWith('PG/WAL · ') || kids.startsWith('SQLite · ') || kids.startsWith('PG/SQLite · '))
+    return typeof kids === 'string' && (kids.startsWith('PG/WAL · ') || kids.startsWith('工作区 · ') || kids.startsWith('SQLite · ') || kids.startsWith('PG/SQLite · '))
   })
-  return el === undefined ? null : String(el.props.children).replace(/^(?:PG\/WAL|PG\/SQLite|SQLite) · /, '')
+  return el === undefined ? null : String(el.props.children).replace(/^(?:PG\/WAL|工作区|PG\/SQLite|SQLite) · /, '')
 }
 
 console.log('\n— 页签栏的 ARIA 语义')
@@ -665,7 +698,7 @@ console.log('\n— 页签栏的 ARIA 语义')
   const tabs = hosts.filter((x) => x.props.role === 'tab')
   const list = hosts.filter((x) => x.props.role === 'tablist')
   ok(list.length === 1, '页签栏有 role=tablist（1 个）')
-  ok(tabs.length === 9, '9 个页签都是 role=tab（实际 ' + tabs.length + '）')
+  ok(tabs.length === 10, '10 个子页签都是 role=tab（实际 ' + tabs.length + '）')
   ok(tabs.every((x) => x.props['aria-selected'] !== undefined), '每个页签都带 aria-selected（读屏软件据此播报选中态）')
   const selected = tabs.filter((x) => x.props['aria-selected'] === 'true')
   ok(selected.length === 1 && selected[0].props.title !== undefined, '同一时刻只有一个页签是选中态')
@@ -673,16 +706,22 @@ console.log('\n— 页签栏的 ARIA 语义')
   ok(dot === undefined || dot.props['aria-label'] !== undefined, '未读红点带文字替代（纯视觉信息不能只靠颜色）')
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   面板跟随会话：用户在左侧切会话，右侧 LMTAgent 面板应显示**那个会话绑定的工作区**
-   （会话本身没绑过 → 保持/回落到"最后一次绑定的工作区"，而不是清空）。
-   ══════════════════════════════════════════════════════════════════════════ */
-console.log('\n— 面板跟随会话（切会话 → 换工作区）')
+console.log('\n— 面板 1:1 强隔离跟随会话 + 未绑定新会话初始化引导 / 跳过 / 重新指引闭环')
 {
+  const textOfNode = (node) => {
+    if (typeof node === 'string') return node
+    if (typeof node === 'number') return String(node)
+    if (Array.isArray(node)) return node.map(textOfNode).join(' ')
+    if (node && node.props && node.props.children !== undefined) return textOfNode(node.props.children)
+    return ''
+  }
+
   resetInstances()
   responses = makeResponses('data')
   fetchCalls.length = 0
   ls.clear()
+  for (const k of Object.keys(SESSION_ONBOARDING)) delete SESSION_ONBOARDING[k]
+
   const headerToggle = slotRenders.get('redteam-header-toggle')
   const firstHosts = (await renderAll(6, [headerToggle({
     sessionId: 's-A',
@@ -694,12 +733,23 @@ console.log('\n— 面板跟随会话（切会话 → 换工作区）')
 
   let currentSession = 's-A'
   let headerTitle = null
+  let sessionBlank = false
   const headerEl = () => headerToggle({
     sessionId: currentSession,
-    useSessions: (sel) => sel({ byId: { [currentSession]: { id: currentSession, displayTitle: headerTitle || currentSession, blank: false } } }),
+    useSessions: (sel) => sel({
+      byId: {
+        [currentSession]: {
+          id: currentSession,
+          displayTitle: headerTitle || currentSession,
+          blank: sessionBlank,
+        },
+      },
+    }),
   })
-  const switchSession = async (sid) => {
+  const switchSession = async (sid, titleOverride = null, blankOverride = false) => {
     currentSession = sid
+    headerTitle = titleOverride
+    sessionBlank = blankOverride
     let r = null
     for (let i = 0; i < 3; i += 1) r = await renderAll(6, [headerEl()])
     return r
@@ -708,58 +758,82 @@ console.log('\n— 面板跟随会话（切会话 → 换工作区）')
   fetchCalls.length = 0
   await switchSession('s-B')
   await switchSession('s-A')
-  const names = (await renderAll()).hosts
+  const names = (await renderAll(6, [headerEl()])).hosts
     .filter((x) => x.tag === 'option')
     .map((x) => x.props.children)
   ok(fetchCalls.filter((op) => op === 'sessionBinding').length > 0,
-    '切会话时向 host 问了「这个会话绑的是哪个工作区」')
+    '切会话时向 host 查询了当前会话的 1:1 工作区绑定状态')
   ok(JSON.stringify(names).includes(ENGINE) && JSON.stringify(names).includes(ENGINE_B),
-    '工作区下拉里两个单位都在（下拉不再只剩一个）')
+    '已绑定会话的工作区下拉包含全部可选工作区')
 
   const rB = await switchSession('s-B')
   ok(shownEngagement(rB.hosts) === ENGINE_B,
-    '切到会话 s-B → 面板跟着显示它绑定的「' + ENGINE_B + '」（实际：' + shownEngagement(rB.hosts) + '）')
+    '切到已绑定会话 s-B → 面板精准显示其绑定的「' + ENGINE_B + '」（实际：' + shownEngagement(rB.hosts) + '）')
   ok(rB.texts.includes('跟随会话'),
-    '状态提示显示「跟随会话」（面板正跟着当前会话走）')
+    '已绑定会话状态提示显示「跟随会话」')
 
   const sel = rB.hosts.find((x) => x.tag === 'select' && x.props.value === ENGINE_B)
   sel.handlers.onChange({ target: { value: ENGINE } })
-  const afterManual = await renderAll()
+  const afterManual = await renderAll(6, [headerEl()])
   ok(shownEngagement(afterManual.hosts) === ENGINE,
     '用户手选工作区后，会话重渲染不会把它抢回去')
   ok(fetchCalls.includes('bindSessionEngagement'),
-    '手选会写回 host 绑定表（下次切回本会话仍是它）')
+    '手选工作区会写回 host 会话绑定表')
   const warnEl = afterManual.hosts.find((x) => String(x.props.className || '').includes('rt-tag-warn')
     && (String(x.props.children || '').startsWith('手动选择') || String(x.props.children || '').startsWith('未跟随')))
   ok(warnEl !== undefined,
-    '状态提示变成「手动选择：<本会话的工作区>」（并给出点一下切回去）')
+    '状态提示变成「手动选择：<原绑定工作区>」（并支持一键切回）')
 
-  headerTitle = null
-  await renderAll(6, [headerEl()])
-  const rC = await switchSession('s-C')
-  ok(shownEngagement(rC.hosts) !== null,
-    '切到没绑过工作区的会话：面板仍显示最后一次绑定的工作区（不清空）')
-  const cTags = rC.hosts.filter((x) => String(x.props.className || '').includes('rt-tag'))
-    .map((x) => String(x.props.children))
-  ok(rC.texts.includes('已同步当前会话') || rC.texts.includes('本会话未绑靶标'),
-    '并如实提示当前会话同步状态（实际标签：' + JSON.stringify(cTags) + '）')
+  /* 核心防串流验证：切到未绑定新会话「exa 下载紫色晶石官包」，绝不串出「三角洲行动」或「轻记 微信小程序」！ */
+  SESSION_ONBOARDING['s-EXA'] = { dismissed: false, has_conversation: false }
+  const rExa = await switchSession('s-EXA', 'exa 下载紫色晶石官包', true)
+  ok(shownEngagement(rExa.hosts) === null,
+    '切到未绑定新会话 s-EXA（exa 下载紫色晶石官包）：绝不串用其他会话的工作区（shownEngagement=' + shownEngagement(rExa.hosts) + '）')
+  ok(rExa.texts.includes('待初始化') && rExa.texts.includes('当前会话 · 待初始化工作区'),
+    '未绑定新会话如实展示「待初始化」状态标签与底栏提示，不冒充「跟随会话」')
+  const unboundSelect = rExa.hosts.find((x) => x.tag === 'select' && x.props.value === '__session_unbound__')
+  ok(unboundSelect !== undefined,
+    '未绑定新会话顶栏下拉默认停留在当前会话待初始化占位项（__session_unbound__）')
 
-  const rT = await switchSession('s-NEW-TITLE')
-  ok(fetchCalls.includes('sessionBinding'),
-    '新会话也会去问一次绑定（问不到才走兜底）')
-  headerTitle = ENGINE
-  await renderAll(6, [headerEl()])
-  const rT2 = await switchSession('s-NEW-TITLE')
-  ok(shownEngagement(rT2.hosts) === ENGINE,
-    '绑定表里没有这个会话时，用会话标题反查到「' + ENGINE + '」（实际：' + shownEngagement(rT2.hosts) + '）')
-  const foot = rT2.hosts.find((x) => typeof x.props.className === 'string'
-    && x.props.className.indexOf('rt-foot') !== -1
-    && JSON.stringify(x.props).includes('会话标题'))
-  const footText = foot === undefined ? '' : JSON.stringify(foot.props)
-  ok(footText.includes('会话标题'),
-    '底部如实标出「工作区来源：会话标题」，不冒充绑定（实际：' + footText.slice(0, 160) + '）')
+  /* 未绑定会话切到「智能体与并发」页：严格展示 0/3 空闲槽位，绝不泄露其他工作区的在跑槽位 */
+  const exaAgentsBtn = rExa.hosts.find((x) => x.props.role === 'tab' && textOfNode(x.props.children).includes('智能体与并发'))
+  if (exaAgentsBtn) exaAgentsBtn.handlers.onClick()
+  const rExaAgents = await renderAll(6, [headerEl()])
+  ok(rExaAgents.texts.includes('并发槽 0/3'),
+    '未绑定会话下「智能体与并发」保持 0/3 空闲态，零跨工作区槽位泄露')
 
-  /* 工程模式库页默认按当前会话的工作区筛 */
+  /* 切回「协同与审批」点击「跳过指引」→ 进入干净空白会话，且因尚无对话（has_conversation=false）顶栏提供「🧭 重新指引」 */
+  const collabGroupBtn = rExaAgents.hosts.find((x) => x.handlers.onClick
+    && String(x.props.className || '').includes('rt-tab-group')
+    && textOfNode(x.props.children).includes('协同与审批'))
+  if (collabGroupBtn) collabGroupBtn.handlers.onClick()
+  const rExaCollab = await renderAll(6, [headerEl()])
+  const skipBtn = rExaCollab.hosts.find((x) => x.handlers.onClick
+    && /跳过指引|暂不初始化|保持空白/.test(textOfNode(x.props.children)))
+  ok(skipBtn !== undefined, '「协同与审批」初始化向导提供「跳过指引」操作入口')
+  if (skipBtn) skipBtn.handlers.onClick()
+  const rAfterSkip = await renderAll(6, [headerEl()])
+  ok(fetchCalls.includes('sessionOnboarding') && rAfterSkip.texts.includes('已跳过指引'),
+    '点击「跳过指引」后持久化 sessionOnboarding 并切换为干净独立空白态（「已跳过指引」）')
+  ok(shownEngagement(rAfterSkip.hosts) === null,
+    '跳过指引后仍保持零跨会话工作区串流')
+
+  const reopenHeadBtn = rAfterSkip.hosts.find((x) => x.handlers.onClick && textOfNode(x.props.children).includes('重新指引'))
+  ok(reopenHeadBtn !== undefined,
+    '当前会话尚无对话记录（has_conversation=false）时，顶栏提供「🧭 重新指引」入口')
+  if (reopenHeadBtn) reopenHeadBtn.handlers.onClick()
+  const rReopened = await renderAll(6, [headerEl()])
+  ok(rReopened.texts.includes('待初始化'),
+    '点击「🧭 重新指引」后恢复待初始化状态并重新打开「协同与审批」初始化指引')
+
+  /* 若该已跳过会话已有真实对话（has_conversation=true），不再展示重新指引按钮打扰用户 */
+  SESSION_ONBOARDING['s-EXA'] = { dismissed: true, has_conversation: true }
+  const rChatted = await switchSession('s-EXA', 'exa 下载紫色晶石官包', false)
+  const reopenWhenChatted = rChatted.hosts.find((x) => x.handlers.onClick && textOfNode(x.props.children).includes('重新指引'))
+  ok(reopenWhenChatted === undefined,
+    '当已跳过会话产生对话记录（has_conversation=true）后，自动收起「🧭 重新指引」按钮不打扰正常聊天')
+
+  /* 工程模式库页默认按当前会话绑定的工作区筛 */
   resetInstances()
   await renderAll(6, [headerToggle({
     sessionId: 's-A',

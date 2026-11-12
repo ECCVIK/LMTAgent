@@ -302,10 +302,14 @@
       const inFlightRef = React.useRef(false)
 
       const loadProbe = React.useCallback(() => {
+        if (!eng) {
+          setProbe(null)
+          return
+        }
         if (_isCanvasDragging || inFlightRef.current) return
         inFlightRef.current = true
         setBusy(true)
-        api({ op: 'pgWriteProbe', engagement: eng || undefined }).then((r) => {
+        api({ op: 'pgWriteProbe', engagement: eng }).then((r) => {
           inFlightRef.current = false
           setBusy(false)
           if (r && r.ok !== false) setProbe(r)
@@ -317,9 +321,10 @@
 
       React.useEffect(() => {
         loadProbe()
+        if (!eng) return undefined
         const timer = window.setInterval(loadProbe, 5000)
         return () => window.clearInterval(timer)
-      }, [loadProbe, refreshKey])
+      }, [loadProbe, refreshKey, eng])
 
       useHostEvents(eng, loadProbe, 800)
 
@@ -385,9 +390,8 @@
           h('span', { className: 'rt-bento-title' }, 'PG 写表活动探针'),
           h('span', { className: 'rt-tag rt-tag-live' }, isIdleZero ? '待命' : ('延迟 ' + latency)),
           h('span', { className: 'rt-tag ' + (isIdleZero ? '' : 'rt-tag-active') }, compressionBadgeText),
-          !isNovice ? h('span', { className: 'rt-tag rt-tag-passive' }, 'PG Wire v3 / WAL') : null,
           h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn', disabled: busy, onClick: loadProbe }, busy ? '采样中…' : '采样')),
+          h('button', { className: 'rt-btn', disabled: busy || !eng, onClick: loadProbe }, busy ? '采样中…' : '采样')),
         h('div', { className: 'rt-pg-summary' },
           h('div', { className: 'rt-pg-stat' },
             h('span', { className: 'rt-pg-stat-val' }, isNovice ? (totalWrites + ' 次同步') : (String(totalWrites) + ' TX')),
@@ -410,6 +414,6 @@
                 h('span', { className: 'rt-pg-lat' }, ev.latency || latency)))
             : h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11.5, lineHeight: 1.6, padding: '2px 0' } },
                 isNovice
-                  ? '当前暂无研发落盘记录 · 在上方「许愿拆解向导」输入需求立项后，各智能体的工作成果将实时自动保存。'
+                  ? '当前暂无研发落盘记录 · 前往「协同与审批」初始化并立项后，各智能体的工作成果将实时自动保存。'
                   : '当前工作区尚无 PG 写表事务（0 TX）· 当智能体角色写入模块架构、worker_tasks / worker_digests 摘要压缩或验证记录时，此处将实时滚动展示事务流。')))
     }

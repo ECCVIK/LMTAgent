@@ -370,7 +370,12 @@
     }
 
     const FOLLOW_SOURCE = {
-      bound: '落盘绑定', title: '会话标题', last: '上次选择', default: '默认单位',
+      bound: '落盘绑定',
+      title: '会话标题',
+      last: '上次选择',
+      default: '默认单位',
+      unbound: '待初始化',
+      skipped: '已跳过指引',
     }
 
     const sessionIdOf = (props) => (props && typeof props.sessionId === 'string' && props.sessionId ? props.sessionId : null)
@@ -383,6 +388,67 @@
         const title = row && typeof row.displayTitle === 'string' && row.displayTitle ? row.displayTitle : null
         return title && title !== props.sessionId ? title : null
       } catch (e) { return null }
+    }
+
+    const sessionMetaOf = (props) => {
+      const id = sessionIdOf(props)
+      const useSessions = props && props.useSessions
+      let row = null
+      if (typeof useSessions === 'function') {
+        try {
+          const st = useSessions((s) => s)
+          row = st && st.byId && id ? st.byId[id] : null
+        } catch (e) { row = null }
+      }
+      const rawTitle = row && typeof row.displayTitle === 'string' && row.displayTitle
+        ? row.displayTitle
+        : (row && typeof row.title === 'string' && row.title ? row.title : null)
+      const title = rawTitle && rawTitle !== id ? rawTitle : null
+      const cwd = (row && (row.cwd || row.workspace || (row.header && row.header.cwd))) || null
+      const blank = Boolean(row && row.blank)
+      const hasConversation = (row && typeof row.blank === 'boolean')
+        ? !row.blank
+        : (row && Array.isArray(row.messages)
+          ? row.messages.length > 0
+          : (Number((row && (row.turnCount || row.turns)) || 0) > 0 ? true : undefined))
+      return {
+        id: id,
+        title: title,
+        cwd: cwd,
+        blank: blank,
+        hasConversation: hasConversation,
+      }
+    }
+
+    function useScopedSession(props, embedMode) {
+      const globalSess = useSession()
+      const propSid = sessionIdOf(props)
+      const meta = sessionMetaOf(props)
+      const isScoped = Boolean((embedMode === 'session' || propSid) && propSid)
+      const resolvedTitle = meta.title || (globalSess.id === propSid ? globalSess.title : null)
+
+      React.useEffect(() => {
+        if (isScoped && propSid) {
+          setSessionId(propSid, meta.title || (globalSess.id === propSid ? globalSess.title : null))
+        }
+      }, [isScoped, propSid, meta.title])
+
+      if (isScoped) {
+        return {
+          id: propSid,
+          title: resolvedTitle,
+          cwd: meta.cwd,
+          hasConversation: meta.hasConversation,
+          authoritative: true,
+        }
+      }
+      return {
+        id: globalSess.id,
+        title: globalSess.title,
+        cwd: null,
+        hasConversation: undefined,
+        authoritative: false,
+      }
     }
 
     /* 工程模式库归类（与 core.js 的 POC_CATEGORIES 一致；面板按它分组） */

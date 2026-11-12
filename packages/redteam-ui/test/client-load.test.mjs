@@ -112,9 +112,17 @@ const ctx = {
 let applyThrew = null
 try { moduleExports.apply(ctx) } catch (error) { applyThrew = error }
 ok(applyThrew === null, 'apply 不报错' + (applyThrew ? '：' + applyThrew.message : ''))
-ok(registeredSlots.length >= 4, `注册了多区域控制台槽位（实际 ${registeredSlots.length}）`)
+ok(registeredSlots.length === 6, `注册了精准去重的 6 个控制台槽位（实际 ${registeredSlots.length}）`)
 ok(registeredSlots.every((s) => typeof s.render === 'function' && s.meta && s.meta.name && s.meta.id),
   '每个槽位都带 name/id 与渲染函数')
+{
+  const slotNames = registeredSlots.map((s) => s.meta.name)
+  ok(
+    ['shell.overlay', 'main', 'sidebar.panellist', 'conversation.view', 'conversation.session.header.utilities', 'settings.section']
+      .every((n) => slotNames.includes(n)),
+    `6 个槽位覆盖完整且已移除重复底部/顶栏胶囊（${slotNames.join(', ')}）`,
+  )
+}
 ok(appended.length >= 2, `注入了样式标签（${appended.length} 个）`)
 for (const dispose of cleanups) { try { dispose() } catch { /* 忽略 */ } }
 ok(removed.length >= 2, `卸载时把样式标签移除了（${removed.length} 个）`)

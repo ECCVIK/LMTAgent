@@ -1,8 +1,8 @@
 {
   "name": "dsh-redteam-tools",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "private": true,
-  "description": "RedTeam 智能体工具集：靶标绑定、资产入库/查询/关联、技能库读取、角色提示词",
+  "description": "LMTAgent 智能体工具集：会话工作台绑定、闭环目标拆解与摘要压缩、ShardLock 排他锁与角色技能库",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
