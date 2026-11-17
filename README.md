@@ -4,6 +4,16 @@ DeepSeek Harness（DSH Desktop）多智能体软件研发编排与工作台插�
 
 围绕「需求澄清 -> 无交集分片拆解 -> 主从并发派发 -> 摘要压缩 -> 审批推进」建立可控的 4-Wave DAG 工程流水线，解决长程研发中需求跑偏、跨会话串台、并发写盘冲突与黑盒执行问题。
 
+## 界面预览（`v0.23.2`）
+
+以下截图由无头浏览器加载真实编译产物 `packages/redteam-ui/lib/client.js` 与 `styles.js` 直接渲染采集：
+
+| 总览与上下文详表（`总览`） | 集群调度与拓扑树（`集群 -> 智能体与并发`） |
+| :---: | :---: |
+| ![总览与上下文详表](docs/assets/ui-overview-workbench.png) | ![集群调度与拓扑树](docs/assets/ui-agents-dag.png) |
+| **协同与阶段审批队列（`协同与审批`）** | **统一设置中心（`设置`）** |
+| ![协同与阶段审批队列](docs/assets/ui-assets-pg.png) | ![统一设置中心](docs/assets/ui-report-v2.png) |
+
 ---
 
 ## 1. 核心能力与架构概览
