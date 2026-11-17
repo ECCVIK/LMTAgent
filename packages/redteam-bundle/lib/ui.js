@@ -4994,28 +4994,90 @@ function extractBalancedJsonSubstring(text) {
   return null
 }
 
-function extractJsonFromLlmText(rawText) {
+function tryParseJsonLoose(candidate) {
+  const s = String(candidate || '').trim()
+  if (!s) return undefined
+  try {
+    return JSON.parse(s)
+  } catch { /* try trailing-comma cleanup */ }
+  const noTrailingComma = s.replace(/,\s*([}\]])/g, '$1')
+  if (noTrailingComma !== s) {
+    try {
+      return JSON.parse(noTrailingComma)
+    } catch { /* ignore */ }
+  }
+  return undefined
+}
+
+function repairTruncatedJsonObject(text) {
+  const s = String(text || '')
+  const start = s.indexOf('{')
+  if (start === -1) return undefined
+  let candidate = s.slice(start)
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const stack = []
+    let inString = false
+    let escape = false
+    for (let i = 0; i < candidate.length; i += 1) {
+      const ch = candidate[i]
+      if (inString) {
+        if (escape) { escape = false; continue }
+        if (ch === '\\') { escape = true; continue }
+        if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') { inString = true; continue }
+      if (ch === '{' || ch === '[') stack.push(ch)
+      else if (ch === '}' && stack[stack.length - 1] === '{') stack.pop()
+      else if (ch === ']' && stack[stack.length - 1] === '[') stack.pop()
+    }
+    let closed = candidate
+    if (inString) {
+      if (escape) closed = closed.slice(0, -1)
+      closed += '"'
+    }
+    closed = closed.replace(/,\s*$/, '')
+    const suffix = stack.slice().reverse().map((ch) => (ch === '{' ? '}' : ']')).join('')
+    const parsed = tryParseJsonLoose(closed + suffix)
+    if (parsed && typeof parsed === 'object') return parsed
+    const lastComma = candidate.lastIndexOf(',')
+    if (lastComma <= 0) break
+    candidate = candidate.slice(0, lastComma)
+  }
+  return undefined
+}
+
+export function extractJsonFromLlmText(rawText) {
   const trimmed = String(rawText || '').trim()
   if (!trimmed) throw new Error('模型响应文本为空')
-  try {
-    return JSON.parse(trimmed)
-  } catch { /* try fences / balanced scan */ }
 
-  const fenceRe = /```(?:json|JSON)?\s*\r?\n?([\s\S]*?)```/g
-  let match
-  while ((match = fenceRe.exec(trimmed)) !== null) {
-    const candidate = String(match[1] || '').trim()
-    if (!candidate) continue
-    try {
-      return JSON.parse(candidate)
-    } catch { /* try next fence or balanced scan */ }
+  const withoutThink = trimmed.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  const candidates = withoutThink && withoutThink !== trimmed ? [withoutThink, trimmed] : [trimmed]
+
+  for (const src of candidates) {
+    const direct = tryParseJsonLoose(src)
+    if (direct !== undefined) return direct
+
+    const fenceRe = /```(?:json|JSON)?\s*\r?\n?([\s\S]*?)```/g
+    let match
+    while ((match = fenceRe.exec(src)) !== null) {
+      const fenced = tryParseJsonLoose(match[1])
+      if (fenced !== undefined) return fenced
+    }
+
+    const unfenced = src.replace(/^```(?:json|JSON)?\s*\r?\n?/i, '').replace(/```\s*$/, '').trim()
+    const balanced = extractBalancedJsonSubstring(unfenced)
+    if (balanced) {
+      const parsed = tryParseJsonLoose(balanced)
+      if (parsed !== undefined) return parsed
+    }
+
+    const repaired = repairTruncatedJsonObject(unfenced)
+    if (repaired !== undefined) return repaired
   }
 
-  const balanced = extractBalancedJsonSubstring(trimmed)
-  if (balanced) {
-    return JSON.parse(balanced)
-  }
-  throw new Error('模型输出未包含合法的 JSON 对象')
+  const preview = trimmed.replace(/\s+/g, ' ').slice(0, 120)
+  throw new Error(`模型输出未包含合法的 JSON 对象（len=${trimmed.length}，预览：${preview}）`)
 }
 
 export async function resolveLiveRootAgent(ctx, sessionId) {
@@ -5368,6 +5430,7 @@ export async function invokeDshLlmJson(ctx, { sessionId, system, prompt, maxToke
     const deltasByIndex = new Map()
     const blocksByIndex = new Map()
     const indexOrder = []
+    let finishReason = ''
     const ensureIndex = (idx) => {
       const key = idx ?? 0
       if (!deltasByIndex.has(key) && !blocksByIndex.has(key)) indexOrder.push(key)
@@ -5386,6 +5449,7 @@ export async function invokeDshLlmJson(ctx, { sessionId, system, prompt, maxToke
         }
       } else if (chunk.type === 'finish') {
         const kind = chunk.reason && chunk.reason.kind
+        if (kind) finishReason = String(kind)
         if (kind === 'error' || kind === 'aborted') {
           const failure = chunk.reason.failure || {}
           const errMsg = failure.message || chunk.reason.message || (typeof chunk.reason.error === 'string' ? chunk.reason.error : '') || `LLM 调用异常终止 (${kind})`
@@ -5407,11 +5471,17 @@ export async function invokeDshLlmJson(ctx, { sessionId, system, prompt, maxToke
         llm_unavailable: true,
         provider: route.provider,
         model: `${route.provider}/${route.model}`,
-        error: `大模型（${route.provider}/${route.model}）返回内容为空，未生成结构化 JSON。`,
+        error: `大模型（${route.provider}/${route.model}）返回内容为空（finish=${finishReason || 'unknown'}），未生成结构化 JSON。`,
       }
     }
 
-    const parsed = extractJsonFromLlmText(assembledText)
+    let parsed
+    try {
+      parsed = extractJsonFromLlmText(assembledText)
+    } catch (parseErr) {
+      const msg = parseErr && parseErr.message ? parseErr.message : String(parseErr)
+      throw new Error(finishReason ? `${msg}（finish=${finishReason}）` : msg)
+    }
     return {
       ok: true,
       data: parsed,
@@ -5559,6 +5629,7 @@ async function decomposeWishWithAI(ctx, store, opts = {}) {
     `- wave 3: exploit（全栈研发构建分片，Wave 3 并发数不超过 ${settings.maxAgents}，每个分片独占互不重叠的 files_owned）`,
     '- wave 4: vuln-scan（代码审查与安全审计）、qa（自动化测试与构建门禁）、internal（文档与发布归档）',
     '若提供了真实工作区目录结构，files_owned 必须尽可能贴合该仓库真实存在或合理的路径！',
+    '禁止输出 <think>、解释性文字或 Markdown 代码块围栏，直接以 { 开头、以 } 结尾；每个字段保持简洁精炼，避免冗长截断。',
     '必须只输出严格合法的 JSON 对象，结构如下：',
     '{',
     '  "project_name": "简明中文/英文工程名",',
@@ -5592,7 +5663,7 @@ async function decomposeWishWithAI(ctx, store, opts = {}) {
     sessionId: opts.sessionId,
     system,
     prompt: promptParts.join('\n\n'),
-    maxTokens: 4096,
+    maxTokens: 8192,
     signal: opts.signal,
   })
 

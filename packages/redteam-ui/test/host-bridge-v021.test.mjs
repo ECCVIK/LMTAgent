@@ -21,6 +21,7 @@ import {
   invokeStoreMethodCompat,
   getEventSeq,
   bumpEventSeq,
+  extractJsonFromLlmText,
 } from '../lib/index.js'
 
 let pass = 0
@@ -1149,6 +1150,12 @@ async function main() {
         /* 验证 ctx.effect dispose 清理所有 SSE 连接与定时器 */
         host.disposeAll()
         check('插件热重载/卸载时 ctx.effect 干净关闭所有活跃 SSE 客户端流', sseStream.res.writableEnded === true)
+
+        /* 验证 extractJsonFromLlmText 容错能力（<think>、尾随逗号、未闭合代码块、流式截断 JSON 修复） */
+        const withThink = extractJsonFromLlmText('<think>思考中的伪 {foo: 1}</think>\n```json\n{"project_name":"Ledger","goals":[{"wave":1,"role":"recon",},]}\n```')
+        check('extractJsonFromLlmText 跳过 <think> 并剥离尾随逗号', withThink.project_name === 'Ledger' && withThink.goals.length === 1)
+        const unclosedFence = extractJsonFromLlmText('```json\n{"project_name":"Book","goals":[{"wave":1,"role":"recon","title":"W1"},{"wave":2,"role":"assess","title":"截断')
+        check('extractJsonFromLlmText 修复未闭合 Markdown 围栏与末尾截断的 goals JSON', unclosedFence.project_name === 'Book' && Array.isArray(unclosedFence.goals) && unclosedFence.goals.length >= 1)
       } finally {
         host.disposeAll()
       }
