@@ -25,8 +25,9 @@ let fail = 0
 const ok = (cond, msg) => { if (cond) { pass += 1; console.log(`  ✓ ${msg}`) } else { fail += 1; console.log(`  ✗ ${msg}`) } }
 
 const root = mkdtempSync(join(tmpdir(), 'rt-rules-'))
+let store
 try {
-  const store = new RedteamStore(root)
+  store = new RedteamStore(root)
   const { id } = store.openEngagement('规则测试靶标')
 
   console.log('— 规则零：按 code 记分（回归：曾经把 code 查找整段删掉，只剩 point_name，导致用 code 记分全部报错）')
@@ -412,6 +413,7 @@ try {
   ok(stepDup.hit && stepDup.hit.counted === false && /已经拿满|只算一次/.test(stepDup.score_hint || ''),
     '步骤里同服务重复账号：不计分，并把封顶原因回给模型（score_hint）')
 } finally {
+  try { store && store.close() } catch {}
   rmSync(root, { recursive: true, force: true })
 }
 

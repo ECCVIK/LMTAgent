@@ -2631,6 +2631,7 @@
       const [dispatchMode, setDispatchMode] = React.useState('hybrid_auto')
       const [subagentProvider, setSubagentProvider] = React.useState('spawn')
       const [autoWakeOnApprove, setAutoWakeOnApprove] = React.useState(true)
+      const [autoAdvanceWave, setAutoAdvanceWave] = React.useState(false)
 
       /* ③ 存储与 PostgreSQL 连接 */
       const [dbEngine, setDbEngine] = React.useState(null)
@@ -2711,6 +2712,7 @@
         const rawSubProv = String(dp.subagentProvider ?? dp.subagent_provider ?? 'spawn').trim().toLowerCase()
         setSubagentProvider(rawSubProv === 'fork' ? 'fork' : 'spawn')
         setAutoWakeOnApprove((dp.autoWakeOnApprove ?? dp.auto_wake_on_approve) !== false)
+        setAutoAdvanceWave(Boolean(dp.autoAdvanceWave ?? dp.auto_advance_wave))
 
         const engInfo = res.db_engine || res.dbEngine || cfg.db_engine || null
         setDbEngine(engInfo)
@@ -2819,6 +2821,7 @@
             dispatchMode: dispatchMode === 'captain_only' ? 'captain_only' : 'hybrid_auto',
             subagentProvider: subagentProvider === 'fork' ? 'fork' : 'spawn',
             autoWakeOnApprove: Boolean(autoWakeOnApprove),
+            autoAdvanceWave: Boolean(autoAdvanceWave),
           },
           uiPreferences: {
             defaultViewMode: defaultViewMode === 'expert' ? 'expert' : 'novice',
@@ -3142,7 +3145,15 @@
                   checked: autoWakeOnApprove,
                   onChange: (e) => setAutoWakeOnApprove(e.target.checked),
                 }),
-                '门禁审批通过后自动唤醒目标子会话继续执行')))),
+                '门禁审批通过后自动唤醒目标子会话继续执行')),
+            h('div', { className: 'rt-settings-field is-full' },
+              h('label', { className: 'rt-kb-check' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: autoAdvanceWave,
+                  onChange: (e) => setAutoAdvanceWave(e.target.checked),
+                }),
+                'Wave 间自动接力推进（当前 Wave 全部审批后自动拉起下一波次）')))),
 
         /* ③ 存储与 PostgreSQL 连接 */
         h('section', { className: 'rt-settings-section' },

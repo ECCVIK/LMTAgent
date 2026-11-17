@@ -15,6 +15,7 @@ import {
   dispatchAsync,
   fileMatchesShardPattern,
   shardPatternsOverlap,
+  auditWorkerScopeViolation,
 } from '../lib/core.js'
 import {
   PG_CLUSTER_TABLES,
@@ -900,6 +901,111 @@ try {
       && bindWtPrefixForNum.worker_task.error_detail === ''
       && bindMissingRef.ok === false,
     'bindWorkerSession 支持 wt-<数字> 匹配数字主键行，并对不存在引用优雅返回 ok:false',
+  )
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     12. dispatchPolicy.autoAdvanceWave 与 auditWorkerScopeViolation / Digest 审计
+     ═══════════════════════════════════════════════════════════════════════ */
+  console.log('— 12. autoAdvanceWave 策略持久化与 Worker Scope 越界审计')
+  const waveSettingsRoot = mkdtempSync(join(root, 'wave-policy-'))
+  const defaultUnified = getUnifiedSettings(waveSettingsRoot, emptyEnv)
+  ok(
+    DEFAULT_DISPATCH_POLICY.autoAdvanceWave === false
+      && defaultUnified.dispatchPolicy.autoAdvanceWave === false,
+    'DEFAULT_DISPATCH_POLICY 与默认 getUnifiedSettings 中 autoAdvanceWave 为 false',
+  )
+
+  const enabledWave = saveUnifiedSettings(waveSettingsRoot, {
+    dispatchPolicy: { autoAdvanceWave: true },
+  }, emptyEnv)
+  const readBackEnabled = getUnifiedSettings(waveSettingsRoot, emptyEnv)
+  ok(
+    enabledWave.dispatchPolicy.autoAdvanceWave === true
+      && readBackEnabled.dispatchPolicy.autoAdvanceWave === true
+      && dispatchPolicyOf(waveSettingsRoot, emptyEnv).autoAdvanceWave === true,
+    'saveUnifiedSettings 支持持久化 autoAdvanceWave=true 并正确读回',
+  )
+
+  const disabledWaveSnake = saveUnifiedSettings(waveSettingsRoot, {
+    dispatch_policy: { auto_advance_wave: false },
+  }, emptyEnv)
+  ok(
+    disabledWaveSnake.dispatchPolicy.autoAdvanceWave === false
+      && dispatchPolicyOf(waveSettingsRoot, emptyEnv).autoAdvanceWave === false,
+    'saveUnifiedSettings 支持 snake_case auto_advance_wave 覆盖已有 true 为 false',
+  )
+
+  const emptyOwnedAudit = auditWorkerScopeViolation([], ['packages/any/file.js'])
+  const inScopeAudit = auditWorkerScopeViolation(
+    ['packages/redteam-store/lib/settings.js', 'packages/redteam-ui/**', 'packages/tools/*', 'packages/*/test/*.mjs', 'docs/spec'],
+    [
+      'packages\\redteam-store\\lib\\settings.js',
+      './packages/redteam-ui/lib/app.js',
+      'packages/tools/sub/helper.js',
+      'packages/pkg-a/test/run.mjs',
+      'docs/spec/overview.md',
+    ],
+  )
+  const outScopeAudit = auditWorkerScopeViolation(
+    ['packages/redteam-store/lib/settings.js', 'packages/redteam-ui/*'],
+    ['packages\\redteam-store\\lib\\settings.js', 'packages\\redteam-store\\lib\\core.js', 'README.md'],
+  )
+  ok(
+    emptyOwnedAudit.scope_ok === true
+      && emptyOwnedAudit.scope_violations.length === 0
+      && inScopeAudit.scope_ok === true
+      && inScopeAudit.scope_violations.length === 0,
+    'auditWorkerScopeViolation 对空 filesOwned 及正反斜杠/glob/目录前缀内文件判定 scope_ok=true',
+  )
+  ok(
+    outScopeAudit.scope_ok === false
+      && outScopeAudit.scope_violations.length === 2
+      && outScopeAudit.scope_violations.includes('packages/redteam-store/lib/core.js')
+      && outScopeAudit.scope_violations.includes('README.md'),
+    'auditWorkerScopeViolation 精准检出越界文件并规范化为正斜杠路径',
+  )
+
+  const scopeEng = store.openEngagement('v022-scope-audit-test')
+  const scopeEngId = scopeEng.id
+  const okTaskRes = store.addCustomWorkerTask(scopeEngId, {
+    worker_name: 'scope-ok-worker',
+    worker_role: 'backend',
+    wave: 'wave-3',
+    assigned_goal: '只修改 settings.js',
+    files_owned: ['packages/redteam-store/lib/settings.js'],
+  })
+  const okDigestRes = store.submitWorkerDigest(scopeEngId, {
+    worker_task_id: okTaskRes.worker_task.id,
+    worker_name: 'scope-ok-worker',
+    what_was_done: '更新设置',
+    files_touched: ['packages\\redteam-store\\lib\\settings.js'],
+  })
+  const badTaskRes = store.addCustomWorkerTask(scopeEngId, {
+    worker_name: 'scope-bad-worker',
+    worker_role: 'backend',
+    wave: 'wave-3',
+    assigned_goal: '只修改 core.js',
+    files_owned: ['packages/redteam-store/lib/core.js'],
+  })
+  const badDigestRes = store.submitWorkerDigest(scopeEngId, {
+    worker_task_id: badTaskRes.worker_task.id,
+    worker_name: 'scope-bad-worker',
+    what_was_done: '越界修改了 ui 文件',
+    files_touched: ['packages/redteam-store/lib/core.js', 'packages/redteam-ui/lib/app.js'],
+  })
+  const scopeDag = store.workflowDag(scopeEngId)
+  const dagOkDigest = scopeDag.worker_digests.find((d) => String(d.id) === String(okDigestRes.digest.id))
+  const dagBadDigest = scopeDag.worker_digests.find((d) => String(d.id) === String(badDigestRes.digest.id))
+  ok(
+    okDigestRes.digest.scope_ok === true
+      && Array.isArray(okDigestRes.digest.scope_violations)
+      && okDigestRes.digest.scope_violations.length === 0
+      && dagOkDigest?.scope_ok === true
+      && badDigestRes.digest.scope_ok === false
+      && badDigestRes.digest.scope_violations.includes('packages/redteam-ui/lib/app.js')
+      && dagBadDigest?.scope_ok === false
+      && dagBadDigest?.scope_violations.includes('packages/redteam-ui/lib/app.js'),
+    'submitWorkerDigest 与 workflowDag.worker_digests 均正确附加 scope_ok 与 scope_violations 审计结果',
   )
 
   store.close()

@@ -22,6 +22,7 @@ import {
   getEventSeq,
   bumpEventSeq,
   extractJsonFromLlmText,
+  advanceNextWaveIfReady,
 } from '../lib/index.js'
 
 let pass = 0
@@ -1146,6 +1147,102 @@ async function main() {
           && actReal.json?.isRealHostSession === true
           && actReal.json?.rootSessionId === 'root-ws-alpha',
         ))
+
+        /* ── 6. hostVersion 握手与 Wave 自动推进（advanceNextWaveIfReady）验证 ── */
+        const expectedPkgVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+        const bootstrapRes = await host.callApi({ op: 'bootstrap', session: 'root-ws-alpha' })
+        check('bootstrap 响应包含 hostVersion 且与 package.json version 一致', Boolean(
+          bootstrapRes.json?.hostVersion === expectedPkgVersion && typeof expectedPkgVersion === 'string' && expectedPkgVersion.length > 0,
+        ))
+        const versionRes = await host.callApi({ op: 'version' })
+        check('op: version 响应包含 hostVersion 且与 package.json version 一致', Boolean(
+          versionRes.json?.ok === true && versionRes.json?.hostVersion === expectedPkgVersion,
+        ))
+
+        /* autoAdvanceWave 默认关闭时 advanceNextWaveIfReady 返回 disabled */
+        const disabledAdvance = await advanceNextWaveIfReady(null, store, {
+          engagementId: 'eng-alpha',
+          currentWave: 1,
+          approvalState: 'approved',
+        })
+        check('autoAdvanceWave 默认关闭时 advanceNextWaveIfReady 返回 triggered=false (disabled)', Boolean(
+          disabledAdvance && disabledAdvance.triggered === false && disabledAdvance.reason === 'disabled',
+        ))
+
+        /* 开启 autoAdvanceWave: true 后，Wave 1 全部审批通过自动拉起 Wave 2 */
+        const waveAutoActivations = []
+        const waveAutoFollowups = []
+        const waveAutoRootAgent = {
+          id: 'root-wave-auto',
+          options: { provider: 'mock', model: 'mock-1' },
+          session: { id: 'root-wave-auto', header: { cwd: wsDir } },
+          followup: (msg) => waveAutoFollowups.push(msg),
+        }
+        const waveAutoHost = createMockPluginHost({
+          store,
+          sessionsSvc: { list: () => [{ id: 'root-wave-auto', title: 'Wave Auto Root', cwd: wsDir }], get: (id) => (id === 'root-wave-auto' ? { id: 'root-wave-auto', header: { cwd: wsDir } } : null) },
+          agentsSvc: { get: (id) => (id === 'root-wave-auto' ? waveAutoRootAgent : null) },
+          subagentsSvc: {
+            startActivation: async (spec) => {
+              const cid = `child-wave-auto-${waveAutoActivations.length + 1}`
+              waveAutoActivations.push({ spec, childId: cid })
+              return { childId: cid }
+            },
+          },
+        })
+        try {
+          store.openEngagement({ id: 'eng-wave-auto', name: 'Wave Auto Test' })
+          await waveAutoHost.callApi({
+            op: 'addCustomWorkerTask',
+            engagement: 'eng-wave-auto',
+            wave: 'wave-1',
+            worker_role: 'recon',
+            worker_name: 'recon-w1',
+            title: 'Wave 1 Recon',
+            assigned_goal: 'Survey codebase',
+          })
+          await waveAutoHost.callApi({
+            op: 'addCustomWorkerTask',
+            engagement: 'eng-wave-auto',
+            wave: 'wave-2',
+            worker_role: 'assess',
+            worker_name: 'assess-w2',
+            title: 'Wave 2 Assess',
+            assigned_goal: 'Freeze contracts',
+          })
+          const saveAutoRes = await waveAutoHost.callApi({
+            op: 'saveSettings',
+            dispatchPolicy: { autoAdvanceWave: true },
+          })
+          check('saveSettings 持久化 dispatchPolicy.autoAdvanceWave = true', Boolean(
+            saveAutoRes.json?.ok === true && saveAutoRes.json?.settings?.dispatchPolicy?.autoAdvanceWave === true,
+          ))
+
+          const dagBeforeAuto = store.workflowDag('eng-wave-auto')
+          const w1Task = (dagBeforeAuto.worker_tasks || []).find((t) => t.worker_name === 'recon-w1')
+          const approveAutoRes = await waveAutoHost.callApi({
+            op: 'planApproveWorker',
+            engagement: 'eng-wave-auto',
+            session: 'root-wave-auto',
+            worker_id: String(w1Task.id),
+            approval_state: 'approved',
+          })
+          const dagAfterAuto = store.workflowDag('eng-wave-auto')
+          const w2TaskAfter = (dagAfterAuto.worker_tasks || []).find((t) => t.worker_name === 'assess-w2')
+          check('planApproveWorker 开启 autoAdvanceWave 后自动拉起 Wave 2 并通知 rootAgent', Boolean(
+            approveAutoRes.json?.ok === true
+            && approveAutoRes.json?.autoAdvanced?.triggered === true
+            && approveAutoRes.json?.autoAdvanced?.currentWave === 1
+            && approveAutoRes.json?.autoAdvanced?.nextWave === 2
+            && approveAutoRes.json?.autoAdvanced?.spawned?.length === 1
+            && approveAutoRes.json?.autoAdvanced?.captainNotified === true
+            && waveAutoActivations.length === 1
+            && w2TaskAfter?.session_id === 'child-wave-auto-1'
+            && waveAutoFollowups.some((m) => String(m?.content?.[0]?.text || '').includes('Wave 2')),
+          ), JSON.stringify({ autoAdvanced: approveAutoRes.json?.autoAdvanced, w2Status: w2TaskAfter?.status, w2Sid: w2TaskAfter?.session_id }))
+        } finally {
+          waveAutoHost.disposeAll()
+        }
 
         /* 验证 ctx.effect dispose 清理所有 SSE 连接与定时器 */
         host.disposeAll()

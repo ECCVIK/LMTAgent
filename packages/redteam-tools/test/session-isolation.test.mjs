@@ -35,6 +35,7 @@ function makeSession(store, id, parentSession) {
 }
 
 delete process.env.FOFA_KEY
+delete process.env.REDTEAM_MAX_AGENTS
 const root = mkdtempSync(join(tmpdir(), 'rt-v09-'))
 const store = new RedteamStore(join(root, 'redteam'))
 /* 会话注册表：main1 → recon1（子）；main2 是另一个主会话 */
@@ -115,6 +116,7 @@ ok(viewRoot.bound === opened1.engagement.id && viewRoot.name === '甲公司',
 const doomed = store.openEngagement('待删靶标', [], { bindCurrent: false })
 store.setSessionBinding('ghost', doomed.id, '待删靶标')
 ok(store.sessionBinding('ghost') === doomed.id, '指向存在靶标的绑定可读出')
+try { store.close() } catch {}
 rmSync(store.dirOf(doomed.id), { recursive: true, force: true })
 store.setSessionBinding('main1', opened1.engagement.id, '甲公司')
 ok(store.sessionBinding('ghost') === undefined, '靶标目录删掉后，指向它的绑定在下一次写入时被清理')
@@ -327,12 +329,14 @@ writeFileSync(join(root, 'redteam', '.setup-complete'), 'completed_at=test\n', '
 writeFileSync(join(root, '.env'), 'FOFA_KEY=test-key-1234\n', 'utf8')
 process.env.DSH_HOME = root
 delete process.env.FOFA_KEY
+delete process.env.REDTEAM_MAX_AGENTS
 const pre2 = JSON.parse(await toolsWithSkills.get('redteam_preflight').execute({}, { agent: { session: main1 } }))
 if (savedDshHome === undefined) delete process.env.DSH_HOME
 else process.env.DSH_HOME = savedDshHome
 ok(pre2.onboarding.first_run === false && pre2.onboarding.configured.fofa_key.startsWith('configured'),
   'preflight：读 $DSH_HOME/.env 里的 FOFA_KEY（不误报缺 key）')
 
+try { store.close() } catch {}
 rmSync(root, { recursive: true, force: true })
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)

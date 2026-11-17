@@ -209,6 +209,7 @@ window.__ModuleLoader__.load({
       return hits.length ? hits[0].x.id : null
     }
 
+    const CLIENT_PLUGIN_VERSION = '0.23.2'
     const CSS = '__RT_STYLES__'
 
 
@@ -2356,7 +2357,9 @@ window.__ModuleLoader__.load({
                 : String(raw.files_owned || raw.filesOwned || '').split(/[,，\n]+/).map((s) => s.trim()).filter(Boolean))
             const digestSrc = (raw.worker_digest && typeof raw.worker_digest === 'object')
               ? raw.worker_digest
-              : ((raw.compressedDigest && typeof raw.compressedDigest === 'object') ? raw.compressedDigest : {})
+              : ((raw.compressedDigest && typeof raw.compressedDigest === 'object')
+                ? raw.compressedDigest
+                : ((raw.digest && typeof raw.digest === 'object') ? raw.digest : {}))
             const whatDone = String(
               digestSrc.what_was_done
               || digestSrc.whatWasDone
@@ -2377,6 +2380,13 @@ window.__ModuleLoader__.load({
               || raw.verification
               || (statusRaw === 'blocked' ? '存在阻塞项' : (isApproved ? '已通过验收' : '待确认放行'))
             ).trim()
+            const rawViolations = Array.isArray(digestSrc.scope_violations)
+              ? digestSrc.scope_violations
+              : (Array.isArray(digestSrc.scopeViolations)
+                ? digestSrc.scopeViolations
+                : (Array.isArray(raw.scope_violations) ? raw.scope_violations : []))
+            const scopeViolations = rawViolations.map((f) => String(f || '').trim()).filter(Boolean)
+            const scopeOk = digestSrc.scope_ok !== false && digestSrc.scopeOk !== false && raw.scope_ok !== false && scopeViolations.length === 0
             merged.push({
               id,
               sessionId: raw.session_id || raw.sessionId || id,
@@ -2395,6 +2405,8 @@ window.__ModuleLoader__.load({
                 whatDone,
                 touchedFiles,
                 verificationText,
+                scopeViolations,
+                scopeOk,
               },
             })
           })
@@ -2661,6 +2673,15 @@ window.__ModuleLoader__.load({
                     h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } },
                       item.digest.whatDone + ' · ' + item.digest.verificationText
                       + (item.digest.touchedFiles.length > 0 ? (' · 文件：' + item.digest.touchedFiles.join(', ')) : '')),
+
+                    (!item.digest.scopeOk || item.digest.scopeViolations.length > 0)
+                      ? h('div', {
+                          className: 'rt-err rt-scope-violation-warn',
+                          style: { margin: 0, padding: '4px 8px', fontSize: 11.5, fontWeight: 600 },
+                        }, '写盘越界警告：' + (item.digest.scopeViolations.length > 0
+                          ? item.digest.scopeViolations.join(', ')
+                          : '存在未授权越界文件修改'))
+                      : null,
 
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                       h('input', {
@@ -9399,6 +9420,7 @@ window.__ModuleLoader__.load({
       const [dispatchMode, setDispatchMode] = React.useState('hybrid_auto')
       const [subagentProvider, setSubagentProvider] = React.useState('spawn')
       const [autoWakeOnApprove, setAutoWakeOnApprove] = React.useState(true)
+      const [autoAdvanceWave, setAutoAdvanceWave] = React.useState(false)
 
       const [dbEngine, setDbEngine] = React.useState(null)
       const [pgUrlMasked, setPgUrlMasked] = React.useState('')
@@ -9476,6 +9498,7 @@ window.__ModuleLoader__.load({
         const rawSubProv = String(dp.subagentProvider ?? dp.subagent_provider ?? 'spawn').trim().toLowerCase()
         setSubagentProvider(rawSubProv === 'fork' ? 'fork' : 'spawn')
         setAutoWakeOnApprove((dp.autoWakeOnApprove ?? dp.auto_wake_on_approve) !== false)
+        setAutoAdvanceWave(Boolean(dp.autoAdvanceWave ?? dp.auto_advance_wave))
 
         const engInfo = res.db_engine || res.dbEngine || cfg.db_engine || null
         setDbEngine(engInfo)
@@ -9584,6 +9607,7 @@ window.__ModuleLoader__.load({
             dispatchMode: dispatchMode === 'captain_only' ? 'captain_only' : 'hybrid_auto',
             subagentProvider: subagentProvider === 'fork' ? 'fork' : 'spawn',
             autoWakeOnApprove: Boolean(autoWakeOnApprove),
+            autoAdvanceWave: Boolean(autoAdvanceWave),
           },
           uiPreferences: {
             defaultViewMode: defaultViewMode === 'expert' ? 'expert' : 'novice',
@@ -9905,7 +9929,15 @@ window.__ModuleLoader__.load({
                   checked: autoWakeOnApprove,
                   onChange: (e) => setAutoWakeOnApprove(e.target.checked),
                 }),
-                '门禁审批通过后自动唤醒目标子会话继续执行')))),
+                '门禁审批通过后自动唤醒目标子会话继续执行')),
+            h('div', { className: 'rt-settings-field is-full' },
+              h('label', { className: 'rt-kb-check' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: autoAdvanceWave,
+                  onChange: (e) => setAutoAdvanceWave(e.target.checked),
+                }),
+                'Wave 间自动接力推进（当前 Wave 全部审批后自动拉起下一波次）')))),
 
         h('section', { className: 'rt-settings-section' },
           h('div', { className: 'rt-settings-section-head' },
@@ -10584,13 +10616,19 @@ window.__ModuleLoader__.load({
                 }, '前往「协同与审批」初始化 →'))))
     }
 
-    function VersionBar() {
+    function VersionBar(props) {
       const [info, setInfo] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [open, setOpen] = React.useState(false)
       const [msg, setMsg] = React.useState(null)
       const [countdown, setCountdown] = React.useState(0)
       const countdownTimerRef = React.useRef(null)
+
+      const notifyHostVersion = (res) => {
+        if (props && typeof props.onHostVersion === 'function' && res && typeof res.hostVersion === 'string' && res.hostVersion.trim()) {
+          props.onHostVersion(res.hostVersion.trim())
+        }
+      }
 
       const clearCountdownTimer = () => {
         if (countdownTimerRef.current !== null) {
@@ -10606,13 +10644,24 @@ window.__ModuleLoader__.load({
         api({ op: 'updateCheck' }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) {
-            api({ op: 'version' }).then((v) => { if (v && v.ok !== false) setInfo(v) }, () => {})
+            api({ op: 'version' }).then((v) => {
+              if (v && v.ok !== false) {
+                setInfo(v)
+                notifyHostVersion(v)
+              }
+            }, () => {})
             return
           }
           setInfo(r)
+          notifyHostVersion(r)
         }, () => {
           setBusy(false)
-          api({ op: 'version' }).then((v) => { if (v && v.ok !== false) setInfo(v) }, () => {})
+          api({ op: 'version' }).then((v) => {
+            if (v && v.ok !== false) {
+              setInfo(v)
+              notifyHostVersion(v)
+            }
+          }, () => {})
         })
       }
       React.useEffect(() => { check(true) }, [])
@@ -10826,6 +10875,16 @@ window.__ModuleLoader__.load({
       const [sessionState, setSessionState] = React.useState(null)
       const [snapshot, setSnapshot] = React.useState(null)
       const [err, setErr] = React.useState(null)
+      const [hostVersionMismatch, setHostVersionMismatch] = React.useState(null)
+      const checkHostVersion = React.useCallback((hostVer) => {
+        const hv = typeof hostVer === 'string' ? hostVer.trim() : ''
+        if (!hv) return
+        if (typeof CLIENT_PLUGIN_VERSION === 'string' && hv !== CLIENT_PLUGIN_VERSION) {
+          setHostVersionMismatch(hv)
+        } else {
+          setHostVersionMismatch(null)
+        }
+      }, [])
       const manualPickRef = React.useRef(null)
       const autoRoutedSessionRef = React.useRef(null)
       const resizeCleanupRef = React.useRef(null)
@@ -10896,6 +10955,7 @@ window.__ModuleLoader__.load({
 
       const refreshList = (selectId) => {
         api({ op: 'bootstrap', session: sidRef.current || undefined }).then((b) => {
+          if (b && b.hostVersion) checkHostVersion(b.hostVersion)
           setEngagements((b && b.engagements) || [])
           if (selectId) { setEng(selectId); loadSnapshot(selectId) }
         }, () => {})
@@ -10987,6 +11047,7 @@ window.__ModuleLoader__.load({
             return
           }
           setErr(null)
+          if (r.hostVersion) checkHostVersion(r.hostVersion)
           const list = r.engagements || []
           const hs = Array.isArray(r.host_sessions) ? r.host_sessions : []
           setEngagements(list)
@@ -11118,6 +11179,7 @@ window.__ModuleLoader__.load({
         setErr(null)
         setRefreshKey((k) => k + 1)
         api({ op: 'bootstrap', session: sid || undefined }).then((b) => {
+          if (b && b.hostVersion) checkHostVersion(b.hostVersion)
           const list = (b && b.engagements) || []
           setEngagements(list)
           if (sid !== null) {
@@ -11476,7 +11538,7 @@ window.__ModuleLoader__.load({
             : h('option', { value: '' }, currentEngName)),
           h('div', { className: 'rt-spacer' }),
           h(UiModeSwitcher, { compact: true }),
-          h(VersionBar, null),
+          h(VersionBar, { onHostVersion: checkHostVersion }),
           full
             ? h('button', { className: 'rt-btn', title: '退出全屏（Esc）', onClick: exitFull }, '退出全屏')
             : null,
@@ -11493,6 +11555,13 @@ window.__ModuleLoader__.load({
             onClick: openFull,
           }, '全面浏览'),
           (full || embedMode) ? null : h('button', { className: 'rt-btn', title: '收起面板', onClick: () => setUI({ open: false }) }, '收起')),
+        hostVersionMismatch
+          ? h('div', {
+              className: 'rt-err rt-host-version-mismatch',
+              role: 'alert',
+              style: { margin: '6px 10px 0', fontSize: 12, fontWeight: 600 },
+            }, '检测到后端 Host 版本 (' + hostVersionMismatch + ') 与前端 (' + CLIENT_PLUGIN_VERSION + ') 不一致，请彻底退出并重启 DSH NEXT')
+          : null,
         h('div', { className: 'rt-tabs rt-tabs-groups', role: 'navigation', 'aria-label': '控制台分区' },
           TAB_GROUPS.map((g) => {
             const on = activeGroup.key === g.key

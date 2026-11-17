@@ -1,14 +1,14 @@
 <div align="center">
 
-# ⚡ LMTAgent (`v0.23.1`)
+# ⚡ LMTAgent (`v0.23.2`)
 
 **为 [DeepSeek Harness (DSH Desktop)](https://github.com/anywhere-labs/dsh-desktop) 打造的「`lmtex` 闭环编排 × `gstack` 8 角色协同」全栈软件研发集群与工作台**
 
-[![DSH Plugin](https://img.shields.io/badge/DSH_Desktop-LMTAgent_v0.23.1-4D6BFE?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://github.com/ECCVIK/LMTAgent)
-[![Session Isolation](https://img.shields.io/badge/Session_Guard-1:1_Workbench_Isolation_+_Settings_Hub-0EA5E9?style=for-the-badge)](#1-核心工作台架构与可视化交互能力概览v0231)
-[![ShardLock Guard](https://img.shields.io/badge/Concurrency-ShardLock_+_3min_Zombie_Reaper-2563EB?style=for-the-badge)](#3-8-角色-gstack-虚拟软件研发团队与运行时-shardlock-排他锁)
+[![DSH Plugin](https://img.shields.io/badge/DSH_Desktop-LMTAgent_v0.23.2-4D6BFE?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://github.com/ECCVIK/LMTAgent)
+[![Session Isolation](https://img.shields.io/badge/Session_Guard-1:1_Workbench_Isolation_+_Settings_Hub-0EA5E9?style=for-the-badge)](#1-核心工作台架构与可视化交互能力概览v0232)
+[![ShardLock Guard](https://img.shields.io/badge/Concurrency-ShardLock_+_Scope_Audit-2563EB?style=for-the-badge)](#3-8-角色-gstack-虚拟软件研发团队与运行时-shardlock-排他锁)
 [![PostgreSQL Probe](https://img.shields.io/badge/Fact_Store-PostgreSQL_16_Digest_&_SSE_Stream-4D6BFE?style=for-the-badge&logo=postgresql&logoColor=white)](#5-主题自适应-postgresql-实时写表与摘要压缩探针)
-[![Tests Passing](https://img.shields.io/badge/Tests-22_Suites_·_1166_Assertions_PASS-6366F1?style=for-the-badge)](#7-质量门禁与测试验证)
+[![Tests Passing](https://img.shields.io/badge/Tests-22_Suites_·_1193_Assertions_PASS-6366F1?style=for-the-badge)](#7-质量门禁与测试验证)
 
 <p align="center">
   <b>本项目诞生宗旨优化许愿式编程的体验和可控，目的是让即使无编程语言基础也可以通过此项目作为流水线标准开发得到想要的软件，加上此项目，你的提示词不再会因为模型各种幻觉问题自我误导偏离你想要的开发方向，而是规划润色你的提示词，并拆解成目标并派发已经写好对应角色的子代理去开发</b>
@@ -18,7 +18,7 @@
 
 ---
 
-## ✨ 1. 核心工作台架构与可视化交互能力概览（`v0.23.1`）
+## ✨ 1. 核心工作台架构与可视化交互能力概览（`v0.23.2`）
 
 LMTAgent 专为解决大模型「许愿式编程（Wishful Programming）」中**需求模糊幻觉、跨会话状态串台、上下文膨胀、多代理并发踩踏与黑盒不可控**痛点而生，融合 [Garry Tan `gstack`](https://github.com/garrytan/gstack)、[chumingjun/dsh-harness-one](https://github.com/chumingjun/dsh-harness-one)、n8n 节点编排交互以及 `lmtex` 主从闭环思想。在 `v0.23.x` 中完成了真实 AI 闭环、总览可展开详表与性能瘦身重构：
 
@@ -123,7 +123,7 @@ LMTAgent 专为解决大模型「许愿式编程（Wishful Programming）」中*
 
 打开 **[DSH Desktop](https://github.com/anywhere-labs/dsh-desktop)** → 进入「插件市场」→ 点击右上角 **「导入插件」**，粘贴以下描述即可自动识别并安装：
 
-> 我想安装 LMTAgent（v0.23.1）全栈软件研发集群与可视化多智能体工作流插件，仓库地址是 https://github.com/ECCVIK/LMTAgent ，主包路径在仓库根目录（或 packages/redteam-bundle），入口补丁配置是 cordis.patch.yml，前端工作台入口是 lib/client.js。它内置了 1:1 会话专属工作台隔离、真实 AI 需求澄清拆解与 Strategy A 主从真实派发（subagents.startActivation + rootAgent.followup）、可展开总览详表、1:1 Stage 坐标 SVG 派生树连线、统一 5 分区设置配置中心（SettingsHubTab + settings.section）、运行时 ShardLock 文件排他锁与 3min 无心跳僵尸并发槽自动回收、8 位 gstack 软件研发角色（支持 maxDepth: 3 递归子代理）以及 GET /redteam/events SSE 实时流，请帮我直接安装并启用该插件。
+> 我想安装 LMTAgent（v0.23.2）全栈软件研发集群与可视化多智能体工作流插件，仓库地址是 https://github.com/ECCVIK/LMTAgent ，主包路径在仓库根目录（或 packages/redteam-bundle），入口补丁配置是 cordis.patch.yml，前端工作台入口是 lib/client.js。它内置了 1:1 会话专属工作台隔离、真实 AI 需求澄清拆解与 Strategy A 主从真实派发（支持 Wave 间自动接力 `autoAdvanceWave` 与写后 `files_touched` 分片越界审计）、可展开总览详表、前后端版本不一致主动提醒、1:1 Stage 坐标 SVG 派生树连线、统一 5 分区设置配置中心、运行时 ShardLock 文件排他锁、8 位 gstack 软件研发角色以及 GET /redteam/events SSE 实时流，请帮我直接安装并启用该插件。
 
 ### 方式二：通过命令行安装
 
@@ -143,22 +143,22 @@ node packages/redteam-bundle/tools/build.mjs --check
 # 敏感内容闸门自检与全仓扫描（确保 0 命中）
 node scripts/check-no-confidential.mjs --all
 
-# 运行全量 22 个零依赖测试套件（Ubuntu CI 全量 22 文件 / 1,166 条断言通过）
+# 运行全量 22 个零依赖测试套件（Windows & Linux 双端 22 文件 / 1,193 条断言全绿）
 npm test
 ```
 
 ---
 
-## 🪞 8. 诚实自省与演进路线（Resolved in `v0.23.1` & Frontier Roadmap）
+## 🪞 8. 诚实自省与演进路线（Resolved in `v0.23.2` & Frontier Roadmap）
 
 我们坚持对每一版真实用户体验与能力边界保持诚实透明——在 `v0.23.x` 中，围绕真实 DSH 调用链路、总览详表重构、JSON 容错与性能瘦身完成了系统级升级：
 
 ### ✅ 已在 `v0.23.x` 完成落地的核心演进
 
-1. **真实 DSH LLM 需求拆解（含截断修复）与 Strategy A 主从真实派发**：移除前端写死模板芯片（`WISH_STARTER_TEMPLATES`），澄清与拆解通过 `invokeDshLlmJson` 调用 `ctx.get('llm')`（`maxTokens: 8192` + `<think>`/截断修复），派发与重跑经由 `subagents.startActivation` + `rootAgent.followup` 驱动真实 DSH 代理执行。
-2. **总览页移除旧版渗透四阶段条 + 可展开 `p3/p4/p5` 风格详表**：移除 `.rt-ov-hero`，保留折叠态 4 宫格概览，点击展开环形图、分段占比条与结构化明细表。
-3. **1:1 Stage 坐标 SVG 派生树连线对齐 + 卡片与 CSS 全面降噪**：以 `svg.rt-tree-edges-svg` + `measureBoxInStage` 替代易错位的装饰性菱形引脚，清除无用 `P0`–`P3` 标签、伪 `#tags`、重复横幅及 28 个零引用死 CSS 选择器。
-4. **统一设置配置中心（`SettingsHubTab` + `settings.section`）与配置缓存优化**：收口为统一 5 分区设置页并同步挂入 DSH 宿主设置；`settings.js` 新增基于 `mtimeMs` 的读取缓存，消除重复磁盘 I/O。
+1. **真实 DSH LLM 需求拆解与 Strategy A 主从派发（含 Wave 自动接力 & 写后越界审计）**：移除前端写死模板芯片，澄清与拆解通过 `invokeDshLlmJson`（`maxTokens: 8192` + `<think>`/截断修复）生成，派发支持 `autoAdvanceWave` 波次自动接力与 `auditWorkerScopeViolation` 分片越界告警。
+2. **宿主桥接模块化拆分与前后端版本守卫**：将 `redteam-ui/lib/index.js` 拆出 `llm-planner.js` 与 `dsh-dispatch.js`；前后端握手校验 `hostVersion !== CLIENT_PLUGIN_VERSION` 时主动提示重启 `DSH NEXT`。
+3. **总览页移除旧版渗透四阶段条 + 可展开 `p3/p4/p5` 风格详表**：移除 `.rt-ov-hero`，保留折叠态 4 宫格概览，点击展开环形图、分段占比条与结构化明细表。
+4. **1:1 Stage 坐标 SVG 派生树连线、配置缓存优化与双端 22/22 全绿**：以 `svg.rt-tree-edges-svg` + `measureBoxInStage` 精确对齐连线；`settings.js` 新增 `mtimeMs` 缓存；修复 Windows 测试句柄与路径兼容性，实现 Windows 与 Linux 双端 `22` 套件 `1,193` 条断言全部通过。
 
 ### 🔭 下一步前沿攻坚方向（`v0.23+` Frontier Milestones）
 

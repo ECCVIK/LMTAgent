@@ -21,8 +21,10 @@ const ok = (cond, msg) => { if (cond) { pass += 1; console.log(`  ✓ ${msg}`) }
 const hash = (t) => createHash('sha1').update(String(t).trim()).digest('hex').slice(0, 12)
 
 const root = mkdtempSync(join(tmpdir(), 'rt-prompts-test-'))
+let store
+let old
 try {
-  const store = new RedteamStore(root)
+  store = new RedteamStore(root)
   const { id } = store.openEngagement('提示词测试靶标')
   const dir = store.promptsDirOf(id)
   const manifestPath = store.promptManifestPathOf(id)
@@ -83,7 +85,7 @@ try {
     '缺失的新角色（资产梳理 / 主会话）按当前默认自动补种')
 
   /* 5) 无 manifest 的老靶标：历史默认指纹表兜底 */
-  const old = new newStore(join(root, 'legacy'))
+  old = new newStore(join(root, 'legacy'))
   function newStore(p) { return new RedteamStore(p) }
   const { id: legId } = old.openEngagement('老靶标')
   const legDir = old.promptsDirOf(legId)
@@ -103,6 +105,8 @@ try {
   mkdirSync(legDir, { recursive: true })
   ok(store.listPrompts(legId).length === 8, '角色文件缺失时读取不报错（8 个角色）')
 } finally {
+  try { old && old.close() } catch {}
+  try { store && store.close() } catch {}
   rmSync(root, { recursive: true, force: true })
 }
 

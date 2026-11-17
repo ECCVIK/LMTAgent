@@ -10,7 +10,7 @@
  */
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { checkSkill, summarizeSkills, requiredEnvOf, referencedPathsOf, expandSkillPath } from '../lib/skill-availability.js'
 
 let pass = 0
@@ -41,8 +41,8 @@ ok(referencedPathsOf('SUO5=$DSH_HOME/redteam/toolkit/suo5/suo5-linux-amd64').len
   '抽出 $DSH_HOME 下的 toolkit 路径')
 ok(referencedPathsOf('见 README 的 /etc/passwd 与 http://x/toolkit/').length === 0,
   '只认 toolkit/bin/local 下的本机路径（正文里的 URL 与系统路径不误伤）')
-ok(expandSkillPath('$DSH_HOME/redteam/toolkit') === join(root, 'redteam', 'toolkit'), '$DSH_HOME 展开正确')
-ok(expandSkillPath('~/x').startsWith('/'), '~/ 展开成绝对路径')
+ok(resolve(expandSkillPath('$DSH_HOME/redteam/toolkit')) === resolve(join(root, 'redteam', 'toolkit')), '$DSH_HOME 展开正确')
+ok(isAbsolute(expandSkillPath('~/x')), '~/ 展开成绝对路径')
 
 console.log('— 四个判定维度')
 const good = checkSkill({

@@ -21,9 +21,11 @@ let pass = 0
 let fail = 0
 const ok = (cond, msg) => { if (cond) { pass += 1; console.log('  ✓ ' + msg) } else { fail += 1; console.log('  ✗ ' + msg) } }
 
+const normPath = (p) => String(p).replace(/\\/g, '/')
 const root = mkdtempSync(join(tmpdir(), 'rt-reptest-'))
+let store
 try {
-  const store = new RedteamStore(root)
+  store = new RedteamStore(root)
   const id = store.openEngagement('报告复现测试').id
   store.importBundle(id, {
     assets: [
@@ -72,7 +74,7 @@ try {
     description: '文件上传验证脚本', evidence: '回显 uid=33(www-data)', content: '<% out.print("ok"); %>',
     asset_id: ext.id, vuln_id: vuln.id,
   })
-  ok(attackFile.path.includes('/attack-files/'), '攻击文件落到 attack-files/<目标>/ 下')
+  ok(normPath(attackFile.path).includes('/attack-files/'), '攻击文件落到 attack-files/<目标>/ 下')
 
   const rep = store.scoreReport(id)
   const byCode = new Map(rep.items.map((x) => [x.code, x]))
@@ -88,9 +90,9 @@ try {
   ok(shell.replay_http === REQ, 'Yakit 报文 = 抓包原文（未被截断/改写）')
   ok(shell.replay_source === 'linked', '标注为 linked（显式关联的真实证据）')
   ok(shell.replay_http_synthesized === false, '真实抓包不算"合成"')
-  ok(shell.attack_files.length === 1 && shell.attack_files[0].path.startsWith('attack-files/'),
+  ok(shell.attack_files.length === 1 && normPath(shell.attack_files[0].path).startsWith('attack-files/'),
     '报告条目带攻击文件相对路径：' + JSON.stringify((shell.attack_files || []).map((x) => x.path)))
-  ok(rep.markdown.includes('**攻击文件**') && rep.markdown.includes(attackFile.path.split('/attack-files/')[1]),
+  ok(rep.markdown.includes('**攻击文件**') && rep.markdown.includes(normPath(attackFile.path).split('/attack-files/')[1]),
     '下载的 Markdown 也带攻击文件路径')
   ok(rep.markdown.includes('**结果**') && rep.markdown.includes('Yakit / HTTP 报文'),
     '下载的 Markdown 含结果、复现命令与 HTTP 报文')
@@ -192,6 +194,7 @@ try {
   ok(inferredItem.replay_cmd_kind === 'from_step' && String(inferredItem.replay_cmd).includes('ssh root@198.51.100.50'),
     '非 curl 的真实步骤命令优先于通用模板')
 } finally {
+  try { store && store.close() } catch {}
   rmSync(root, { recursive: true, force: true })
 }
 

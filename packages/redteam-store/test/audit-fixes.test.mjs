@@ -16,8 +16,9 @@ let fail = 0
 const ok = (cond, msg) => { if (cond) { pass += 1; console.log(`  ✓ ${msg}`) } else { fail += 1; console.log(`  ✗ ${msg}`) } }
 
 const root = mkdtempSync(join(tmpdir(), 'rt-audit-fixes-'))
+let store
 try {
-  const store = new RedteamStore(root)
+  store = new RedteamStore(root)
   const { id } = store.openEngagement('审计修复测试靶标')
   const now = new Date().toISOString()
   const mk = (ip) => Number(store.db(id).prepare(`INSERT INTO asset(segment_cidr, ip, ip_int, state, confidence, first_seen, last_seen, scope)
@@ -69,6 +70,7 @@ try {
   ok(sp && typeof sp.evidence_proof === 'string' && sp.evidence_proof.length > 5, 'server-host 带 evidence_proof（自证材料）')
 
 } finally {
+  try { store && store.close() } catch {}
   rmSync(root, { recursive: true, force: true })
 }
 

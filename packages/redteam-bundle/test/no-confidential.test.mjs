@@ -54,8 +54,13 @@ console.log('— 仓库全量扫描必须干净')
 console.log('— 闸门确实接在提交路径上')
 ok(existsSync(join(repo, '.githooks', 'pre-commit')), '.githooks/pre-commit 存在（随仓库版本化）')
 {
-  const mode = statSync(join(repo, '.githooks', 'pre-commit')).mode
-  ok((mode & 0o111) !== 0, 'pre-commit 可执行')
+  if (process.platform === 'win32') {
+    const ls = run('git', ['ls-files', '--stage', '.githooks/pre-commit'])
+    ok(ls.code === 0 && ls.out.trim().startsWith('100755'), 'pre-commit 可执行')
+  } else {
+    const mode = statSync(join(repo, '.githooks', 'pre-commit')).mode
+    ok((mode & 0o111) !== 0, 'pre-commit 可执行')
+  }
   /* `core.hooksPath` 是**每台机器的本地配置**，不会随仓库分发：
      CI 的全新 checkout 上必然没配，所以那里只验"钩子文件本身可用"。
      本机（开发机）则要求真的启用了 —— 否则规则写了也没人执行。 */

@@ -86,6 +86,11 @@ const uiIndex = read('redteam-ui/lib/index.js')
   .replace("from '../../redteam-store/lib/skill-fixes.js'", "from './skill-fixes.js'")
   .replace("from '../../redteam-store/lib/prompts.js'", "from './prompts.js'")
 write('lib/ui.js', uiIndex)
+for (const uiSub of ['llm-planner.js', 'dsh-dispatch.js']) {
+  if (existsSync(join(packagesDir, 'redteam-ui/lib/' + uiSub))) {
+    write('lib/' + uiSub, read('redteam-ui/lib/' + uiSub))
+  }
+}
 
 /* 3) 浏览器半侧：拷过来，并把注册 id 改成**本包的包名**。
    前端加载器按包名取模块：bundle URL 是 `dsh-redteam-mode/client.js`，它就用
@@ -385,7 +390,7 @@ if (!isScriptShipped('redteam-setup.sh')) {
 const generated = [
   'lib/store-core.js', 'lib/ip-utils.js', 'lib/schema.js', 'lib/validate.js', 'lib/score-rules.js',
   'lib/report-replay.js', 'lib/pg-engine.js',
-  'lib/skill-availability.js', 'lib/skill-fixes.js', 'lib/settings.js', 'lib/store.js', 'lib/ui.js', 'lib/tools.js', 'lib/client.js',
+  'lib/skill-availability.js', 'lib/skill-fixes.js', 'lib/settings.js', 'lib/store.js', 'lib/ui.js', 'lib/llm-planner.js', 'lib/dsh-dispatch.js', 'lib/tools.js', 'lib/client.js',
   'lib/prompts.js',
 ].filter((rel) => existsSync(join(pkgRoot, rel)))
 const offenders = []

@@ -125,6 +125,7 @@ ok(cleanupDone.item.status === 'done', 'cleanup：可标记 done')
 const pivot = await call('redteam_pivot_probe', { listen: '127.0.0.1:1', targets: ['10.9.1.1:80'], timeoutMs: 1000 })
 ok(pivot.ok && pivot.reachable === 0, 'pivot_probe：隧道不可达时如实返回 0 可达')
 
+try { store.close() } catch {}
 rmSync(root, { recursive: true, force: true })
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)

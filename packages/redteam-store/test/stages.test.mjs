@@ -23,8 +23,9 @@ let fail = 0
 const ok = (cond, msg) => { if (cond) { pass += 1; console.log(`  ✓ ${msg}`) } else { fail += 1; console.log(`  ✗ ${msg}`) } }
 
 const root = mkdtempSync(join(tmpdir(), 'rt-stage-test-'))
+let store
 try {
-  const store = new RedteamStore(root)
+  store = new RedteamStore(root)
   const { id } = store.openEngagement('测试靶标', ['10.0.0.0/8'])
   const db = store.db(id)
 
@@ -86,6 +87,7 @@ try {
   ok(db2.prepare("SELECT code FROM stage WHERE code = 'target'").get() === undefined,
     '老库 target 阶段行被删除')
 } finally {
+  try { store && store.close() } catch {}
   rmSync(root, { recursive: true, force: true })
 }
 

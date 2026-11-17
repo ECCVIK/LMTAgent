@@ -24,8 +24,9 @@ let fail = 0
 const ok = (cond, msg) => { if (cond) { pass += 1; console.log(`  ✓ ${msg}`) } else { fail += 1; console.log(`  ✗ ${msg}`) } }
 
 const root = mkdtempSync(join(tmpdir(), 'rt-prompt-contract-'))
+let store
 try {
-  const store = new RedteamStore(root)
+  store = new RedteamStore(root)
   const { id } = store.openEngagement('提示词契约测试靶标')
   /* 直接用最小 insert 造一台资产：本测试只关心资产测试记录与攻击链的契约，不关心测绘链路。 */
   const assetId = (() => {
@@ -225,6 +226,7 @@ try {
   ok(Object.keys(LEGACY_PROMPT_HASHES).length === 0,
     '历史指纹表已清空（旧提示词不沿用，符合"原本的工作逻辑提示词全部不要"）')
 } finally {
+  try { store && store.close() } catch {}
   rmSync(root, { recursive: true, force: true })
 }
 

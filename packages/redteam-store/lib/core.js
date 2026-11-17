@@ -912,6 +912,38 @@ export function shardPatternsOverlap(patA, patB) {
   return false
 }
 
+/**
+ * 审计 Worker 实际触碰文件是否越出其声明的 `files_owned` 分片边界。
+ * 当 `filesOwned` 为空时视为未声明分片约束，返回 `{ scope_ok: true, scope_violations: [] }`。
+ */
+export function auditWorkerScopeViolation(filesOwned, filesTouched) {
+  const ownedList = (Array.isArray(filesOwned) ? filesOwned : [])
+    .map((p) => normalizeShardPattern(p))
+    .filter(Boolean)
+  if (ownedList.length === 0) {
+    return { scope_ok: true, scope_violations: [] }
+  }
+  const touchedList = Array.isArray(filesTouched) ? filesTouched : []
+  const violations = []
+  const seen = new Set()
+  for (const rawFile of touchedList) {
+    const normFile = normalizeShardPattern(rawFile)
+    if (!normFile || seen.has(normFile)) continue
+    const matched = ownedList.some((pat) => (
+      fileMatchesShardPattern(normFile, pat)
+      || (pat.endsWith('/*') && fileMatchesShardPattern(normFile, pat.slice(0, -2) + '/**'))
+    ))
+    if (!matched) {
+      seen.add(normFile)
+      violations.push(normFile)
+    }
+  }
+  return {
+    scope_ok: violations.length === 0,
+    scope_violations: violations,
+  }
+}
+
 
 /* ------------------------------------------------------------------ 服务 */
 
@@ -1835,19 +1867,32 @@ export class RedteamStore {
         'SELECT * FROM worker_tasks ORDER BY COALESCE(priority_weight, 0) DESC, updated_at DESC, id ASC',
       ).all().map((t) => this.#formatWorkerTaskRow(t, resolvedId))
     } catch { workerTasks = [] }
+    const taskById = new Map()
+    for (const wt of workerTasks) {
+      if (wt && wt.id !== undefined && wt.id !== null) {
+        taskById.set(String(wt.id), wt)
+      }
+    }
     try {
       workerDigests = db.prepare(
         'SELECT * FROM worker_digests ORDER BY created_at DESC, id DESC',
       ).all().map((d) => {
         const filesTouched = parseJson(d.files_touched_json, [])
         const keyDecisions = parseJson(d.key_decisions_json, [])
+        const touchedList = Array.isArray(filesTouched) ? filesTouched : []
+        const linkedTask = d.worker_task_id !== undefined && d.worker_task_id !== null
+          ? taskById.get(String(d.worker_task_id))
+          : null
+        const scopeAudit = auditWorkerScopeViolation(linkedTask?.files_owned || [], touchedList)
         return Object.assign({}, d, {
           engagement_id: d.engagement_id || resolvedId,
           raw_tokens: Number(d.raw_tokens) || 0,
           compressed_tokens: Number(d.compressed_tokens) || 0,
           compression_pct: Number(d.compression_pct) || 0,
-          files_touched: Array.isArray(filesTouched) ? filesTouched : [],
+          files_touched: touchedList,
           key_decisions: Array.isArray(keyDecisions) ? keyDecisions : [],
+          scope_ok: scopeAudit.scope_ok,
+          scope_violations: scopeAudit.scope_violations,
         })
       })
     } catch { workerDigests = [] }
@@ -2907,6 +2952,7 @@ export class RedteamStore {
       now,
     )
     const finalDigestId = bindDigestId !== null ? bindDigestId : Number(dRes.lastInsertRowid)
+    const scopeAudit = auditWorkerScopeViolation(updatedTask.files_owned, filesTouched)
     const digestRecord = {
       id: finalDigestId,
       engagement_id: resolvedId,
@@ -2925,6 +2971,8 @@ export class RedteamStore {
       approval_decision: approvalDecision,
       followup_goal: followupGoal,
       created_at: now,
+      scope_ok: scopeAudit.scope_ok,
+      scope_violations: scopeAudit.scope_violations,
     }
 
     try {
@@ -2955,6 +3003,8 @@ export class RedteamStore {
       digest: digestRecord,
       worker_task: updatedTask,
       shard_conflict: shardConflict,
+      scope_ok: scopeAudit.scope_ok,
+      scope_violations: scopeAudit.scope_violations,
     }
   }
 

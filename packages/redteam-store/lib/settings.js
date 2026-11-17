@@ -53,6 +53,7 @@ export const DEFAULT_DISPATCH_POLICY = {
   dispatchMode: 'hybrid_auto',
   subagentProvider: 'spawn',
   autoWakeOnApprove: true,
+  autoAdvanceWave: false,
 }
 
 /** 默认界面视图与拓扑方向偏好。 */
@@ -369,11 +370,16 @@ export function normalizeDispatchPolicy(raw) {
     src.autoWakeOnApprove ?? src.auto_wake_on_approve,
     DEFAULT_DISPATCH_POLICY.autoWakeOnApprove,
   )
+  const autoAdvanceWave = normalizeBoolFlag(
+    src.autoAdvanceWave ?? src.auto_advance_wave,
+    DEFAULT_DISPATCH_POLICY.autoAdvanceWave,
+  )
 
   return {
     dispatchMode,
     subagentProvider,
     autoWakeOnApprove,
+    autoAdvanceWave,
   }
 }
 
@@ -509,7 +515,20 @@ export function saveUnifiedSettings(root, patch, env = process.env) {
       nextPatch.dispatchPolicy = normalizeDispatchPolicy(null)
     } else if (rawPolicy && typeof rawPolicy === 'object' && !Array.isArray(rawPolicy)) {
       const prevPolicy = normalizeDispatchPolicy(current.dispatchPolicy ?? current.dispatch_policy)
-      nextPatch.dispatchPolicy = normalizeDispatchPolicy(Object.assign({}, prevPolicy, rawPolicy))
+      const mergedPolicy = Object.assign({}, prevPolicy, rawPolicy)
+      if (rawPolicy.dispatch_mode !== undefined && rawPolicy.dispatchMode === undefined) {
+        mergedPolicy.dispatchMode = rawPolicy.dispatch_mode
+      }
+      if (rawPolicy.subagent_provider !== undefined && rawPolicy.subagentProvider === undefined) {
+        mergedPolicy.subagentProvider = rawPolicy.subagent_provider
+      }
+      if (rawPolicy.auto_wake_on_approve !== undefined && rawPolicy.autoWakeOnApprove === undefined) {
+        mergedPolicy.autoWakeOnApprove = rawPolicy.auto_wake_on_approve
+      }
+      if (rawPolicy.auto_advance_wave !== undefined && rawPolicy.autoAdvanceWave === undefined) {
+        mergedPolicy.autoAdvanceWave = rawPolicy.auto_advance_wave
+      }
+      nextPatch.dispatchPolicy = normalizeDispatchPolicy(mergedPolicy)
     }
   }
   if (src.uiPreferences !== undefined || src.ui_preferences !== undefined) {

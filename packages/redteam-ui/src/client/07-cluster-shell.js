@@ -573,13 +573,19 @@
     /**
      * 版本显示 + 自动更新按钮（带卸载清理的倒计时定时器，杜绝组件卸载后泄露）。
      */
-    function VersionBar() {
+    function VersionBar(props) {
       const [info, setInfo] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [open, setOpen] = React.useState(false)
       const [msg, setMsg] = React.useState(null)
       const [countdown, setCountdown] = React.useState(0)
       const countdownTimerRef = React.useRef(null)
+
+      const notifyHostVersion = (res) => {
+        if (props && typeof props.onHostVersion === 'function' && res && typeof res.hostVersion === 'string' && res.hostVersion.trim()) {
+          props.onHostVersion(res.hostVersion.trim())
+        }
+      }
 
       const clearCountdownTimer = () => {
         if (countdownTimerRef.current !== null) {
@@ -595,13 +601,24 @@
         api({ op: 'updateCheck' }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) {
-            api({ op: 'version' }).then((v) => { if (v && v.ok !== false) setInfo(v) }, () => {})
+            api({ op: 'version' }).then((v) => {
+              if (v && v.ok !== false) {
+                setInfo(v)
+                notifyHostVersion(v)
+              }
+            }, () => {})
             return
           }
           setInfo(r)
+          notifyHostVersion(r)
         }, () => {
           setBusy(false)
-          api({ op: 'version' }).then((v) => { if (v && v.ok !== false) setInfo(v) }, () => {})
+          api({ op: 'version' }).then((v) => {
+            if (v && v.ok !== false) {
+              setInfo(v)
+              notifyHostVersion(v)
+            }
+          }, () => {})
         })
       }
       React.useEffect(() => { check(true) }, [])
@@ -819,6 +836,16 @@
       const [sessionState, setSessionState] = React.useState(null)
       const [snapshot, setSnapshot] = React.useState(null)
       const [err, setErr] = React.useState(null)
+      const [hostVersionMismatch, setHostVersionMismatch] = React.useState(null)
+      const checkHostVersion = React.useCallback((hostVer) => {
+        const hv = typeof hostVer === 'string' ? hostVer.trim() : ''
+        if (!hv) return
+        if (typeof CLIENT_PLUGIN_VERSION === 'string' && hv !== CLIENT_PLUGIN_VERSION) {
+          setHostVersionMismatch(hv)
+        } else {
+          setHostVersionMismatch(null)
+        }
+      }, [])
       const manualPickRef = React.useRef(null)
       const autoRoutedSessionRef = React.useRef(null)
       const resizeCleanupRef = React.useRef(null)
@@ -894,6 +921,7 @@
 
       const refreshList = (selectId) => {
         api({ op: 'bootstrap', session: sidRef.current || undefined }).then((b) => {
+          if (b && b.hostVersion) checkHostVersion(b.hostVersion)
           setEngagements((b && b.engagements) || [])
           if (selectId) { setEng(selectId); loadSnapshot(selectId) }
         }, () => {})
@@ -986,6 +1014,7 @@
             return
           }
           setErr(null)
+          if (r.hostVersion) checkHostVersion(r.hostVersion)
           const list = r.engagements || []
           const hs = Array.isArray(r.host_sessions) ? r.host_sessions : []
           setEngagements(list)
@@ -1118,6 +1147,7 @@
         setErr(null)
         setRefreshKey((k) => k + 1)
         api({ op: 'bootstrap', session: sid || undefined }).then((b) => {
+          if (b && b.hostVersion) checkHostVersion(b.hostVersion)
           const list = (b && b.engagements) || []
           setEngagements(list)
           if (sid !== null) {
@@ -1476,7 +1506,7 @@
             : h('option', { value: '' }, currentEngName)),
           h('div', { className: 'rt-spacer' }),
           h(UiModeSwitcher, { compact: true }),
-          h(VersionBar, null),
+          h(VersionBar, { onHostVersion: checkHostVersion }),
           full
             ? h('button', { className: 'rt-btn', title: '退出全屏（Esc）', onClick: exitFull }, '退出全屏')
             : null,
@@ -1493,6 +1523,13 @@
             onClick: openFull,
           }, '全面浏览'),
           (full || embedMode) ? null : h('button', { className: 'rt-btn', title: '收起面板', onClick: () => setUI({ open: false }) }, '收起')),
+        hostVersionMismatch
+          ? h('div', {
+              className: 'rt-err rt-host-version-mismatch',
+              role: 'alert',
+              style: { margin: '6px 10px 0', fontSize: 12, fontWeight: 600 },
+            }, '检测到后端 Host 版本 (' + hostVersionMismatch + ') 与前端 (' + CLIENT_PLUGIN_VERSION + ') 不一致，请彻底退出并重启 DSH NEXT')
+          : null,
         h('div', { className: 'rt-tabs rt-tabs-groups', role: 'navigation', 'aria-label': '控制台分区' },
           TAB_GROUPS.map((g) => {
             const on = activeGroup.key === g.key

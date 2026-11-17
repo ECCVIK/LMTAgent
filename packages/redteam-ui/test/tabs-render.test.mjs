@@ -954,6 +954,76 @@ console.log('\n— 面板 1:1 强隔离跟随会话 + 未绑定新会话初始�
   ok(ovExpanded.hosts.some((x) => String(x.props.className || '').includes('rt-ov-detail-drawer'))
     && ovExpanded.texts.includes('当前上下文窗口构成'),
     '点击概览卡后可展开 p3/p4 风格详细表状分析面板')
+
+  /* ⑧ 前端版本守卫、autoAdvanceWave 设置项与写盘越界警告验证 */
+  ok(!ovExpanded.hosts.some((x) => String(x.props.className || '').includes('rt-host-version-mismatch')),
+    'mock 未返回 hostVersion 时不误触发版本不一致警告横幅')
+
+  responses = makeResponses('data')
+  responses.bootstrap = { ok: true, hostVersion: '0.22.0', root: '/tmp/rt', engagements: [ENG, ENG_B], current: ENGINE }
+  resetInstances()
+  const rMismatch = await renderAll(6, [headerToggle()])
+  ok(rMismatch.hosts.some((x) => String(x.props.className || '').includes('rt-host-version-mismatch'))
+    && rMismatch.texts.includes('检测到后端 Host 版本 (0.22.0) 与前端 (0.23.2) 不一致，请彻底退出并重启 DSH NEXT'),
+    'bootstrap 返回不一致 hostVersion 时在 Panel 顶部渲染版本不一致警告横幅')
+
+  responses = makeResponses('data')
+  let lastSavedSettingsBody = null
+  const origSaveSettings = responses.saveSettings
+  responses.saveSettings = (body) => {
+    lastSavedSettingsBody = body
+    return origSaveSettings(body)
+  }
+  resetInstances()
+  const rSettings = await switchTab('设置')
+  ok(rSettings.texts.includes('Wave 间自动接力推进（当前 Wave 全部审批后自动拉起下一波次）'),
+    '设置中心渲染 dispatchPolicy.autoAdvanceWave 复选框')
+  const autoAdvanceLabel = rSettings.hosts.find((x) => x.tag === 'label'
+    && textOfNode(x.props.children).includes('Wave 间自动接力推进'))
+  const autoAdvanceInput = autoAdvanceLabel && Array.isArray(autoAdvanceLabel.props.children)
+    ? autoAdvanceLabel.props.children.find((c) => c && c.type === 'input')
+    : null
+  ok(autoAdvanceInput && typeof autoAdvanceInput.props.onChange === 'function',
+    '找到 autoAdvanceWave 复选框的 onChange 处理器')
+  if (autoAdvanceInput) autoAdvanceInput.props.onChange({ target: { checked: true } })
+  const rSettingsAfterToggle = await renderAll(2, [headerToggle()])
+  const saveBtn = rSettingsAfterToggle.hosts.find((x) => x.tag === 'button'
+    && x.handlers.onClick
+    && textOfNode(x.props.children).includes('保存设置'))
+  if (saveBtn) saveBtn.handlers.onClick()
+  await renderAll(2, [headerToggle()])
+  ok(lastSavedSettingsBody
+    && lastSavedSettingsBody.dispatchPolicy
+    && lastSavedSettingsBody.dispatchPolicy.autoAdvanceWave === true,
+    'saveSettings 请求体包含 dispatchPolicy.autoAdvanceWave = true')
+
+  responses = makeResponses('data')
+  responses.workflowDag = {
+    ok: true,
+    worker_tasks: [
+      {
+        id: 'w-scope-1',
+        wave: 2,
+        role: 'exploit',
+        title: '越界测试分片',
+        status: 'completed',
+        approval_state: 'pending_approval',
+        files_owned: ['src/allowed.js'],
+        worker_digest: {
+          what_was_done: '修改了文件',
+          verification: 'pass',
+          scope_ok: false,
+          scope_violations: ['src/outside.js', 'README.md'],
+        },
+      },
+    ],
+    plan_goals: [],
+  }
+  resetInstances()
+  const rCollabScope = await switchTab('协同与审批')
+  ok(rCollabScope.hosts.some((x) => String(x.props.className || '').includes('rt-scope-violation-warn'))
+    && rCollabScope.texts.includes('写盘越界警告：src/outside.js, README.md'),
+    'CollabApprovalTab 审批卡片正确渲染写盘越界警告及越界文件列表')
 }
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)

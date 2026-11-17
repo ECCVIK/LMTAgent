@@ -1226,7 +1226,9 @@
                 : String(raw.files_owned || raw.filesOwned || '').split(/[,，\n]+/).map((s) => s.trim()).filter(Boolean))
             const digestSrc = (raw.worker_digest && typeof raw.worker_digest === 'object')
               ? raw.worker_digest
-              : ((raw.compressedDigest && typeof raw.compressedDigest === 'object') ? raw.compressedDigest : {})
+              : ((raw.compressedDigest && typeof raw.compressedDigest === 'object')
+                ? raw.compressedDigest
+                : ((raw.digest && typeof raw.digest === 'object') ? raw.digest : {}))
             const whatDone = String(
               digestSrc.what_was_done
               || digestSrc.whatWasDone
@@ -1247,6 +1249,13 @@
               || raw.verification
               || (statusRaw === 'blocked' ? '存在阻塞项' : (isApproved ? '已通过验收' : '待确认放行'))
             ).trim()
+            const rawViolations = Array.isArray(digestSrc.scope_violations)
+              ? digestSrc.scope_violations
+              : (Array.isArray(digestSrc.scopeViolations)
+                ? digestSrc.scopeViolations
+                : (Array.isArray(raw.scope_violations) ? raw.scope_violations : []))
+            const scopeViolations = rawViolations.map((f) => String(f || '').trim()).filter(Boolean)
+            const scopeOk = digestSrc.scope_ok !== false && digestSrc.scopeOk !== false && raw.scope_ok !== false && scopeViolations.length === 0
             merged.push({
               id,
               sessionId: raw.session_id || raw.sessionId || id,
@@ -1265,6 +1274,8 @@
                 whatDone,
                 touchedFiles,
                 verificationText,
+                scopeViolations,
+                scopeOk,
               },
             })
           })
@@ -1533,6 +1544,15 @@
                     h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } },
                       item.digest.whatDone + ' · ' + item.digest.verificationText
                       + (item.digest.touchedFiles.length > 0 ? (' · 文件：' + item.digest.touchedFiles.join(', ')) : '')),
+
+                    (!item.digest.scopeOk || item.digest.scopeViolations.length > 0)
+                      ? h('div', {
+                          className: 'rt-err rt-scope-violation-warn',
+                          style: { margin: 0, padding: '4px 8px', fontSize: 11.5, fontWeight: 600 },
+                        }, '写盘越界警告：' + (item.digest.scopeViolations.length > 0
+                          ? item.digest.scopeViolations.join(', ')
+                          : '存在未授权越界文件修改'))
+                      : null,
 
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                       h('input', {

@@ -26,8 +26,10 @@ let fail = 0
 const ok = (cond, msg) => { if (cond) { pass += 1; console.log(`  ✓ ${msg}`) } else { fail += 1; console.log(`  ✗ ${msg}`) } }
 
 const root = mkdtempSync(join(tmpdir(), 'rt-poctools-'))
+let store
+let other
 try {
-  const store = new RedteamStore(root)
+  store = new RedteamStore(root)
   store.openEngagement('工具测试靶标')
   const tools = new Map()
   apply({ redteam: store, tools: { register: (t) => tools.set(t.name, t) } })
@@ -91,7 +93,7 @@ try {
   ok(selfRow.verified === 0, '手搓未验证的条目 verified=0（不会被误当可直接用）')
 
   /* 7) 跨靶标共享：换一个靶标（另一个会话）仍能检索到 */
-  const other = new RedteamStore(root)
+  other = new RedteamStore(root)
   other.openEngagement('另一个靶标')
   const tools2 = new Map()
   apply({ redteam: other, tools: { register: (t) => tools2.set(t.name, t) } })
@@ -104,6 +106,8 @@ try {
   ok(again.created === false && all.count === 2, '同 code 再存是合并刷新，不产生重复条目')
   ok((await call('redteam_poc_get', { code: added.code })).content === '# v2', '合并时正文被更新')
 } finally {
+  try { other && other.close() } catch {}
+  try { store && store.close() } catch {}
   rmSync(root, { recursive: true, force: true })
 }
 

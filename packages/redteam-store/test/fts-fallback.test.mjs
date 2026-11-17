@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const store = join(here, '..', 'lib', 'core.js')
@@ -26,7 +26,7 @@ const CHILD = `
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { RedteamStore, HAS_FTS5 } from ${JSON.stringify(store)}
+import { RedteamStore, HAS_FTS5 } from ${JSON.stringify(pathToFileURL(store).href)}
 
 const root = mkdtempSync(join(tmpdir(), 'rt-nofts-'))
 const out = { HAS_FTS5, errors: [] }

@@ -388,6 +388,15 @@ ok(
     && PANEL_CSS.includes('.rt-settings-shell'),
   '统一设置中心 SettingsHubTab、getSettings/saveSettings RPC 与 .rt-settings-shell 样式完整存在',
 )
+ok(
+  source.includes('CLIENT_PLUGIN_VERSION')
+    && source.includes('rt-host-version-mismatch')
+    && source.includes('autoAdvanceWave')
+    && source.includes('scope_violations')
+    && source.includes('rt-scope-violation-warn')
+    && source.includes('写盘越界警告：'),
+  '包含 CLIENT_PLUGIN_VERSION 宿主版本守卫、autoAdvanceWave 设置项与写盘越界警告 UI 契约',
+)
 
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)
