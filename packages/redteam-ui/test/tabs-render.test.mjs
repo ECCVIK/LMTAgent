@@ -936,6 +936,24 @@ console.log('\n— 面板 1:1 强隔离跟随会话 + 未绑定新会话初始�
   ok(fetchCalls.some((op) => op === 'pocSearch'), '工程模式库发起了检索')
   ok(kb.texts.includes('来源工作区 ' + ENGINE) || kb.texts.includes('来源靶标 ' + ENGINE),
     '工程模式库默认按会话绑定的工作区筛（页签顶部标出来源，可点回全库）')
+
+  /* ⑦ 总览页可展开详表与移除旧版 p1 四阶段条验证 */
+  const ovRes = await switchTab('总览')
+  ok(!ovRes.texts.includes('四阶段推进') && !ovRes.texts.includes('交付分值'),
+    '总览页已彻底移除无用的旧版「交付分值 / 四阶段推进」区块')
+  ok(ovRes.texts.includes('沟通与执行') && ovRes.texts.includes('上下文与缓存') && ovRes.texts.includes('交付进度'),
+    '总览页折叠态保留 4 张 KPI 概览卡展示')
+  ok(!ovRes.hosts.some((x) => String(x.props.className || '').includes('rt-ov-detail-drawer')),
+    '总览页展开前默认不渲染详表抽屉')
+  const ctxCard = ovRes.hosts.find((x) => x.handlers.onClick
+    && String(x.props.className || '').includes('rt-ov-kpi-card')
+    && textOfNode(x.props.children).includes('上下文与缓存'))
+  ok(ctxCard !== undefined, '总览页「上下文与缓存」卡片支持点击展开详表')
+  if (ctxCard) ctxCard.handlers.onClick()
+  const ovExpanded = await renderAll(6, [headerToggle()])
+  ok(ovExpanded.hosts.some((x) => String(x.props.className || '').includes('rt-ov-detail-drawer'))
+    && ovExpanded.texts.includes('当前上下文窗口构成'),
+    '点击概览卡后可展开 p3/p4 风格详细表状分析面板')
 }
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)

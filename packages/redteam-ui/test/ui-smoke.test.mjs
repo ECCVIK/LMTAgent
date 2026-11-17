@@ -193,9 +193,12 @@ ok(
   'client.js 在 .rt-bento-row-canvas 中渲染全宽 HarnessWorkflowDeck 画布',
 )
 ok(
-  /rt-ov-kpi-grid[\s\S]*沟通与执行[\s\S]*并发集群[\s\S]*上下文与缓存[\s\S]*交付里程碑/.test(source)
-  && !source.includes("className: 'rt-analytics-trio'"),
-  'client.js 在 OverviewTab 使用精简 .rt-ov-kpi-grid 四宫格指标卡并彻底剔除重复 .rt-analytics-trio 环形图堆砌',
+  source.includes("className: 'rt-ov-kpi-grid'")
+  && /沟通与执行[\s\S]*并发集群[\s\S]*上下文与缓存[\s\S]*交付进度/.test(source)
+  && !source.includes("className: 'rt-analytics-trio'")
+  && !source.includes("className: 'rt-ov-hero'")
+  && source.includes('rt-ov-detail-drawer'),
+  'client.js 在 OverviewTab 使用精简可展开 .rt-ov-kpi-grid 四宫格指标卡 + .rt-ov-detail-drawer，并移除旧版 .rt-ov-hero 与 .rt-analytics-trio',
 )
 ok(
   source.includes('activeSlots') && /Math\.min\(\s*max\s*,/.test(source),
@@ -282,10 +285,11 @@ for (const token of V020_TREE_AND_LMTEX_TOKENS) {
 
 const bRowKpiIdx = source.indexOf("className: 'rt-ov-kpi-grid'")
 const bRowCanvasIdx = source.indexOf("className: 'rt-bento-row-canvas'")
-const bRowHeroIdx = source.indexOf("className: 'rt-ov-hero'")
+const bDetailIdx = source.indexOf("className: 'rt-ov-detail-drawer'")
 ok(
-  bRowKpiIdx !== -1 && bRowCanvasIdx !== -1 && bRowHeroIdx !== -1 && bRowKpiIdx < bRowCanvasIdx && bRowCanvasIdx < bRowHeroIdx,
-  'OverviewTab 采用 v0.22.0 极简三段结构：4-KPI 指标条 (.rt-ov-kpi-grid) -> 实时路线图画布 (.rt-bento-row-canvas) -> 四阶段里程碑条 (.rt-ov-hero)',
+  bRowKpiIdx !== -1 && bRowCanvasIdx !== -1 && bDetailIdx !== -1 && bRowKpiIdx < bRowCanvasIdx
+  && source.includes('RtMiniDonut') && source.includes('RtStackedBar'),
+  'OverviewTab 采用精简两段结构：可展开 4-KPI 指标条 (.rt-ov-kpi-grid + .rt-ov-detail-drawer) -> 实时路线图画布 (.rt-bento-row-canvas)，彻底移除旧版 .rt-ov-hero',
 )
 
 /* ── 8. v0.21.0 架构根治与零攻防残留契约 ────────────────────────────────── */

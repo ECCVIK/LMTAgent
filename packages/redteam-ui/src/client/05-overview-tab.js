@@ -1,9 +1,74 @@
-    /* ---------------------------------------------------------- 05-overview-tab：低密度实时集群总览（v0.22.0） */
+    /* ---------------------------------------------------------- 05-overview-tab：低密度实时集群总览 + 可展开详表 */
+    /**
+     * 纯 SVG 轻量环形占比图（参照 p3/p4 视觉规范，零第三方图表依赖）。
+     */
+    function RtMiniDonut(props) {
+      const segments = Array.isArray(props.segments) ? props.segments.filter((s) => (Number(s.value) || 0) > 0) : []
+      const total = segments.reduce((sum, s) => sum + (Number(s.value) || 0), 0)
+      const r = 34
+      const circ = 2 * Math.PI * r
+      let offset = 0
+      const arcs = total > 0
+        ? segments.map((s, idx) => {
+            const len = ((Number(s.value) || 0) / total) * circ
+            const el = h('circle', {
+              key: 'arc-' + idx,
+              cx: 46,
+              cy: 46,
+              r: r,
+              fill: 'none',
+              stroke: s.color || '#4d6bfe',
+              strokeWidth: 11,
+              strokeDasharray: len.toFixed(2) + ' ' + circ.toFixed(2),
+              strokeDashoffset: (-offset).toFixed(2),
+              transform: 'rotate(-90 46 46)',
+            })
+            offset += len
+            return el
+          })
+        : [h('circle', {
+            key: 'arc-empty',
+            cx: 46,
+            cy: 46,
+            r: r,
+            fill: 'none',
+            stroke: 'var(--dsw-alias-border-l1, #e2e8f0)',
+            strokeWidth: 11,
+          })]
+      return h('div', { className: 'rt-ov-donut-box' },
+        h('svg', { width: 92, height: 92, viewBox: '0 0 92 92', 'aria-hidden': 'true' }, ...arcs),
+        h('div', { className: 'rt-ov-donut-center' },
+          h('div', { className: 'rt-ov-donut-main' }, props.centerMain || '0'),
+          props.centerSub ? h('div', { className: 'rt-ov-donut-sub' }, props.centerSub) : null))
+    }
+
+    /**
+     * 多段横向比例条（mini=true 用于 4 宫格概览卡内微缩条，mini=false 用于详表主比例条）。
+     */
+    function RtStackedBar(props) {
+      const segments = Array.isArray(props.segments) ? props.segments.filter((s) => (Number(s.value) || 0) > 0) : []
+      const total = segments.reduce((sum, s) => sum + (Number(s.value) || 0), 0)
+      const cls = props.mini ? 'rt-ov-mini-bar' : 'rt-ov-seg-bar'
+      const segCls = props.mini ? 'rt-ov-mini-seg' : 'rt-ov-seg-piece'
+      if (total <= 0) {
+        return h('div', { className: cls })
+      }
+      return h('div', { className: cls },
+        segments.map((s, idx) => {
+          const pct = Math.max(2, ((Number(s.value) || 0) / total) * 100)
+          return h('div', {
+            key: 'seg-' + idx,
+            className: segCls,
+            style: { width: pct.toFixed(2) + '%', background: s.color || '#4d6bfe' },
+            title: (s.label || '') + ': ' + (s.display || String(s.value)),
+          })
+        }))
+    }
+
     /**
      * LMTAgent 软件工程研发控制台 · 纯净低密度总览页（OverviewTab）：
-     *   · 零重复顶栏与零内嵌许愿向导（需求澄清与审批统一收敛至独立「协同与审批」卡页）
-     *   · 未绑定工作台时呈现干净的「当前会话待机概览卡」与重新打开初始化指引入口
-     *   · 已绑定工作台时呈现：1 行待办审批横幅 + 4 张紧凑 KPI 卡 + 轻量拓扑画布 + 四阶段里程碑条
+     *   · 默认折叠态：1 行待办审批横幅 + 4 张紧凑 KPI 卡 + 派生树状图画布（彻底移除旧版 p1 渗透四阶段条）
+     *   · 点击任意 KPI 卡可展开对应 p3/p4/p5 风格详细表状分析面板，再次点击即可收起
      */
     function OverviewTab(props) {
       const eng = props.engagement
@@ -14,11 +79,12 @@
       const currentSess = useSession()
       const activeSid = props.sessionId || currentSess.id || null
 
-      const [chain, setChain] = React.useState(null)
-      const [scores, setScores] = React.useState(null)
       const [agents, setAgents] = React.useState(null)
       const [dagData, setDagData] = React.useState(null)
       const [domTel, setDomTel] = React.useState(() => readHostDomTelemetry())
+      const [expandedKey, setExpandedKey] = React.useState(null)
+      const [sessionDetail, setSessionDetail] = React.useState(null)
+      const [detailLoading, setDetailLoading] = React.useState(false)
       const [err, setErr] = React.useState(null)
       const [localRefresh, setLocalRefresh] = React.useState(0)
       const loadSeq = React.useRef(0)
@@ -27,28 +93,23 @@
         const mySeq = ++loadSeq.current
         setDomTel(readHostDomTelemetry())
         if (!eng) {
-          setChain(null)
-          setScores(null)
           setAgents(null)
           setDagData(null)
+          setSessionDetail(null)
           setErr(null)
           return
         }
         setErr(null)
         Promise.all([
-          api({ op: 'scoreChain', engagement: eng, session: activeSid || undefined }),
-          api({ op: 'scores', engagement: eng, session: activeSid || undefined }),
           api({ op: 'agentsStatus', engagement: eng, session: activeSid || undefined }),
           api({ op: 'workflowDag', engagement: eng, session: activeSid || undefined }),
-        ]).then(([c, sc, ag, dg]) => {
+        ]).then(([ag, dg]) => {
           if (mySeq !== loadSeq.current) return
-          if (!c || c.ok === false) {
-            setErr((c && c.error) || '读取工作台状态失败')
+          if (!ag || ag.ok === false) {
+            setErr((ag && ag.error) || '读取工作台状态失败')
             return
           }
-          setChain(c)
-          setScores(sc && sc.ok !== false ? sc : null)
-          setAgents(ag && ag.ok !== false ? ag : null)
+          setAgents(ag)
           setDagData(dg && dg.ok !== false ? dg : null)
         }, (e) => {
           if (mySeq !== loadSeq.current) return
@@ -68,6 +129,25 @@
         }, 3000)
         return () => window.clearInterval(t)
       }, [])
+
+      /* 仅当展开「沟通与执行」或「上下文与缓存」详表时按需加载会话明细 */
+      React.useEffect(() => {
+        if (!eng || (expandedKey !== 'comms' && expandedKey !== 'context')) return
+        let alive = true
+        setDetailLoading(true)
+        api({
+          op: 'agentSessionDetail',
+          engagement: eng,
+          session: activeSid || undefined,
+        }).then((res) => {
+          if (!alive) return
+          setDetailLoading(false)
+          if (res && res.ok !== false) setSessionDetail(res)
+        }, () => {
+          if (alive) setDetailLoading(false)
+        })
+        return () => { alive = false }
+      }, [eng, activeSid, expandedKey, refreshKey, localRefresh])
 
       const cleanSessionTitle = (props.sessionTitle && !isRawUuidName(props.sessionTitle) ? props.sessionTitle : null)
         || (currentSess.title && !isRawUuidName(currentSess.title) ? currentSess.title : null)
@@ -113,15 +193,6 @@
       }
 
       const stats = (snapshot && snapshot.stats) || {}
-      const stages = (chain && chain.stages) || []
-      const points = (chain && chain.summary && chain.summary.points) || 0
-      const current = stages.slice().reverse().find((x) => (x.cumulative || 0) > 0 || (x.points || 0) > 0) || stages[0] || null
-      const allTiers = scores
-        ? ((scores.items && scores.items.length) ? scores.items : (scores.ruleGroups || []).reduce((a, g) => a.concat(g.tiers || []), []))
-        : []
-      const achievedCount = allTiers.filter((p) => (Array.isArray(p.hits) && p.hits.length > 0)
-        || (Number(p.earned) || 0) > 0 || (Number(p.counted) || 0) > 0).length
-
       const used = agents ? (Number(agents.used) || 0) : 0
       const max = agents ? (Number(agents.max) || 6) : 6
       const hostSessions = (agents && Array.isArray(agents.host_sessions)) ? agents.host_sessions : []
@@ -130,7 +201,13 @@
         ? agents.agentNetwork.children
         : ((agents && Array.isArray(agents.children)) ? agents.children : [])
       const dagTasks = (dagData && Array.isArray(dagData.worker_tasks)) ? dagData.worker_tasks : []
-      const pgWorkerTaskCount = (agents && agents.pg_probe && agents.pg_probe.row_counts && Number(agents.pg_probe.row_counts.worker_tasks)) || 0
+      const dagDigests = (dagData && Array.isArray(dagData.worker_digests)) ? dagData.worker_digests : []
+      const shardLocks = (dagData && Array.isArray(dagData.shard_locks))
+        ? dagData.shard_locks
+        : ((agents && Array.isArray(agents.shard_locks)) ? agents.shard_locks : [])
+      const pgProbe = (agents && agents.pg_probe) || (dagData && dagData.pg_probe) || null
+      const pgWorkerTaskCount = (pgProbe && pgProbe.row_counts && Number(pgProbe.row_counts.worker_tasks)) || 0
+
       const totalDispatchedSubagents = netChildren.length
         || dagTasks.length
         || (agents && Number(agents.total_children))
@@ -155,27 +232,335 @@
       const realSpeedLabel = domTel.speedLabel !== '0 tok/s'
         ? domTel.speedLabel
         : ((activeHostSess && activeHostSess.speedLabel) ? activeHostSess.speedLabel : (realTokens > 0 ? '实时采样' : '0 tok/s'))
+      const cacheHitPct = domTel.cacheHitPct > 0
+        ? domTel.cacheHitPct
+        : (activeHostSess && Number(activeHostSess.cacheHitPct) ? Number(activeHostSess.cacheHitPct) : 0)
       const realCacheShort = domTel.cacheLabel && domTel.cacheLabel !== '待命'
         ? domTel.cacheLabel
-        : ((activeHostSess && activeHostSess.cacheHitPct) ? ('缓存 ' + activeHostSess.cacheHitPct + '%') : (realTokens > 0 ? '缓存 97%' : '缓存待命'))
+        : (cacheHitPct > 0 ? ('缓存 ' + cacheHitPct + '%') : '缓存待命')
+
+      const ctxUsedNum = domTel.contextUsedLabel
+        ? parseTokNum(domTel.contextUsedLabel)
+        : ((activeHostSess && Number(activeHostSess.contextTokens)) || 0)
+      const ctxMaxNum = domTel.contextMaxLabel
+        ? parseTokNum(domTel.contextMaxLabel)
+        : ((activeHostSess && Number(activeHostSess.contextMax)) || 421000)
       const ctxShort = domTel.contextUsedLabel
         ? (domTel.contextUsedLabel + '/' + (domTel.contextMaxLabel || '421k'))
-        : (activeHostSess && activeHostSess.contextTokens
-            ? (fmtTokNum(activeHostSess.contextTokens) + '/' + fmtTokNum(activeHostSess.contextMax || 421000))
-            : (realTokens > 0 ? (fmtTokNum(Math.min(realTokens, 40900)) + '/421k') : '0/421k'))
+        : (ctxUsedNum > 0 ? (fmtTokNum(ctxUsedNum) + '/' + fmtTokNum(ctxMaxNum)) : '0/421k')
+      const ctxPctLabel = domTel.contextPct
+        || (ctxUsedNum > 0 && ctxMaxNum > 0 ? Math.round((ctxUsedNum / ctxMaxNum) * 100) + '%' : '0%')
+
+      const inputTok = parseTokNum(domTel.inputLabel)
+      const outputTok = parseTokNum(domTel.outputLabel)
+      const reasonTok = parseTokNum(domTel.reasoningLabel)
+      const costText = domTel.costLabel || (activeHostSess && activeHostSess.costLabel) || '暂无'
+
+      const doneTasks = dagTasks.filter((t) => t.status === 'done' || t.status === 'approved' || t.status === 'completed').length
+      const pendingCount = typeof countPendingApprovals === 'function' ? countPendingApprovals(snapshot, dagData) : 0
+      const realPgWrites = (pgProbe && typeof pgProbe.total_writes === 'number')
+        ? pgProbe.total_writes
+        : ((Number(stats.assets) || 0) + (Number(stats.vulns) || 0) + (Number(stats.steps) || 0))
+      const hasActiveWork = totalDispatchedSubagents > 0 || realPgWrites > 0
 
       const workspaceDisplayTitle = (engName && !isRawUuidName(engName) ? engName : null)
         || (props.sessionTitle && !isRawUuidName(props.sessionTitle) ? props.sessionTitle : null)
         || cleanSessionTitle
         || engName
 
-      const pendingCount = typeof countPendingApprovals === 'function'
-        ? countPendingApprovals(snapshot, dagData)
-        : 0
-      const realPgWrites = (agents && agents.pg_probe && typeof agents.pg_probe.total_writes === 'number')
-        ? agents.pg_probe.total_writes
-        : ((Number(stats.assets) || 0) + (Number(stats.vulns) || 0) + (Number(stats.steps) || 0))
-      const hasActiveWork = totalDispatchedSubagents > 0 || realPgWrites > 0
+      const toggleCard = (key) => {
+        setExpandedKey((prev) => (prev === key ? null : key))
+      }
+
+      /* ── 4 张紧凑 KPI 卡配置 ── */
+      const kpiCards = [
+        {
+          key: 'comms',
+          label: '沟通与执行',
+          val: realRounds + ' 轮 · ' + realSteps + ' 步',
+          sub: '输出速度 ' + realSpeedLabel,
+          segments: [
+            { label: '模型输入', value: Math.max(inputTok, realRounds > 0 ? 60 : 0), color: '#4d6bfe' },
+            { label: '模型输出', value: Math.max(outputTok, realSteps > 0 ? 25 : 0), color: '#0ea5e9' },
+            { label: '思考推理', value: reasonTok, color: '#8b5cf6' },
+          ],
+        },
+        {
+          key: 'cluster',
+          label: '并发集群',
+          val: activeSlots + '/' + max + ' 槽',
+          accent: true,
+          sub: '累计调度 ' + totalDispatchedSubagents + ' 个子代理',
+          segments: [
+            { label: '运行中槽位', value: activeSlots, color: '#4d6bfe' },
+            { label: '空闲可用槽位', value: Math.max(0, max - activeSlots), color: '#cbd5e1' },
+          ],
+        },
+        {
+          key: 'context',
+          label: '上下文与缓存',
+          val: ctxShort + ' · ' + realCacheShort,
+          sub: '总计 ' + realTokenLabel + ' tok · 费用 ' + costText,
+          segments: [
+            { label: '缓存命中', value: cacheHitPct > 0 ? cacheHitPct : (realTokens > 0 ? 50 : 0), color: '#10b981' },
+            { label: '非缓存输入', value: cacheHitPct > 0 ? Math.max(0, 100 - cacheHitPct) : (realTokens > 0 ? 50 : 0), color: '#4d6bfe' },
+          ],
+        },
+        {
+          key: 'delivery',
+          label: '交付进度',
+          val: dagTasks.length > 0 ? (doneTasks + '/' + dagTasks.length + ' 分片') : '待立项拆解',
+          sub: '已提交摘要 ' + dagDigests.length + ' 份 · 排他锁 ' + shardLocks.length + ' 项',
+          segments: [
+            { label: '已完成分片', value: doneTasks, color: '#10b981' },
+            { label: '推进中/待审', value: Math.max(0, dagTasks.length - doneTasks), color: '#f59e0b' },
+          ],
+        },
+      ]
+
+      /* ── 可展开的 p3/p4/p5 风格详细面板渲染 ── */
+      const renderDetailDrawer = () => {
+        if (!expandedKey) return null
+        const detailMeta = kpiCards.find((c) => c.key === expandedKey)
+        const titleText = detailMeta ? detailMeta.label + ' · 详细分析表' : '详细视图'
+
+        let bodyNode = null
+
+        if (expandedKey === 'comms') {
+          const msgs = (sessionDetail && Array.isArray(sessionDetail.messages)) ? sessionDetail.messages : []
+          const recentSteps = msgs.slice(-8).reverse()
+          const segs = [
+            { label: '输入 Token', value: inputTok, display: domTel.inputLabel || '0', color: '#4d6bfe' },
+            { label: '输出 Token', value: outputTok, display: domTel.outputLabel || '0', color: '#0ea5e9' },
+            { label: '推理 Token', value: reasonTok, display: domTel.reasoningLabel || '0', color: '#8b5cf6' },
+            { label: '缓存命中率', value: Math.round(cacheHitPct * 10), display: cacheHitPct ? (cacheHitPct + '%') : '待命', color: '#10b981' },
+          ]
+          bodyNode = h('div', { className: 'rt-ov-detail-grid' },
+            h('div', { className: 'rt-ov-detail-card' },
+              h('div', { className: 'rt-ov-detail-card-head' },
+                h('span', null, '对话与吞吐统计'),
+                h('span', { className: 'rt-mono', style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, realSpeedLabel)),
+              h('div', { className: 'rt-ov-stat-tiles' },
+                h('div', { className: 'rt-ov-stat-tile' },
+                  h('div', { className: 'rt-ov-stat-tile-val' }, String(realRounds)),
+                  h('div', { className: 'rt-ov-stat-tile-lbl' }, '轮次')),
+                h('div', { className: 'rt-ov-stat-tile' },
+                  h('div', { className: 'rt-ov-stat-tile-val' }, String(realSteps)),
+                  h('div', { className: 'rt-ov-stat-tile-lbl' }, '步数')),
+                h('div', { className: 'rt-ov-stat-tile' },
+                  h('div', { className: 'rt-ov-stat-tile-val' }, String(netChildren.length || domTel.subagentCount || 0)),
+                  h('div', { className: 'rt-ov-stat-tile-lbl' }, '子代理')),
+                h('div', { className: 'rt-ov-stat-tile' },
+                  h('div', { className: 'rt-ov-stat-tile-val' }, realTokenLabel),
+                  h('div', { className: 'rt-ov-stat-tile-lbl' }, '总 Token'))),
+              h('div', { className: 'rt-ov-donut-wrap' },
+                h(RtMiniDonut, {
+                  segments: segs.slice(0, 3),
+                  centerMain: realTokenLabel,
+                  centerSub: '总用量',
+                }),
+                h('div', { className: 'rt-ov-legend-grid' },
+                  segs.map((s) => h('div', { key: s.label, className: 'rt-ov-legend-row' },
+                    h('span', { className: 'rt-ov-legend-name' },
+                      h('span', { className: 'rt-ov-dot', style: { background: s.color } }),
+                      s.label),
+                    h('span', { className: 'rt-ov-legend-val rt-mono' }, s.display)))))),
+            h('div', { className: 'rt-ov-detail-card' },
+              h('div', { className: 'rt-ov-detail-card-head' },
+                h('span', null, '最近会话轮步明细'),
+                detailLoading ? h('span', { className: 'rt-tag' }, '加载中…') : null),
+              h('div', { className: 'rt-ov-table-wrap' },
+                h('table', { className: 'rt-ov-table' },
+                  h('thead', null,
+                    h('tr', null,
+                      h('th', null, '角色'),
+                      h('th', null, '摘要内容'),
+                      h('th', null, '时间'))),
+                  h('tbody', null,
+                    recentSteps.length > 0
+                      ? recentSteps.map((m, idx) => h('tr', { key: 'msg-' + idx },
+                          h('td', null, h('span', { className: 'rt-tag' }, m.role || 'assistant')),
+                          h('td', null, String(m.preview || m.text || m.summary || '—').slice(0, 80)),
+                          h('td', { className: 'rt-mono' }, m.at ? String(m.at).slice(11, 19) : '—')))
+                      : h('tr', null,
+                          h('td', { colSpan: 3, style: { color: 'var(--dsw-alias-label-secondary)', textAlign: 'center', padding: '14px' } },
+                            '暂无可展示的轮步事件，发送对话或启动子代理后将自动同步明细。')))))))
+        } else if (expandedKey === 'cluster') {
+          const allWorkers = dagTasks.length > 0 ? dagTasks : netChildren
+          bodyNode = h('div', { className: 'rt-ov-detail-card' },
+            h('div', { className: 'rt-ov-detail-card-head' },
+              h('span', null, '并发槽位与子代理任务明细表（' + activeSlots + '/' + max + ' 槽占用）'),
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                style: { padding: '2px 9px', fontSize: 11 },
+                onClick: () => onGo('agents'),
+              }, '前往「集群」完整视图 →')),
+            h(RtStackedBar, {
+              segments: [
+                { label: '活跃槽位', value: activeSlots, display: activeSlots + ' 槽', color: '#4d6bfe' },
+                { label: '空闲槽位', value: Math.max(0, max - activeSlots), display: Math.max(0, max - activeSlots) + ' 槽', color: '#e2e8f0' },
+              ],
+            }),
+            h('div', { className: 'rt-ov-table-wrap' },
+              h('table', { className: 'rt-ov-table' },
+                h('thead', null,
+                  h('tr', null,
+                    h('th', null, 'Wave'),
+                    h('th', null, '角色'),
+                    h('th', null, '任务标题 / 目标'),
+                    h('th', null, '状态'),
+                    h('th', null, '独占文件分片'))),
+                h('tbody', null,
+                  allWorkers.length > 0
+                    ? allWorkers.slice(0, 12).map((w, idx) => h('tr', { key: 'wk-' + idx },
+                        h('td', { className: 'rt-mono' }, 'W' + (w.wave || w.wave_no || 1)),
+                        h('td', null, h('span', { className: 'rt-tag' }, w.role || w.agent_role || 'worker')),
+                        h('td', null, String(w.title || w.assigned_goal || w.goal || w.id || '—').slice(0, 64)),
+                        h('td', null, String(w.status || w.activity || 'queued')),
+                        h('td', { className: 'rt-mono' }, Array.isArray(w.files_owned) && w.files_owned.length > 0
+                          ? w.files_owned.slice(0, 2).join(', ')
+                          : '—')))
+                    : h('tr', null,
+                        h('td', { colSpan: 5, style: { color: 'var(--dsw-alias-label-secondary)', textAlign: 'center', padding: '14px' } },
+                          '当前工作台尚未派发子代理，前往「协同与审批」立项后将展示并发分片明细。'))))))
+        } else if (expandedKey === 'context') {
+          const nonCachePct = cacheHitPct > 0 ? Math.max(0, Number((100 - cacheHitPct).toFixed(1))) : 0
+          const ctxSegments = [
+            { label: '输入 Token', value: inputTok || (ctxUsedNum > 0 ? Math.round(ctxUsedNum * 0.7) : 0), display: domTel.inputLabel || (ctxUsedNum > 0 ? fmtTokNum(ctxUsedNum) : '暂无采样'), color: '#4d6bfe' },
+            { label: '输出 Token', value: outputTok, display: domTel.outputLabel || '0', color: '#0ea5e9' },
+            { label: '推理 Token', value: reasonTok, display: domTel.reasoningLabel || '0', color: '#8b5cf6' },
+            { label: '剩余可用窗口', value: Math.max(0, ctxMaxNum - ctxUsedNum), display: ctxMaxNum > ctxUsedNum ? fmtTokNum(ctxMaxNum - ctxUsedNum) : '0', color: '#e2e8f0' },
+          ]
+          const cacheSegments = [
+            { label: '缓存命中率', value: cacheHitPct, display: cacheHitPct ? (cacheHitPct + '%') : '待命', color: '#10b981' },
+            { label: '非缓存输入', value: nonCachePct, display: nonCachePct ? (nonCachePct + '%') : '—', color: '#4d6bfe' },
+          ]
+          const savedPct = pgProbe && typeof pgProbe.compression_ratio_pct === 'number'
+            ? pgProbe.compression_ratio_pct + '%'
+            : '暂无'
+          bodyNode = h('div', { className: 'rt-ov-detail-grid' },
+            h('div', { className: 'rt-ov-detail-card' },
+              h('div', { className: 'rt-ov-detail-card-head' },
+                h('span', null, '当前上下文窗口构成'),
+                h('span', { className: 'rt-mono', style: { fontSize: 11.5 } }, ctxShort + ' (' + ctxPctLabel + ')')),
+              h(RtStackedBar, { segments: ctxSegments }),
+              h('div', { className: 'rt-ov-legend-grid' },
+                ctxSegments.map((s) => h('div', { key: s.label, className: 'rt-ov-legend-row' },
+                  h('span', { className: 'rt-ov-legend-name' },
+                    h('span', { className: 'rt-ov-dot', style: { background: s.color } }),
+                    s.label),
+                  h('span', { className: 'rt-ov-legend-val rt-mono' }, s.display)))),
+              h('div', { className: 'rt-ov-table-wrap' },
+                h('table', { className: 'rt-ov-table' },
+                  h('tbody', null,
+                    h('tr', null,
+                      h('td', null, '会话总消耗 Token'),
+                      h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, realTokenLabel)),
+                    h('tr', null,
+                      h('td', null, '参考费用（宿主实时采样）'),
+                      h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, costText)),
+                    h('tr', null,
+                      h('td', null, 'Worker 摘要压缩率'),
+                      h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, savedPct)))))),
+            h('div', { className: 'rt-ov-detail-card' },
+              h('div', { className: 'rt-ov-detail-card-head' },
+                h('span', null, '缓存读取与输入比例'),
+                h('span', { className: 'rt-tag' }, realCacheShort)),
+              h('div', { className: 'rt-ov-donut-wrap' },
+                h(RtMiniDonut, {
+                  segments: cacheSegments,
+                  centerMain: cacheHitPct ? (cacheHitPct + '%') : '待命',
+                  centerSub: '缓存命中',
+                }),
+                h('div', { className: 'rt-ov-legend-grid' },
+                  cacheSegments.map((s) => h('div', { key: s.label, className: 'rt-ov-legend-row' },
+                    h('span', { className: 'rt-ov-legend-name' },
+                      h('span', { className: 'rt-ov-dot', style: { background: s.color } }),
+                      s.label),
+                    h('span', { className: 'rt-ov-legend-val rt-mono' }, s.display))))),
+              h('div', { className: 'rt-ov-table-wrap' },
+                h('table', { className: 'rt-ov-table' },
+                  h('thead', null,
+                    h('tr', null,
+                      h('th', null, '主机/子会话'),
+                      h('th', null, '模型'),
+                      h('th', null, 'Token'))),
+                  h('tbody', null,
+                    hostSessions.length > 0
+                      ? hostSessions.slice(0, 4).map((hs, idx) => h('tr', { key: 'hs-' + idx },
+                          h('td', null, String(hs.title || hs.id || '主会话').slice(0, 28)),
+                          h('td', { className: 'rt-mono' }, String(hs.model || '—').slice(0, 24)),
+                          h('td', { className: 'rt-mono' }, fmtTokNum(hs.tokens || 0))))
+                      : h('tr', null,
+                          h('td', { colSpan: 3, style: { color: 'var(--dsw-alias-label-secondary)', textAlign: 'center', padding: '12px' } },
+                            '当前以本地 DOM 遥测为主，无多会话 Token 列表。')))))))
+        } else if (expandedKey === 'delivery') {
+          const waveDefs = [
+            { wave: 1, name: 'Wave 1 · 立项与测绘', color: '#4d6bfe' },
+            { wave: 2, name: 'Wave 2 · 架构与分片', color: '#8b5cf6' },
+            { wave: 3, name: 'Wave 3 · 并发构建', color: '#0ea5e9' },
+            { wave: 4, name: 'Wave 4 · 审查与交付', color: '#10b981' },
+          ]
+          bodyNode = h('div', { className: 'rt-ov-detail-card' },
+            h('div', { className: 'rt-ov-detail-card-head' },
+              h('span', null, '4-Wave 工程交付进度与摘要明细'),
+              h('div', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' } },
+                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('collab') }, '协同与审批'),
+                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('assets') }, '架构模块'),
+                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('findings') }, '质量审查'),
+                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('report') }, '交付报告'))),
+            h('div', { className: 'rt-ov-wave-strip' },
+              waveDefs.map((wd) => {
+                const wTasks = dagTasks.filter((t) => Number(t.wave || t.wave_no || 1) === wd.wave)
+                const wDone = wTasks.filter((t) => t.status === 'done' || t.status === 'approved' || t.status === 'completed').length
+                return h('div', { key: 'wd-' + wd.wave, className: 'rt-ov-wave-cell', style: { borderTop: '3px solid ' + wd.color } },
+                  h('div', { style: { fontSize: 11.5, fontWeight: 700 } }, wd.name),
+                  h('div', { className: 'rt-mono', style: { fontSize: 12, fontWeight: 700, color: wd.color } },
+                    wTasks.length > 0 ? (wDone + '/' + wTasks.length + ' 完成') : '0 分片'))
+              })),
+            h('div', { className: 'rt-ov-table-wrap' },
+              h('table', { className: 'rt-ov-table' },
+                h('thead', null,
+                  h('tr', null,
+                    h('th', null, '角色'),
+                    h('th', null, '已提交摘要（worker_digests）'),
+                    h('th', null, '变更文件'),
+                    h('th', null, '审批状态'))),
+                h('tbody', null,
+                  dagDigests.length > 0
+                    ? dagDigests.slice(0, 10).map((d, idx) => h('tr', { key: 'dg-' + idx },
+                        h('td', null, h('span', { className: 'rt-tag' }, d.role || d.agent_role || 'worker')),
+                        h('td', null, String(d.what_was_done || d.summary || '—').slice(0, 72)),
+                        h('td', { className: 'rt-mono' }, Array.isArray(d.files_touched) && d.files_touched.length > 0
+                          ? d.files_touched.slice(0, 2).join(', ')
+                          : '—'),
+                        h('td', null, d.approved ? '已审批' : '待审批')))
+                    : h('tr', null,
+                        h('td', { colSpan: 4, style: { color: 'var(--dsw-alias-label-secondary)', textAlign: 'center', padding: '14px' } },
+                          '尚未收到 Worker 提交的执行摘要。'))))))
+        }
+
+        return h('section', { className: 'rt-ov-detail-drawer', 'data-detail-key': expandedKey },
+          h('div', { className: 'rt-ov-detail-head' },
+            h('div', { className: 'rt-ov-detail-title' },
+              h('span', null, titleText),
+              h('span', { className: 'rt-tag rt-mono' }, workspaceDisplayTitle)),
+            h('div', { className: 'rt-ov-detail-actions' },
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                style: { padding: '2px 9px', fontSize: 11 },
+                onClick: () => setLocalRefresh((x) => x + 1),
+              }, '刷新'),
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                style: { padding: '2px 9px', fontSize: 11 },
+                onClick: () => setExpandedKey(null),
+              }, '收起 ▴'))),
+          bodyNode)
+      }
 
       return h('div', { className: 'rt-main rt-ov' },
         err ? h('div', { className: 'rt-err', style: { margin: '0 16px 8px' } }, err) : null,
@@ -206,28 +591,26 @@
                       }, '前往「协同与审批」'))
                   : null),
 
-            /* ── Row 1: 4 张高信噪比紧凑 KPI 指标卡（零重复环形图） ── */
+            /* ── Row 1: 4 张高信噪比可展开 KPI 概览卡（折叠态保持简洁，点击展开 p3/p4/p5 风格详表） ── */
             h('div', { className: 'rt-ov-kpi-grid' },
-              h('div', { className: 'rt-ov-kpi-card' },
-                h('div', { className: 'rt-ov-kpi-label' }, '沟通与执行'),
-                h('div', { className: 'rt-ov-kpi-val' }, realRounds + ' 轮 · ' + realSteps + ' 步'),
-                h('div', { className: 'rt-ov-kpi-sub' }, '输出速度 ' + realSpeedLabel)),
-              h('div', Object.assign({
-                className: 'rt-ov-kpi-card is-interactive',
-              }, clickable(() => onGo('agents'), { label: '打开集群页查看并发智能体' })),
-                h('div', { className: 'rt-ov-kpi-label' }, '并发集群'),
-                h('div', { className: 'rt-ov-kpi-val accent' }, activeSlots + '/' + max + ' 槽'),
-                h('div', { className: 'rt-ov-kpi-sub' }, '累计调度 ' + totalDispatchedSubagents + ' 个子代理')),
-              h('div', { className: 'rt-ov-kpi-card' },
-                h('div', { className: 'rt-ov-kpi-label' }, '上下文与缓存'),
-                h('div', { className: 'rt-ov-kpi-val' }, ctxShort + ' · ' + realCacheShort),
-                h('div', { className: 'rt-ov-kpi-sub' }, '总计 ' + realTokenLabel + ' tok')),
-              h('div', Object.assign({
-                className: 'rt-ov-kpi-card is-interactive',
-              }, clickable(() => onGo('scores'), { label: '打开里程碑页查看得分详情' })),
-                h('div', { className: 'rt-ov-kpi-label' }, '交付里程碑'),
-                h('div', { className: 'rt-ov-kpi-val' }, points + ' 分 · ' + (current ? current.name : '待立项')),
-                h('div', { className: 'rt-ov-kpi-sub' }, '已达成 ' + achievedCount + ' 项交付节点'))),
+              kpiCards.map((card) => {
+                const isOpen = expandedKey === card.key
+                return h('div', Object.assign({
+                  key: card.key,
+                  className: 'rt-ov-kpi-card is-interactive' + (isOpen ? ' is-expanded' : ''),
+                }, clickable(() => toggleCard(card.key), {
+                  label: (isOpen ? '收起 ' : '展开 ') + card.label + '详细表',
+                })),
+                  h('div', { className: 'rt-ov-kpi-head' },
+                    h('span', { className: 'rt-ov-kpi-label' }, card.label),
+                    h('span', { className: 'rt-ov-kpi-toggle' }, isOpen ? '▴ 收起' : '▾ 详表')),
+                  h('div', { className: 'rt-ov-kpi-val' + (card.accent ? ' accent' : '') }, card.val),
+                  h(RtStackedBar, { mini: true, segments: card.segments }),
+                  h('div', { className: 'rt-ov-kpi-sub' }, card.sub))
+              })),
+
+            /* ── 按需展开的详细表状分析面板 ── */
+            renderDetailDrawer(),
 
             /* ── Row 2: 轻量级实时拓扑画布（variant="overview"，复用总览已拉取的 dagData 与 domTel） ── */
             h('div', { className: 'rt-bento-row-canvas' },
@@ -236,7 +619,6 @@
                 engagement: eng,
                 engagementName: workspaceDisplayTitle,
                 snapshot: snapshot,
-                chain: chain,
                 agents: agents,
                 dagData: dagData,
                 domTel: domTel,
@@ -245,54 +627,5 @@
                 onOpenCollab: () => onGo('collab'),
                 onOpenAgents: () => onGo('agents'),
                 onOpenWishWizard: () => onGo('collab'),
-              })),
-
-            /* ── Row 3: 紧凑四阶段推进条 + 领域页面直达按钮 ── */
-            h('section', { className: 'rt-ov-hero' },
-              h('div', { className: 'rt-ov-score' },
-                h('div', { className: 'rt-ov-score-label' }, '交付分值'),
-                h('div', { className: 'rt-ov-score-num' }, String(points), h('small', null, '分')),
-                h('div', { className: 'rt-ov-score-sub' }, current ? current.name : '待立项'),
-                h('button', {
-                  type: 'button',
-                  className: 'rt-btn',
-                  onClick: () => setLocalRefresh((x) => x + 1),
-                }, '刷新')),
-              h('div', { className: 'rt-ov-rail' },
-                h('div', {
-                  className: 'rt-ov-rail-head',
-                  style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
-                },
-                  h('span', null, '四阶段推进'),
-                  h('div', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' } },
-                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('collab') }, '协同与审批'),
-                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('assets') }, '架构模块'),
-                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('findings') }, '质量审查'),
-                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('report') }, '交付报告'))),
-                h('div', { className: 'rt-ov-stages' },
-                  stages.length > 0
-                    ? stages.map((x, i) => h('div', {
-                        key: 'st' + x.code,
-                        className: 'rt-ov-stage' + (current && current.code === x.code ? ' on' : '') + ((x.points || 0) > 0 ? ' has' : ''),
-                        style: { '--stage': x.color || '#4d6bfe' },
-                        title: (x.goal || '') + ' · 本阶段 ' + (x.points || 0) + ' 分 · 累计 ' + (x.cumulative || 0) + ' 分',
-                      },
-                        h('div', { className: 'rt-ov-node' }, String(i + 1)),
-                        h('div', { className: 'rt-ov-stage-name' }, x.name),
-                        h('div', { className: 'rt-ov-stage-pts' }, (x.points || 0) + ' 分'),
-                        h('div', { className: 'rt-ov-stage-cum' }, '累计 ' + (x.cumulative || 0))))
-                    : [
-                        { code: 'W1', name: 'Wave 1 立项', color: '#4d6bfe' },
-                        { code: 'W2', name: 'Wave 2 架构', color: '#8b5cf6' },
-                        { code: 'W3', name: 'Wave 3 构建', color: '#0ea5e9' },
-                        { code: 'W4', name: 'Wave 4 交付', color: '#10b981' },
-                      ].map((x, i) => h('div', {
-                        key: 'st-def-' + x.code,
-                        className: 'rt-ov-stage',
-                        style: { '--stage': x.color },
-                      },
-                        h('div', { className: 'rt-ov-node' }, String(i + 1)),
-                        h('div', { className: 'rt-ov-stage-name' }, x.name),
-                        h('div', { className: 'rt-ov-stage-pts' }, '0 分'),
-                        h('div', { className: 'rt-ov-stage-cum' }, '待推进')))))))))
+              })))))
     }
