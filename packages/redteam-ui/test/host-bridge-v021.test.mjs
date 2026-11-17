@@ -1156,6 +1156,7 @@ async function main() {
         check('extractJsonFromLlmText 跳过 <think> 并剥离尾随逗号', withThink.project_name === 'Ledger' && withThink.goals.length === 1)
         const unclosedFence = extractJsonFromLlmText('```json\n{"project_name":"Book","goals":[{"wave":1,"role":"recon","title":"W1"},{"wave":2,"role":"assess","title":"截断')
         check('extractJsonFromLlmText 修复未闭合 Markdown 围栏与末尾截断的 goals JSON', unclosedFence.project_name === 'Book' && Array.isArray(unclosedFence.goals) && unclosedFence.goals.length >= 1)
+        check('resolveRootSessionId 自动解包 JSON 对象序列化格式的 sessionId', resolveRootSessionId(null, '{"sessionId":"session-abc-123"}') === 'session-abc-123')
       } finally {
         host.disposeAll()
       }

@@ -8155,8 +8155,29 @@ async function handleUpdateOp(ctx, request) {
  * @param sessionId - 任意会话 id。
  * @returns 根会话 id（解析不了就原样返回）。
  */
+function unwrapSessionIdValue(raw) {
+  if (!raw) return ''
+  if (typeof raw === 'object') {
+    const v = raw.sessionId || raw.id || raw.currentSessionId || ''
+    return typeof v === 'string' ? v.trim() : ''
+  }
+  let s = String(raw).trim()
+  if (!s) return ''
+  if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('"') && s.endsWith('"'))) {
+    try {
+      const parsed = JSON.parse(s)
+      if (typeof parsed === 'string') s = parsed.trim()
+      else if (parsed && typeof parsed === 'object') {
+        const inner = parsed.sessionId || parsed.id || parsed.currentSessionId || ''
+        s = typeof inner === 'string' ? inner.trim() : ''
+      }
+    } catch { /* keep trimmed */ }
+  }
+  return s && !s.startsWith('{') ? s : ''
+}
+
 export function resolveRootSessionId(ctx, sessionId) {
-  const id = String(sessionId || '')
+  const id = unwrapSessionIdValue(sessionId)
   if (!id) return id
   let sessions = null
   try { sessions = ctx.get('sessions') } catch { sessions = null }

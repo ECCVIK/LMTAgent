@@ -638,6 +638,10 @@
           }
           const wave1Sessions = extractWave1Sessions(decompRes)
           const captainNotified = decompRes.captain_notified ?? decompRes.captainNotified ?? decompRes.notified_captain
+          const dispatchWarnings = [
+            ...(Array.isArray(decompRes.warnings) ? decompRes.warnings : []),
+            ...(decompRes.dispatched && Array.isArray(decompRes.dispatched.warnings) ? decompRes.dispatched.warnings : []),
+          ].map((x) => String(x || '').trim()).filter(Boolean)
           const captainNote = String(
             decompRes.captain_note
             || decompRes.captain_message
@@ -651,12 +655,21 @@
             totalGoals: editedGoals.length,
             wave1Sessions,
             captainNotified: captainNotified !== false,
-            captainNote,
+            captainNote: dispatchWarnings.length > 0 && wave1Sessions.length === 0
+              ? dispatchWarnings.join('；')
+              : captainNote,
           })
-          setFeedback({
-            tone: 'ok',
-            text: '立项成功，已写入 ' + editedGoals.length + ' 个分片并刷新工作流树。',
-          })
+          if (wave1Sessions.length === 0 && captainNotified === false) {
+            setFeedback({
+              tone: 'warn',
+              text: '分片已写入事实库，但未拉起子代理或唤醒主代理：' + (dispatchWarnings[0] || captainNote),
+            })
+          } else {
+            setFeedback({
+              tone: 'ok',
+              text: '立项成功，已写入 ' + editedGoals.length + ' 个分片' + (wave1Sessions.length > 0 ? ('，已拉起 ' + wave1Sessions.length + ' 个 Wave 1 子代理执行') : '并通知主代理协同调度') + '。',
+            })
+          }
           if (typeof props.onDecomposed === 'function') {
             props.onDecomposed(decompRes, editedGoals, finalPrompt || derivedProjectName, targetEng)
           }

@@ -701,7 +701,7 @@
       if (_isCanvasDragging) return
       if (_authoritativeSessionMountCount > 0) return
       try {
-        const lsSid = window.localStorage && window.localStorage.getItem('dsh.sessions.current')
+        const lsSid = window.localStorage && parseDshStoredSessionId(window.localStorage.getItem('dsh.sessions.current'))
         if (lsSid && lsSid !== sessionId) {
           setSessionId(lsSid, null)
         }
@@ -976,7 +976,7 @@
         const dom = readHostDomTelemetry()
         let lsCurrentSid = null
         try {
-          lsCurrentSid = window.localStorage && window.localStorage.getItem('dsh.sessions.current')
+          lsCurrentSid = window.localStorage && parseDshStoredSessionId(window.localStorage.getItem('dsh.sessions.current'))
         } catch { lsCurrentSid = null }
         const initialSid = sid || (!scopedSession.authoritative ? (lsCurrentSid || dom.sessionId) : null) || null
         api({ op: 'bootstrap', session: initialSid || undefined }).then((r) => {

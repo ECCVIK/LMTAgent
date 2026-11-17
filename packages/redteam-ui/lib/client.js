@@ -917,6 +917,27 @@ window.__ModuleLoader__.load({
       return String(Math.round(val))
     }
 
+    const parseDshStoredSessionId = (raw) => {
+      if (!raw) return null
+      if (typeof raw === 'object') {
+        const objSid = raw.sessionId || raw.id || raw.currentSessionId || ''
+        return typeof objSid === 'string' && objSid.trim() ? objSid.trim() : null
+      }
+      let s = String(raw).trim()
+      if (!s) return null
+      if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('"') && s.endsWith('"'))) {
+        try {
+          const parsed = JSON.parse(s)
+          if (typeof parsed === 'string') s = parsed.trim()
+          else if (parsed && typeof parsed === 'object') {
+            const inner = parsed.sessionId || parsed.id || parsed.currentSessionId || ''
+            s = typeof inner === 'string' ? inner.trim() : ''
+          }
+        } catch { /* keep trimmed raw if unparseable */ }
+      }
+      return s && !s.startsWith('{') ? s : null
+    }
+
     const isRawUuidName = (s) => {
       const str = String(s || '').trim()
       if (!str) return false
@@ -987,14 +1008,8 @@ window.__ModuleLoader__.load({
       const out = Object.assign({}, emptyTel, { domSubagents: [] })
       try {
         if (typeof window !== 'undefined' && window.localStorage) {
-          const rawCur = window.localStorage.getItem('dsh.sessions.current')
-          if (rawCur) {
-            let sid = rawCur.trim()
-            if (sid.startsWith('"') && sid.endsWith('"')) {
-              try { sid = JSON.parse(sid) } catch (e) { /* ignore */ }
-            }
-            if (sid && typeof sid === 'string') out.sessionId = sid
-          }
+          const sid = parseDshStoredSessionId(window.localStorage.getItem('dsh.sessions.current'))
+          if (sid) out.sessionId = sid
         }
         if (typeof document !== 'undefined' && document.body) {
           const isPluginNode = (node) => {
@@ -1763,6 +1778,10 @@ window.__ModuleLoader__.load({
           }
           const wave1Sessions = extractWave1Sessions(decompRes)
           const captainNotified = decompRes.captain_notified ?? decompRes.captainNotified ?? decompRes.notified_captain
+          const dispatchWarnings = [
+            ...(Array.isArray(decompRes.warnings) ? decompRes.warnings : []),
+            ...(decompRes.dispatched && Array.isArray(decompRes.dispatched.warnings) ? decompRes.dispatched.warnings : []),
+          ].map((x) => String(x || '').trim()).filter(Boolean)
           const captainNote = String(
             decompRes.captain_note
             || decompRes.captain_message
@@ -1776,12 +1795,21 @@ window.__ModuleLoader__.load({
             totalGoals: editedGoals.length,
             wave1Sessions,
             captainNotified: captainNotified !== false,
-            captainNote,
+            captainNote: dispatchWarnings.length > 0 && wave1Sessions.length === 0
+              ? dispatchWarnings.join('；')
+              : captainNote,
           })
-          setFeedback({
-            tone: 'ok',
-            text: '立项成功，已写入 ' + editedGoals.length + ' 个分片并刷新工作流树。',
-          })
+          if (wave1Sessions.length === 0 && captainNotified === false) {
+            setFeedback({
+              tone: 'warn',
+              text: '分片已写入事实库，但未拉起子代理或唤醒主代理：' + (dispatchWarnings[0] || captainNote),
+            })
+          } else {
+            setFeedback({
+              tone: 'ok',
+              text: '立项成功，已写入 ' + editedGoals.length + ' 个分片' + (wave1Sessions.length > 0 ? ('，已拉起 ' + wave1Sessions.length + ' 个 Wave 1 子代理执行') : '并通知主代理协同调度') + '。',
+            })
+          }
           if (typeof props.onDecomposed === 'function') {
             props.onDecomposed(decompRes, editedGoals, finalPrompt || derivedProjectName, targetEng)
           }
@@ -10681,7 +10709,7 @@ window.__ModuleLoader__.load({
       if (_isCanvasDragging) return
       if (_authoritativeSessionMountCount > 0) return
       try {
-        const lsSid = window.localStorage && window.localStorage.getItem('dsh.sessions.current')
+        const lsSid = window.localStorage && parseDshStoredSessionId(window.localStorage.getItem('dsh.sessions.current'))
         if (lsSid && lsSid !== sessionId) {
           setSessionId(lsSid, null)
         }
@@ -10949,7 +10977,7 @@ window.__ModuleLoader__.load({
         const dom = readHostDomTelemetry()
         let lsCurrentSid = null
         try {
-          lsCurrentSid = window.localStorage && window.localStorage.getItem('dsh.sessions.current')
+          lsCurrentSid = window.localStorage && parseDshStoredSessionId(window.localStorage.getItem('dsh.sessions.current'))
         } catch { lsCurrentSid = null }
         const initialSid = sid || (!scopedSession.authoritative ? (lsCurrentSid || dom.sessionId) : null) || null
         api({ op: 'bootstrap', session: initialSid || undefined }).then((r) => {

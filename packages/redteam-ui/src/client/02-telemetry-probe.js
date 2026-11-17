@@ -18,6 +18,28 @@
       return String(Math.round(val))
     }
 
+    /** 从 localStorage / 宿主值安全解包真实 sessionId（兼容 `{"sessionId":"..."}` 对象序列化格式） */
+    const parseDshStoredSessionId = (raw) => {
+      if (!raw) return null
+      if (typeof raw === 'object') {
+        const objSid = raw.sessionId || raw.id || raw.currentSessionId || ''
+        return typeof objSid === 'string' && objSid.trim() ? objSid.trim() : null
+      }
+      let s = String(raw).trim()
+      if (!s) return null
+      if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('"') && s.endsWith('"'))) {
+        try {
+          const parsed = JSON.parse(s)
+          if (typeof parsed === 'string') s = parsed.trim()
+          else if (parsed && typeof parsed === 'object') {
+            const inner = parsed.sessionId || parsed.id || parsed.currentSessionId || ''
+            s = typeof inner === 'string' ? inner.trim() : ''
+          }
+        } catch { /* keep trimmed raw if unparseable */ }
+      }
+      return s && !s.startsWith('{') ? s : null
+    }
+
     /** 判断工作区/会话名是否为自动生成的裸 session-uuid 占位名 */
     const isRawUuidName = (s) => {
       const str = String(s || '').trim()
@@ -100,14 +122,8 @@
       const out = Object.assign({}, emptyTel, { domSubagents: [] })
       try {
         if (typeof window !== 'undefined' && window.localStorage) {
-          const rawCur = window.localStorage.getItem('dsh.sessions.current')
-          if (rawCur) {
-            let sid = rawCur.trim()
-            if (sid.startsWith('"') && sid.endsWith('"')) {
-              try { sid = JSON.parse(sid) } catch (e) { /* ignore */ }
-            }
-            if (sid && typeof sid === 'string') out.sessionId = sid
-          }
+          const sid = parseDshStoredSessionId(window.localStorage.getItem('dsh.sessions.current'))
+          if (sid) out.sessionId = sid
         }
         if (typeof document !== 'undefined' && document.body) {
           const isPluginNode = (node) => {
