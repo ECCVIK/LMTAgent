@@ -9,7 +9,7 @@
  *
  * 生效顺序：settings.json → 环境变量（`REDTEAM_MAX_AGENTS` / `REDTEAM_THINKING_EFFORT` / `DSH_SUBAGENT_THINKING` / `REDTEAM_MAX_DEPTH` / `REDTEAM_PG_URL`） → 默认值。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -87,13 +87,31 @@ function settingsPathOf(root, env = process.env) {
   return join(resolveRootDir(root, env), 'settings.json')
 }
 
+const _settingsCache = new Map()
+
 function readSettings(root, env = process.env) {
   if (root && typeof root === 'object' && !('root' in root)) return root
   try {
     const file = settingsPathOf(root, env)
-    if (!existsSync(file)) return {}
+    let st
+    try {
+      st = statSync(file)
+    } catch {
+      _settingsCache.delete(file)
+      return {}
+    }
+    const cached = _settingsCache.get(file)
+    if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+      return cached.data
+    }
     const parsed = JSON.parse(readFileSync(file, 'utf8'))
-    return parsed && typeof parsed === 'object' ? parsed : {}
+    const data = parsed && typeof parsed === 'object' ? parsed : {}
+    if (_settingsCache.size >= 64) {
+      const oldest = _settingsCache.keys().next().value
+      if (oldest !== undefined) _settingsCache.delete(oldest)
+    }
+    _settingsCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, data })
+    return data
   } catch {
     return {}
   }
@@ -106,6 +124,12 @@ export function writeSettings(root, patch, env = process.env) {
   const next = Object.assign({}, readSettings(dir, env), patch)
   mkdirSync(dir, { recursive: true })
   writeFileSync(file, JSON.stringify(next, null, 2) + '\n', 'utf8')
+  try {
+    const st = statSync(file)
+    _settingsCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, data: next })
+  } catch {
+    _settingsCache.delete(file)
+  }
   return next
 }
 
@@ -433,17 +457,18 @@ function resolvePgUrlRaw(root, env = process.env) {
 
 /** 读取完整归一化后的插件统一设置对象。 */
 export function getUnifiedSettings(root, env = process.env) {
-  const rawPgUrl = resolvePgUrlRaw(root, env)
+  const preloaded = readSettings(root, env)
+  const rawPgUrl = resolvePgUrlRaw(preloaded, env)
   return {
-    maxAgents: maxAgentsOf(root, env),
-    maxAgentsSource: maxAgentsSourceOf(root, env),
-    maxDepth: maxDepthOf(root, env),
-    thinkingEffort: thinkingEffortOf(root, env),
+    maxAgents: maxAgentsOf(preloaded, env),
+    maxAgentsSource: maxAgentsSourceOf(preloaded, env),
+    maxDepth: maxDepthOf(preloaded, env),
+    thinkingEffort: thinkingEffortOf(preloaded, env),
     pgUrlConfigured: Boolean(rawPgUrl),
     pgUrlMasked: rawPgUrl ? maskPgUrl(rawPgUrl) : '',
-    aiPlanner: aiPlannerConfigOf(root, env),
-    dispatchPolicy: dispatchPolicyOf(root, env),
-    uiPreferences: uiPreferencesOf(root, env),
+    aiPlanner: aiPlannerConfigOf(preloaded, env),
+    dispatchPolicy: dispatchPolicyOf(preloaded, env),
+    uiPreferences: uiPreferencesOf(preloaded, env),
   }
 }
 
