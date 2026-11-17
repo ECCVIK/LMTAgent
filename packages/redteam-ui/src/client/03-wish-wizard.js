@@ -16,59 +16,17 @@
       return defaultHeader
     }
 
-    const WISH_STARTER_TEMPLATES = [
-      {
-        id: 'web-app',
-        label: '🌐 交互式 Web 应用',
-        projectName: '个人专注待办应用',
-        prompt: '做一个带番茄钟计时、优先级标签、每日专注统计图表与本地自动保存的个人待办网页应用，界面简洁清爽，支持手机与电脑访问。',
-      },
-      {
-        id: 'dashboard',
-        label: '📊 数据可视化看板',
-        projectName: '业务运营数据看板',
-        prompt: '做一个数据可视化分析看板，支持粘贴或上传 CSV/JSON 表格数据，自动生成核心指标卡片、趋势折线图、分类占比环形图，并支持按日期筛选导出。',
-      },
-      {
-        id: 'cli-tool',
-        label: '⚙️ 自动化脚本与 CLI 工具',
-        projectName: '智能文件批处理工具',
-        prompt: '做一个命令行自动化整理与批处理工具，支持按文件类型和修改日期自动归档文件夹、查重提醒、生成汇总 Markdown 报告，并提供安全预览模式。',
-      },
-      {
-        id: 'fullstack-api',
-        label: '🔌 全栈 API 与数据库服务',
-        projectName: '全栈任务管理接口服务',
-        prompt: '做一个带用户登录鉴权、RESTful 接口、持久化数据存储、参数校验与自动化接口测试套件的全栈后端服务，附带清晰的接口调用文档。',
-      },
-    ]
-
-    const WISH_CLARIFY_CHIPS = [
-      { group: '目标平台', label: 'Web 响应式界面', snippet: '目标平台为桌面与移动端自适应 Web 界面，注重清爽排版与零门槛交互体验。' },
-      { group: '目标平台', label: 'Node CLI 命令行', snippet: '目标形态为跨平台 Node.js CLI 命令行工具，具备清晰参数提示与非零退出码规范。' },
-      { group: '目标平台', label: '全栈 API 服务', snippet: '包含结构化后端 REST API 与数据持久化层，接口请求与响应均做严格校验。' },
-      { group: '核心交付', label: '含自动化回归测试', snippet: '交付物必须包含可直接运行的自动化回归测试套件，覆盖正常主流程与边界输入。' },
-      { group: '核心交付', label: '模块化可扩展架构', snippet: '采用职责单一的模块化分层结构，预留清晰配置项与扩展接口。' },
-      { group: '工程约束', label: '零外部运行时依赖', snippet: '优先使用标准库与项目既有技术栈实现，不引入冗余第三方运行时依赖。' },
-      { group: '工程约束', label: '严格独占文件分片', snippet: '各并行开发阶段严格遵守独占文件分片边界，禁止多智能体交叉覆盖同一文件。' },
-    ]
-
     const WIZARD_ROLE_OPTIONS = [
-      { value: 'recon', label: '产品与需求规划（CEO）', wave: 1 },
-      { value: 'designer', label: '交互与视觉设计（Designer）', wave: 1 },
-      { value: 'assess', label: '系统架构与排期（Eng Manager）', wave: 2 },
-      { value: 'exploit', label: '全栈研发与构建（Builder）', wave: 3 },
-      { value: 'qa', label: '质量保障与测试（QA Lead）', wave: 4 },
-      { value: 'vuln-scan', label: '代码审查与安全（Reviewer & CSO）', wave: 4 },
-      { value: 'internal', label: '文档工程与发布（Doc & Release）', wave: 4 },
-    ]
+      ['recon', 1],
+      ['designer', 1],
+      ['assess', 2],
+      ['exploit', 3],
+      ['qa', 4],
+      ['vuln-scan', 4],
+      ['internal', 4],
+    ].map(([value, wave]) => ({ value, label: ROLE_LABEL[value] || value, wave }))
 
-    const PENDING_APPROVAL_STATES = new Set([
-      'pending_approval',
-      'waiting_approval',
-      'revision_required',
-      'blocked',
-    ])
+    const WIZARD_WAVE_OPTIONS = [1, 2, 3, 4]
 
     /**
      * 统计当前工作台中处于待人工审批 / 待修订 / 受阻状态的 Worker 或拆解目标数。
@@ -102,69 +60,6 @@
       return count >= 0 ? count : 0
     }
 
-    /**
-     * 共享宿主侧边栏对话跳转辅助函数（供「协同与审批」队列与「集群」工作流检视器共用）。
-     */
-    const activateHostAgentChatSession = (agent, opts) => {
-      const options = opts || {}
-      const candidateSid = (agent && (agent.sessionId || agent.session_id || agent.id)) || ''
-      const fallbackSid = options.sessionId || sessionId || ''
-      const looksRealSid = (s) => {
-        const str = String(s || '').trim()
-        if (!str || str === 'root' || str === 'root-main' || str === 'default') return false
-        if (/^(?:sub-|agent-|dom-|task-|wish-|custom-|goal-)/i.test(str)) return false
-        if (/^session-(?:plan|recon|designer|assess|exploit|qa|vuln-scan|internal)$/i.test(str)) return false
-        return /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}/i.test(str) || (!str.startsWith('w') && str.length >= 12)
-      }
-      const targetSid = looksRealSid(candidateSid) ? candidateSid : (looksRealSid(fallbackSid) ? fallbackSid : '')
-      const targetTitle = (agent && (agent.title || agent.name)) || options.sessionTitle || sessionTitle || targetSid || '当前会话'
-
-      if (targetSid) {
-        setSessionId(targetSid, targetTitle)
-        try {
-          if (typeof window !== 'undefined' && window.localStorage) {
-            window.localStorage.setItem('dsh.sessions.current', targetSid)
-          }
-        } catch (e) { /* ignore */ }
-      }
-
-      api({
-        op: 'activateAgentSession',
-        sessionId: targetSid || candidateSid || undefined,
-        agentId: agent && (agent.id || agent.worker_id),
-        engagement: options.engagement || undefined,
-      }).catch(() => {})
-
-      try {
-        if (targetSid && typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
-          const candidates = document.querySelectorAll(
-            '[data-session-id],[data-id],a[href*="session"],[role="treeitem"],[role="option"],li'
-          )
-          const normTitle = String(targetTitle || '').trim().toLowerCase()
-          for (let i = 0; i < candidates.length; i += 1) {
-            const el = candidates[i]
-            if (!el || typeof el.click !== 'function') continue
-            if (typeof el.closest === 'function' && el.closest('.rt-dock, .rt-full, .rt-embed')) continue
-            const dsId = (typeof el.getAttribute === 'function')
-              ? (el.getAttribute('data-session-id') || el.getAttribute('data-id') || el.getAttribute('href') || '')
-              : ''
-            const txt = String(el.textContent || '').trim().toLowerCase()
-            if (
-              (dsId && dsId.includes(targetSid)) ||
-              (txt && txt.includes(String(targetSid).toLowerCase())) ||
-              (normTitle && txt && (txt === normTitle || txt.includes(normTitle)))
-            ) {
-              el.click()
-              break
-            }
-          }
-        }
-      } catch (e) { /* ignore */ }
-
-      exitFullInPlace()
-      return { targetSid, targetTitle }
-    }
-
     const deriveProjectNameFromWish = (wishText, fallbackHint) => {
       const hint = String(fallbackHint || '').trim()
       if (hint && !isRawUuidName(hint)) return hint.slice(0, 28)
@@ -176,74 +71,146 @@
       return '研发工作台-' + new Date().toISOString().slice(5, 10)
     }
 
-    const buildClientFallbackBlueprint = (wishText) => {
-      const summary = String(wishText || '').trim().slice(0, 80) || '目标软件系统'
-      return [
-        {
-          id: 'wish-stage-1',
-          wave: 1,
-          role: 'recon',
-          title: '理清核心功能清单与交互流程',
-          assignedGoal: '围绕「' + summary + '」梳理核心功能点、用户操作路径与验收标准，明确首版最小可用范围。',
-          filesOwned: 'docs/prd.md, src/types/*',
-        },
-        {
-          id: 'wish-stage-2',
-          wave: 1,
-          role: 'designer',
-          title: '制定界面布局、配色与响应式交互规范',
-          assignedGoal: '设计直观易用的主界面布局、空状态引导与交互反馈，确保零学习成本上手。',
-          filesOwned: 'src/styles/*, src/components/layout/*',
-        },
-        {
-          id: 'wish-stage-3',
-          wave: 2,
-          role: 'assess',
-          title: '划分模块边界与互不冲突的文件分片',
-          assignedGoal: '锁定各模块数据结构与接口契约，为并行开发分配独占文件目录，防止并发修改冲突。',
-          filesOwned: 'src/contracts/*, package.json',
-        },
-        {
-          id: 'wish-stage-4',
-          wave: 3,
-          role: 'exploit',
-          title: '核心业务界面与交互逻辑编码实现',
-          assignedGoal: '按既定蓝图实现前端交互组件、状态管理与核心业务逻辑，完成本地单元验证。',
-          filesOwned: 'src/app/*, src/features/*',
-        },
-        {
-          id: 'wish-stage-5',
-          wave: 4,
-          role: 'qa',
-          title: '全流程自动化测试与交付验收检查',
-          assignedGoal: '编写端到端回归测试，核验边界输入、错误提示与性能表现，输出可一键启动的交付成果。',
-          filesOwned: 'test/*, README.md',
-        },
-      ]
-    }
-
-    const normalizeBlueprintGoals = (rawList, wishText) => {
+    const normalizeBlueprintGoals = (rawList) => {
       if (!Array.isArray(rawList) || rawList.length === 0) {
-        return buildClientFallbackBlueprint(wishText)
+        return []
       }
       return rawList.map((item, idx) => {
-        const role = String(item.role || item.agent_role || (idx === 0 ? 'recon' : idx === 1 ? 'assess' : idx === rawList.length - 1 ? 'qa' : 'exploit')).trim()
+        const rawObj = (item && typeof item === 'object') ? item : { title: String(item || '') }
+        const role = String(rawObj.role || rawObj.agent_role || rawObj.worker_role || 'exploit').trim()
         const roleOpt = WIZARD_ROLE_OPTIONS.find((r) => r.value === role) || WIZARD_ROLE_OPTIONS[3]
-        const filesArr = Array.isArray(item.files_owned)
-          ? item.files_owned
-          : (Array.isArray(item.filesOwned) ? item.filesOwned : null)
+        const filesArr = Array.isArray(rawObj.files_owned)
+          ? rawObj.files_owned
+          : (Array.isArray(rawObj.filesOwned) ? rawObj.filesOwned : null)
         const filesStr = filesArr
           ? filesArr.join(', ')
-          : String(item.files_owned || item.filesOwned || item.shard || ('src/module-' + (idx + 1) + '/*'))
+          : String(rawObj.files_owned || rawObj.filesOwned || rawObj.shard || '')
+        const parsedWave = Number(rawObj.wave_num || rawObj.wave)
+        const waveNo = Number.isFinite(parsedWave) && parsedWave >= 1 && parsedWave <= 4
+          ? parsedWave
+          : roleOpt.wave
         return {
-          id: String(item.id || item.worker_id || ('wish-stage-' + (idx + 1))),
-          wave: Number(item.wave) || roleOpt.wave,
+          id: String(rawObj.id || rawObj.worker_id || rawObj.goal_id || ('goal-' + (idx + 1))),
+          wave: waveNo,
           role: roleOpt.value,
-          title: String(item.title || item.name || ('阶段任务 #' + (idx + 1))),
-          assignedGoal: String(item.assigned_goal || item.assignedGoal || item.goal || item.description || item.title || ''),
+          title: String(rawObj.title || rawObj.name || rawObj.worker_name || ('阶段任务 #' + (idx + 1))),
+          assignedGoal: String(rawObj.assigned_goal || rawObj.assignedGoal || rawObj.goal || rawObj.description || rawObj.title || ''),
           filesOwned: filesStr,
         }
       })
+    }
+
+    const normalizeClarifyResponse = (res) => {
+      if (!res || typeof res !== 'object') return null
+      const rawQuestions = res.questions || res.followups || res.clarifying_questions || res.prompts || []
+      const questions = Array.isArray(rawQuestions)
+        ? rawQuestions.map((q, idx) => {
+            if (typeof q === 'string') {
+              return { id: 'q-' + (idx + 1), text: q, options: [], multi: false }
+            }
+            if (!q || typeof q !== 'object') return null
+            const rawOpts = q.options || q.choices || q.suggestions || []
+            const options = Array.isArray(rawOpts)
+              ? rawOpts.map((o) => (typeof o === 'string' ? o : String((o && (o.label || o.value || o.text)) || ''))).filter(Boolean)
+              : []
+            return {
+              id: String(q.id || q.key || ('q-' + (idx + 1))),
+              text: String(q.question || q.title || q.label || q.text || ('补充问题 #' + (idx + 1))),
+              options,
+              multi: Boolean(q.multi || q.multiple),
+            }
+          }).filter(Boolean)
+        : []
+
+      const rawDims = res.dimensions || res.clarify_dimensions || res.chips || res.suggested_dimensions || []
+      const dimensions = []
+      if (Array.isArray(rawDims)) {
+        rawDims.forEach((d, idx) => {
+          if (typeof d === 'string') {
+            const lbl = d.trim()
+            if (lbl) dimensions.push({ id: 'dim-' + (idx + 1), group: '', label: lbl, snippet: lbl })
+            return
+          }
+          if (!d || typeof d !== 'object') return
+          const label = String(d.label || d.name || d.title || d.value || '').trim()
+          const nested = Array.isArray(d.options || d.choices) ? (d.options || d.choices) : null
+          if (nested && nested.length > 0) {
+            nested.forEach((opt, oi) => {
+              const oLabel = typeof opt === 'string'
+                ? opt.trim()
+                : String((opt && (opt.label || opt.name || opt.value || opt.text)) || '').trim()
+              if (!oLabel) return
+              dimensions.push({
+                id: 'dim-' + (idx + 1) + '-' + (oi + 1),
+                group: String(d.group || d.category || label || '').trim(),
+                label: oLabel,
+                snippet: String((opt && (opt.snippet || opt.value)) || oLabel).trim(),
+              })
+            })
+            return
+          }
+          if (!label) return
+          dimensions.push({
+            id: String(d.id || ('dim-' + (idx + 1))),
+            group: String(d.group || d.category || '').trim(),
+            label,
+            snippet: String(d.snippet || d.prompt || d.description || label).trim(),
+          })
+        })
+      }
+
+      const summary = String(res.summary || res.analysis || res.project_summary || res.detected_context || res.note || '').trim()
+      return { summary, questions, dimensions }
+    }
+
+    const extractLlmErrorInfo = (res, stage, fallbackMsg) => {
+      const code = String((res && (res.error_code || res.code || res.error)) || 'request_failed')
+      const msg = String((res && (res.message || res.detail || res.error_message || res.error)) || fallbackMsg)
+      const isLlmUnavailable = Boolean(
+        res && (
+          res.llm_unavailable === true
+          || res.error === 'llm_unavailable'
+          || res.code === 'llm_unavailable'
+          || res.error_code === 'llm_unavailable'
+        )
+      )
+      return { stage, code, isLlmUnavailable, text: msg }
+    }
+
+    const extractWave1Sessions = (res) => {
+      if (!res || typeof res !== 'object') return []
+      const directList = res.wave1_sessions || res.wave1Sessions || res.dispatched_sessions || res.spawned_sessions || res.sessions
+      const out = []
+      const seen = new Set()
+      const pushItem = (raw) => {
+        if (!raw) return
+        if (typeof raw === 'string') {
+          if (!seen.has(raw)) {
+            seen.add(raw)
+            out.push({ sessionId: raw, title: '', role: '', status: 'running' })
+          }
+          return
+        }
+        if (typeof raw !== 'object') return
+        const sid = String(raw.session_id || raw.sessionId || raw.id || '').trim()
+        if (!sid || seen.has(sid)) return
+        seen.add(sid)
+        out.push({
+          sessionId: sid,
+          title: String(raw.title || raw.worker_name || raw.name || '').trim(),
+          role: String(raw.role || raw.worker_role || '').trim(),
+          status: String(raw.status || 'dispatched').trim(),
+        })
+      }
+      if (Array.isArray(directList)) directList.forEach(pushItem)
+      if (out.length === 0 && Array.isArray(res.worker_tasks)) {
+        res.worker_tasks.forEach((wt) => {
+          if (wt && wt.session_id && (Number(wt.wave) === 1 || String(wt.status || '').toLowerCase() === 'running')) {
+            pushItem(wt)
+          }
+        })
+      }
+      return out
     }
 
     /**
@@ -290,7 +257,6 @@
       const eng = props.engagement || null
       const hasActiveWork = Boolean(props.hasActiveWork)
       const openSignal = props.openSignal || 0
-      const appendRequest = props.appendRequest || null
       const { uiMode } = useUI()
       const currentSess = useSession()
 
@@ -310,8 +276,18 @@
       const [hintEdited, setHintEdited] = React.useState(false)
       const [refinedWish, setRefinedWish] = React.useState('')
       const [stageCards, setStageCards] = React.useState([])
+
+      const [clarifying, setClarifying] = React.useState(false)
+      const [clarifyData, setClarifyData] = React.useState(null)
+      const [clarifyAnswers, setClarifyAnswers] = React.useState({})
+      const [selectedDims, setSelectedDims] = React.useState([])
+      const [extraClarifyNote, setExtraClarifyNote] = React.useState('')
+
       const [previewing, setPreviewing] = React.useState(false)
       const [launching, setLaunching] = React.useState(false)
+      const [handoffBusy, setHandoffBusy] = React.useState(false)
+      const [llmError, setLlmError] = React.useState(null)
+      const [dispatchReceipt, setDispatchReceipt] = React.useState(null)
       const [feedback, setFeedback] = React.useState(null)
 
       /* 会话切换时重置草稿与默认工作台命名，杜绝跨会话串味 */
@@ -320,6 +296,12 @@
         setProjectHint(!eng ? cleanSessionHint : '')
         setStageCards([])
         setRefinedWish('')
+        setClarifyData(null)
+        setClarifyAnswers({})
+        setSelectedDims([])
+        setExtraClarifyNote('')
+        setLlmError(null)
+        setDispatchReceipt(null)
         setFeedback(null)
       }, [activeSid])
 
@@ -329,64 +311,264 @@
         }
       }, [eng, cleanSessionHint, hintEdited])
 
-      React.useEffect(() => {
-        if (!appendRequest || !appendRequest.seq || !appendRequest.text) return
-        const snippet = String(appendRequest.text).trim()
-        if (!snippet) return
-        setManualOpen(true)
-        setWishText((prev) => {
-          const base = String(prev || '').trim()
-          if (base.includes(snippet)) return prev
-          return base ? (base + '\n• ' + snippet) : snippet
-        })
-      }, [appendRequest && appendRequest.seq])
-
-      const applyStarter = (tpl) => {
-        setWishText(tpl.prompt)
-        if (!eng && !hintEdited && !cleanSessionHint) {
-          setProjectHint(tpl.projectName)
+      const serializeClarifications = () => {
+        const answers = []
+        if (clarifyData && Array.isArray(clarifyData.questions)) {
+          clarifyData.questions.forEach((q, idx) => {
+            const qKey = q.id || ('q-' + (idx + 1))
+            const val = clarifyAnswers[qKey]
+            const ansText = Array.isArray(val) ? val.join('、') : String(val || '').trim()
+            if (ansText) {
+              answers.push({ id: qKey, question: q.text, answer: ansText })
+            }
+          })
         }
+        const dimensions = selectedDims.slice()
+        const note = String(extraClarifyNote || '').trim()
+        if (answers.length === 0 && dimensions.length === 0 && !note) return undefined
+        const summaryParts = answers.map((a) => a.question + '：' + a.answer)
+        if (dimensions.length > 0) summaryParts.push('约束维度：' + dimensions.join('；'))
+        if (note) summaryParts.push('补充说明：' + note)
+        return {
+          answers,
+          dimensions,
+          note: note || undefined,
+          summary: summaryParts.join('\n'),
+        }
+      }
+
+      const serializeStageCards = (cards) => cards.map((card, idx) => {
+        const filesList = String(card.filesOwned || '')
+          .split(/[,，\n]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+        const waveNo = Math.max(1, Math.min(4, Number(card.wave) || 3))
+        return {
+          id: card.id || ('goal-' + (idx + 1)),
+          wave: waveNo,
+          wave_num: waveNo,
+          role: card.role || 'exploit',
+          title: String(card.title || '').trim() || ('阶段 #' + (idx + 1)),
+          assigned_goal: String(card.assignedGoal || card.title || '').trim(),
+          assignedGoal: String(card.assignedGoal || card.title || '').trim(),
+          files_owned: filesList,
+          filesOwned: filesList,
+        }
+      })
+
+      const ensureWorkspaceForSession = async (promptTrimmed) => {
+        let targetEng = eng || ''
+        const derivedProjectName = deriveProjectNameFromWish(promptTrimmed, projectHint || cleanSessionHint)
+        if (targetEng) return { targetEng, derivedProjectName }
+        let openRes = await api({
+          op: 'openEngagement',
+          name: derivedProjectName,
+          session: activeSid || undefined,
+        })
+        if (!openRes || openRes.ok === false) {
+          openRes = await api({
+            op: 'engagementOpen',
+            name: derivedProjectName,
+            session: activeSid || undefined,
+          })
+        }
+        const openedObj = (openRes && openRes.engagement && typeof openRes.engagement === 'object')
+          ? openRes.engagement
+          : openRes
+        targetEng = String(
+          (openedObj && (openedObj.id || openedObj.engagement_id))
+          || (openRes && (openRes.active || openRes.engagement_id || openRes.id))
+          || derivedProjectName
+        ).trim()
+        if (targetEng) {
+          if (activeSid) {
+            await api({
+              op: 'bindSessionEngagement',
+              session: activeSid,
+              engagement: targetEng,
+              id: targetEng,
+              name: derivedProjectName,
+            })
+          }
+          if (typeof props.onWorkspaceCreated === 'function') {
+            props.onWorkspaceCreated(targetEng, derivedProjectName)
+          }
+        }
+        return { targetEng, derivedProjectName }
+      }
+
+      const toggleQuestionOption = (qId, opt, multi) => {
+        setClarifyAnswers((prev) => {
+          const cur = prev[qId]
+          if (multi) {
+            const list = Array.isArray(cur) ? cur.slice() : (cur ? [String(cur)] : [])
+            const idx = list.indexOf(opt)
+            if (idx >= 0) list.splice(idx, 1)
+            else list.push(opt)
+            return Object.assign({}, prev, { [qId]: list })
+          }
+          return Object.assign({}, prev, { [qId]: cur === opt ? '' : opt })
+        })
+      }
+
+      const toggleDimension = (dimSnippet) => {
+        setSelectedDims((prev) => (
+          prev.includes(dimSnippet)
+            ? prev.filter((x) => x !== dimSnippet)
+            : prev.concat([dimSnippet])
+        ))
+      }
+
+      const handleClarifyWithAI = () => {
+        const promptTrimmed = String(wishText || '').trim()
+        if (!promptTrimmed) {
+          setFeedback({ tone: 'warn', text: '请先输入需要实现的功能目标或工程需求。' })
+          return
+        }
+        setClarifying(true)
+        setLlmError(null)
         setFeedback(null)
+        api({
+          op: 'clarifyWishWithAI',
+          engagement_id: eng || undefined,
+          engagement: eng || undefined,
+          session: activeSid || undefined,
+          prompt: promptTrimmed,
+        }).then((res) => {
+          setClarifying(false)
+          if (!res || res.ok === false || res.llm_unavailable === true || res.error === 'llm_unavailable' || res.code === 'llm_unavailable') {
+            setLlmError(extractLlmErrorInfo(res, 'clarify', '模型服务不可用或未配置，未能获取 AI 澄清问题。'))
+            return
+          }
+          if (!eng && !hintEdited && (res.project_name || res.projectName) && !projectHint) {
+            setProjectHint(String(res.project_name || res.projectName))
+          }
+          const parsed = normalizeClarifyResponse(res)
+          if (!parsed || (parsed.questions.length === 0 && parsed.dimensions.length === 0 && !parsed.summary)) {
+            setLlmError(extractLlmErrorInfo(res, 'clarify', '模型未返回有效澄清维度，请直接重试 AI 拆解或转交主代理。'))
+            return
+          }
+          setClarifyData(parsed)
+          setClarifyAnswers({})
+          setSelectedDims([])
+          setFeedback({
+            tone: 'ok',
+            text: '已由模型生成项目专属澄清问题，选择或补充后点击「AI 拆解蓝图」。',
+          })
+        }).catch((err) => {
+          setClarifying(false)
+          setLlmError({
+            stage: 'clarify',
+            code: 'network_error',
+            isLlmUnavailable: false,
+            text: 'AI 澄清请求异常：' + (err && err.message ? err.message : String(err)),
+          })
+        })
       }
 
       const handleRefinePreview = () => {
         const promptTrimmed = String(wishText || '').trim()
         if (!promptTrimmed) {
-          setFeedback({ tone: 'warn', text: '请先在下方输入框描述目标功能与交付要求，或点选灵感模板与澄清提示词。' })
+          setFeedback({ tone: 'warn', text: '请先输入需要实现的功能目标或工程需求。' })
           return
         }
         setPreviewing(true)
+        setLlmError(null)
+        setDispatchReceipt(null)
         setFeedback(null)
+        const clarificationsPayload = serializeClarifications()
         api({
           op: 'refineAndDecomposeWish',
           engagement_id: eng || undefined,
           engagement: eng || undefined,
           session: activeSid || undefined,
           prompt: promptTrimmed,
+          clarifications: clarificationsPayload,
           preview_only: true,
         }).then((res) => {
           setPreviewing(false)
-          const serverRefined = res && (res.refined_prompt || res.refinedPrompt || (res.blueprint && res.blueprint.refined_prompt))
+          if (!res || res.ok === false || res.llm_unavailable === true || res.error === 'llm_unavailable' || res.code === 'llm_unavailable') {
+            setLlmError(extractLlmErrorInfo(res, 'decompose', '模型服务不可用或调用失败，无法生成拆解蓝图。'))
+            return
+          }
+          const serverRefined = res.refined_prompt || res.refinedPrompt || (res.blueprint && res.blueprint.refined_prompt)
           if (serverRefined) setRefinedWish(String(serverRefined))
-          if (!eng && res && (res.project_name || res.projectName) && !projectHint) {
+          if (!eng && !hintEdited && (res.project_name || res.projectName) && !projectHint) {
             setProjectHint(String(res.project_name || res.projectName))
           }
-          const rawGoals = (res && (res.goals || res.stages || res.subgoals || (res.blueprint && res.blueprint.goals))) || []
-          const normalized = normalizeBlueprintGoals(rawGoals, serverRefined || promptTrimmed)
+          const rawGoals = res.goals || res.stages || res.subgoals || res.proposed_waves || (res.blueprint && res.blueprint.goals) || []
+          const normalized = normalizeBlueprintGoals(rawGoals)
+          if (normalized.length === 0) {
+            setLlmError({
+              stage: 'decompose',
+              code: 'empty_blueprint',
+              isLlmUnavailable: false,
+              text: '模型未返回有效的分片蓝图条目，请补充需求细节后重试或直交主代理接管。',
+            })
+            return
+          }
           setStageCards(normalized)
           setFeedback({
             tone: 'ok',
-            text: '已生成 ' + normalized.length + ' 个研发阶段蓝图卡片。确认目标说明、负责角色与独占文件分片后，点击「🚀 确认蓝图并立项拆解」。',
+            text: '已生成 ' + normalized.length + ' 个可执行分片，请核对目标、角色、Wave 与文件边界后点击「确认立项并派发」。',
           })
-        }).catch(() => {
+        }).catch((err) => {
           setPreviewing(false)
-          const normalized = buildClientFallbackBlueprint(promptTrimmed)
-          setStageCards(normalized)
-          setFeedback({
-            tone: 'ok',
-            text: '已生成 ' + normalized.length + ' 个默认研发拆解阶段，可直接微调后立项启动。',
+          setLlmError({
+            stage: 'decompose',
+            code: 'network_error',
+            isLlmUnavailable: false,
+            text: 'AI 拆解请求异常：' + (err && err.message ? err.message : String(err)),
           })
         })
+      }
+
+      const handleHandoffToCaptain = async () => {
+        const promptTrimmed = String(wishText || '').trim()
+        if (!promptTrimmed) {
+          setFeedback({ tone: 'warn', text: '请先输入需求描述后再转交主代理接管。' })
+          return
+        }
+        setHandoffBusy(true)
+        setFeedback(null)
+        try {
+          const clarificationsPayload = serializeClarifications()
+          const res = await api({
+            op: 'handoffToCaptain',
+            engagement_id: eng || undefined,
+            engagement: eng || undefined,
+            session: activeSid || undefined,
+            prompt: promptTrimmed,
+            clarifications: clarificationsPayload,
+            goals: stageCards.length > 0 ? serializeStageCards(stageCards) : undefined,
+          })
+          setHandoffBusy(false)
+          if (!res || res.ok === false) {
+            setFeedback({
+              tone: 'err',
+              text: '转交主代理失败：' + ((res && (res.message || res.error)) || '后端未返回成功回执'),
+            })
+            return
+          }
+          setLlmError(null)
+          const targetEng = String(res.engagement || res.engagement_id || eng || '').trim()
+          if (targetEng && targetEng !== eng && typeof props.onWorkspaceCreated === 'function') {
+            props.onWorkspaceCreated(targetEng, res.project_name || projectHint || cleanSessionHint || targetEng)
+          }
+          setDispatchReceipt({
+            mode: 'handoff',
+            totalGoals: stageCards.length,
+            wave1Sessions: extractWave1Sessions(res),
+            captainNotified: res.captain_notified !== false,
+            captainNote: String(res.captain_note || res.message || res.note || '已将需求与上下文转交主代理（Captain）在当前会话接管。'),
+          })
+          if (typeof props.onDecomposed === 'function') {
+            props.onDecomposed(res, stageCards, promptTrimmed, targetEng || eng)
+          }
+        } catch (err) {
+          setHandoffBusy(false)
+          setFeedback({ tone: 'err', text: '转交主代理异常：' + (err && err.message ? err.message : String(err)) })
+        }
       }
 
       const updateCardField = (idx, field, val) => {
@@ -396,6 +578,8 @@
           if (field === 'role') {
             const matched = WIZARD_ROLE_OPTIONS.find((r) => r.value === val)
             if (matched) next.wave = matched.wave
+          } else if (field === 'wave') {
+            next.wave = Math.max(1, Math.min(4, Number(val) || 3))
           }
           return next
         }))
@@ -406,9 +590,9 @@
           id: 'wish-stage-custom-' + (prev.length + 1),
           wave: 3,
           role: 'exploit',
-          title: '新增功能模块开发分片 #' + (prev.length + 1),
-          assignedGoal: '补充实现独立子模块逻辑并完成单元验证',
-          filesOwned: 'src/custom-' + (prev.length + 1) + '/*',
+          title: '新增研发分片 #' + (prev.length + 1),
+          assignedGoal: '',
+          filesOwned: '',
         }]))
       }
 
@@ -419,93 +603,60 @@
       const handleConfirmAndDecompose = async () => {
         const promptTrimmed = String(wishText || '').trim()
         if (!promptTrimmed && stageCards.length === 0) {
-          setFeedback({ tone: 'warn', text: '请先输入需求描述或选择模板后再执行立项拆解。' })
+          setFeedback({ tone: 'warn', text: '请先输入需求描述并点击「AI 拆解蓝图」。' })
           return
         }
-        const effectiveGoalsSource = stageCards.length > 0
-          ? stageCards
-          : buildClientFallbackBlueprint(promptTrimmed)
-        const editedGoals = effectiveGoalsSource.map((card, idx) => {
-          const filesList = String(card.filesOwned || '')
-            .split(/[,，\n]+/)
-            .map((s) => s.trim())
-            .filter(Boolean)
-          return {
-            id: card.id || ('goal-' + (idx + 1)),
-            wave: Number(card.wave) || 3,
-            role: card.role || 'exploit',
-            title: String(card.title || '').trim() || ('阶段 #' + (idx + 1)),
-            assigned_goal: String(card.assignedGoal || card.title || '').trim(),
-            assignedGoal: String(card.assignedGoal || card.title || '').trim(),
-            files_owned: filesList,
-            filesOwned: filesList,
-          }
-        })
+        if (stageCards.length === 0) {
+          setFeedback({ tone: 'warn', text: '请先点击「AI 拆解蓝图」获取分片方案，或通过「直交主代理接管」直接调度。' })
+          return
+        }
+        const editedGoals = serializeStageCards(stageCards)
+        const clarificationsPayload = serializeClarifications()
 
         setLaunching(true)
+        setLlmError(null)
+        setDispatchReceipt(null)
         setFeedback(null)
         try {
-          let targetEng = eng || ''
-          const derivedProjectName = deriveProjectNameFromWish(promptTrimmed, projectHint || cleanSessionHint)
-          if (!targetEng) {
-            let openRes = await api({
-              op: 'openEngagement',
-              name: derivedProjectName,
-              session: activeSid || undefined,
-            })
-            if (!openRes || openRes.ok === false) {
-              openRes = await api({
-                op: 'engagementOpen',
-                name: derivedProjectName,
-                session: activeSid || undefined,
-              })
-            }
-            const openedObj = (openRes && openRes.engagement && typeof openRes.engagement === 'object')
-              ? openRes.engagement
-              : openRes
-            targetEng = String(
-              (openedObj && (openedObj.id || openedObj.engagement_id))
-              || (openRes && (openRes.active || openRes.engagement_id || openRes.id))
-              || derivedProjectName
-            ).trim()
-            if (targetEng) {
-              rememberEngagement(targetEng)
-              if (activeSid) {
-                await api({
-                  op: 'bindSessionEngagement',
-                  session: activeSid,
-                  engagement: targetEng,
-                  id: targetEng,
-                  name: derivedProjectName,
-                })
-              }
-              if (typeof props.onWorkspaceCreated === 'function') {
-                props.onWorkspaceCreated(targetEng, derivedProjectName)
-              }
-            }
-          }
-
-          const finalPrompt = refinedWish ? (promptTrimmed + '\n\n【润色补充】' + refinedWish) : promptTrimmed
+          const { targetEng, derivedProjectName } = await ensureWorkspaceForSession(promptTrimmed)
+          const finalPrompt = refinedWish ? (promptTrimmed + '\n\n【需求润色】' + refinedWish) : promptTrimmed
           const decompRes = await api({
-            op: 'decomposeUserPrompt',
+            op: 'refineAndDecomposeWish',
             engagement_id: targetEng || 'default',
             engagement: targetEng || 'default',
             session: activeSid || undefined,
-            user_prompt: finalPrompt || derivedProjectName,
             prompt: finalPrompt || derivedProjectName,
+            clarifications: clarificationsPayload,
             goals: editedGoals,
+            preview_only: false,
           })
 
           setLaunching(false)
-          if (decompRes && decompRes.ok === false) {
-            setFeedback({ tone: 'err', text: '立项拆解失败：' + (decompRes.error || '请稍后重试') })
+          if (!decompRes || decompRes.ok === false || decompRes.llm_unavailable === true || decompRes.error === 'llm_unavailable') {
+            setLlmError(extractLlmErrorInfo(decompRes, 'decompose', '立项与派发失败，请检查模型配置或转交主代理接管。'))
             return
           }
+          const wave1Sessions = extractWave1Sessions(decompRes)
+          const captainNotified = decompRes.captain_notified ?? decompRes.captainNotified ?? decompRes.notified_captain
+          const captainNote = String(
+            decompRes.captain_note
+            || decompRes.captain_message
+            || decompRes.dispatch_summary
+            || decompRes.note
+            || decompRes.message
+            || (captainNotified === false ? '未自动通知主代理' : '已同步写入工作流并通知主代理协同调度')
+          )
+          setDispatchReceipt({
+            mode: 'decompose',
+            totalGoals: editedGoals.length,
+            wave1Sessions,
+            captainNotified: captainNotified !== false,
+            captainNote,
+          })
           setFeedback({
             tone: 'ok',
-            text: '立项成功！已将 ' + editedGoals.length + ' 个并行研发分片写入当前工作台。',
+            text: '立项成功，已写入 ' + editedGoals.length + ' 个分片并刷新工作流树。',
           })
-          if (props.collapseOnLaunch) setManualOpen(false)
           if (typeof props.onDecomposed === 'function') {
             props.onDecomposed(decompRes, editedGoals, finalPrompt || derivedProjectName, targetEng)
           }
@@ -515,95 +666,257 @@
         }
       }
 
-      const boundWorkspaceLabel = eng
-        ? ((props.engagementName && !isRawUuidName(props.engagementName)) ? props.engagementName : eng)
-        : null
+      const isAiBusy = clarifying || previewing || launching || handoffBusy
 
       return h('div', {
         className: 'rt-bento-card rt-wish-wizard rt-wish-wizard-card',
         style: {
-          padding: isExpanded ? '14px 16px' : '10px 14px',
-          border: '1px solid rgba(77, 107, 254, 0.24)',
-          background: 'linear-gradient(135deg, rgba(77,107,254,0.05) 0%, rgba(16,185,129,0.03) 100%)',
+          padding: isExpanded ? '12px 14px' : '8px 12px',
+          border: '1px solid rgba(77, 107, 254, 0.22)',
+          background: 'linear-gradient(135deg, rgba(77,107,254,0.04) 0%, rgba(16,185,129,0.02) 100%)',
         },
       },
         h('div', {
           style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
         },
+          h('strong', { style: { fontSize: 13 } }, 'AI 需求澄清与蓝图立项'),
+          h('div', { className: 'rt-spacer' }),
           h('button', {
             type: 'button',
-            className: 'rt-btn' + (isExpanded ? ' rt-btn-primary' : ''),
+            className: 'rt-btn',
             onClick: () => setManualOpen(!isExpanded),
-            style: { fontWeight: 700, fontSize: 12.5, padding: '4px 12px' },
-          }, isExpanded ? '✨ 需求拆解与蓝图立项（收起）' : '✨ 展开需求拆解与蓝图立项'),
-          h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
-            '自然语言澄清需求 → 独占文件分片蓝图预览 → 一键写入 4-Wave 并发工作流'),
-          h('div', { className: 'rt-spacer' }),
-          boundWorkspaceLabel
-            ? h('span', { className: 'rt-tag rt-tag-live' }, '目标工作台：' + boundWorkspaceLabel)
-            : h('span', { className: 'rt-tag rt-tag-active' }, '当前会话将创建独立工作台')),
+            style: { fontWeight: 600, fontSize: 11.5, padding: '3px 10px' },
+          }, isExpanded ? '收起' : '展开')),
 
-        isExpanded ? h('div', { className: 'rt-wish-wizard-body', style: { marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-            h('span', { style: { fontSize: 11.5, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, '💡 灵感模板：'),
-            WISH_STARTER_TEMPLATES.map((tpl) => h('button', {
-              key: tpl.id,
-              type: 'button',
-              className: 'rt-btn',
-              style: { borderRadius: 999, fontSize: 11.5, padding: '3px 10px' },
-              onClick: () => applyStarter(tpl),
-            }, tpl.label))),
-
+        isExpanded ? h('div', { className: 'rt-wish-wizard-body', style: { marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 } },
           h('textarea', {
             className: 'rt-textarea',
             rows: 3,
             value: wishText,
             onChange: (e) => setWishText(e.target.value),
-            placeholder: '描述你想构建的软件、页面或工程特性（例如：构建一个支持番茄钟计时、数据看板与本地持久化的任务管理应用）...',
+            placeholder: '描述目标功能、技术栈约束与验收要求…',
             style: {
               width: '100%',
               boxSizing: 'border-box',
               fontSize: 13,
               lineHeight: 1.55,
-              padding: '10px 12px',
+              padding: '9px 11px',
               borderRadius: 8,
             },
           }),
 
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
             !eng
-              ? h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                  h('span', { style: { fontSize: 11.5, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, '专属工作台名称：'),
-                  h('input', {
-                    className: 'rt-input',
-                    value: projectHint,
-                    onChange: (e) => { setHintEdited(true); setProjectHint(e.target.value) },
-                    placeholder: '当前会话独立工作台名称（留空自动生成）',
-                    style: { width: 240, fontSize: 12 },
-                  }))
+              ? h('input', {
+                  className: 'rt-input',
+                  value: projectHint,
+                  onChange: (e) => { setHintEdited(true); setProjectHint(e.target.value) },
+                  placeholder: '工作台名称（留空自动生成）',
+                  style: { width: 210, fontSize: 12 },
+                })
               : null,
             h('button', {
               type: 'button',
               className: 'rt-btn',
-              disabled: previewing || launching,
+              disabled: isAiBusy,
+              onClick: handleClarifyWithAI,
+              style: { fontWeight: 600, padding: '5px 12px' },
+            }, clarifying ? '分析中…' : 'AI 澄清需求'),
+            h('button', {
+              type: 'button',
+              className: 'rt-btn',
+              disabled: isAiBusy,
               onClick: handleRefinePreview,
               style: { fontWeight: 600, padding: '5px 12px' },
-            }, previewing ? '⏳ 正在润色并生成蓝图…' : '✨ 先润色并预览拆解蓝图'),
+            }, previewing ? '拆解中…' : 'AI 拆解蓝图'),
             h('button', {
               type: 'button',
               className: 'rt-btn rt-btn-primary',
-              disabled: previewing || launching,
+              disabled: isAiBusy || stageCards.length === 0,
               onClick: handleConfirmAndDecompose,
               style: { fontWeight: 700, padding: '5px 14px' },
-            }, launching ? '🚀 正在立项并派发团队…' : '🚀 确认蓝图并立项拆解')),
+            }, launching ? '立项派发中…' : '确认立项并派发')),
+
+          (clarifying || previewing) ? h('div', {
+            className: 'rt-note',
+            style: {
+              margin: 0,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              borderColor: 'rgba(77, 107, 254, 0.45)',
+              background: 'rgba(77, 107, 254, 0.07)',
+            },
+          },
+            h('span', { className: 'rt-p5-spin', style: { color: '#4d6bfe' } }, '●'),
+            h('span', { style: { fontWeight: 600 } }, '正在调用模型分析需求与项目结构…')) : null,
 
           feedback ? h('div', {
-            className: 'rt-note',
+            className: feedback.tone === 'err' ? 'rt-err' : 'rt-note',
             style: {
               margin: 0,
               borderColor: feedback.tone === 'err' ? '#ef4444' : feedback.tone === 'warn' ? '#f59e0b' : 'rgba(16,185,129,0.45)',
             },
           }, feedback.text) : null,
+
+          llmError ? h('div', {
+            className: 'rt-err',
+            style: {
+              margin: 0,
+              padding: '10px 12px',
+              borderRadius: 8,
+              border: '1px solid rgba(239, 68, 68, 0.42)',
+              background: 'rgba(239, 68, 68, 0.06)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+            },
+          },
+            h('div', { style: { fontWeight: 700, fontSize: 12.5 } },
+              (llmError.isLlmUnavailable ? '模型服务不可用：' : 'AI 处理失败：') + llmError.text),
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+              llmError.stage === 'clarify'
+                ? h('button', {
+                    type: 'button',
+                    className: 'rt-btn',
+                    disabled: isAiBusy,
+                    onClick: handleClarifyWithAI,
+                  }, '重试 AI 澄清')
+                : null,
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                disabled: isAiBusy,
+                onClick: handleRefinePreview,
+              }, '重试 AI 拆解'),
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                onClick: () => setUI({ tab: 'settings' }),
+              }, '打开设置配置模型'),
+              h('button', {
+                type: 'button',
+                className: 'rt-btn rt-btn-primary',
+                disabled: isAiBusy,
+                onClick: handleHandoffToCaptain,
+              }, handoffBusy ? '正在转交…' : '直交主代理接管'))) : null,
+
+          clarifyData ? h('div', {
+            className: 'rt-wish-clarify-panel',
+            style: {
+              padding: '10px 12px',
+              borderRadius: 10,
+              border: '1px solid var(--dsw-alias-border-l1)',
+              background: 'var(--dsw-alias-bg-layer-1, rgba(255,255,255,0.5))',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+            },
+          },
+            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
+              h('strong', { style: { fontSize: 12 } }, 'AI 澄清追问与项目维度'),
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                style: { fontSize: 11, padding: '1px 7px' },
+                onClick: () => setClarifyData(null),
+              }, '收起澄清')),
+            clarifyData.summary
+              ? h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } }, clarifyData.summary)
+              : null,
+            clarifyData.dimensions.length > 0
+              ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
+                  clarifyData.dimensions.map((dim) => {
+                    const active = selectedDims.includes(dim.snippet)
+                    return h('button', {
+                      key: dim.id,
+                      type: 'button',
+                      className: 'rt-btn' + (active ? ' rt-btn-primary' : ''),
+                      style: { fontSize: 11.5, padding: '2px 9px', borderRadius: 999 },
+                      title: dim.snippet,
+                      onClick: () => toggleDimension(dim.snippet),
+                    }, (active ? '✓ ' : '+ ') + (dim.group ? (dim.group + ' · ') : '') + dim.label)
+                  }))
+              : null,
+            clarifyData.questions.map((q, qIdx) => {
+              const qKey = q.id || ('q-' + (qIdx + 1))
+              const curVal = clarifyAnswers[qKey]
+              const textVal = Array.isArray(curVal) ? curVal.join('、') : String(curVal || '')
+              return h('div', {
+                key: qKey,
+                style: {
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 5,
+                  paddingTop: 6,
+                  borderTop: '1px dashed var(--dsw-alias-border-l1)',
+                },
+              },
+                h('div', { style: { fontSize: 12, fontWeight: 600 } }, (qIdx + 1) + '. ' + q.text),
+                q.options.length > 0
+                  ? h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 5 } },
+                      q.options.map((opt, oIdx) => {
+                        const isPicked = Array.isArray(curVal) ? curVal.includes(opt) : curVal === opt
+                        return h('button', {
+                          key: qKey + '-o-' + oIdx,
+                          type: 'button',
+                          className: 'rt-btn' + (isPicked ? ' rt-btn-primary' : ''),
+                          style: { fontSize: 11, padding: '2px 8px', borderRadius: 999 },
+                          onClick: () => toggleQuestionOption(qKey, opt, q.multi),
+                        }, opt)
+                      }))
+                  : null,
+                h('input', {
+                  className: 'rt-input',
+                  value: textVal,
+                  onChange: (e) => {
+                    const v = e.target.value
+                    setClarifyAnswers((prev) => Object.assign({}, prev, { [qKey]: v }))
+                  },
+                  placeholder: '输入补充回答…',
+                  style: { fontSize: 12 },
+                }))
+            }),
+            h('input', {
+              className: 'rt-input',
+              value: extraClarifyNote,
+              onChange: (e) => setExtraClarifyNote(e.target.value),
+              placeholder: '其他补充约束（选填）…',
+              style: { fontSize: 12 },
+            })) : null,
+
+          dispatchReceipt ? h('div', {
+            className: 'rt-dispatch-receipt',
+            style: {
+              padding: '10px 12px',
+              borderRadius: 10,
+              border: '1px solid rgba(16, 185, 129, 0.45)',
+              background: 'rgba(16, 185, 129, 0.07)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              fontSize: 12,
+            },
+          },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+              h('strong', null, dispatchReceipt.mode === 'handoff' ? '已转交主代理接管' : '派发回执'),
+              dispatchReceipt.totalGoals > 0
+                ? h('span', { className: 'rt-tag rt-tag-live' }, dispatchReceipt.totalGoals + ' 个分片')
+                : null,
+              h('span', { className: 'rt-tag ' + (dispatchReceipt.captainNotified ? 'rt-tag-live' : '') },
+                dispatchReceipt.captainNotified ? '主代理已通知' : '主代理待同步')),
+            h('div', { style: { color: 'var(--dsw-alias-label-secondary)' } }, dispatchReceipt.captainNote),
+            dispatchReceipt.wave1Sessions.length > 0
+              ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                  h('span', { style: { fontWeight: 600, fontSize: 11.5 } },
+                    '已拉起 Wave 1 子代理会话（' + dispatchReceipt.wave1Sessions.length + '）：'),
+                  h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
+                    dispatchReceipt.wave1Sessions.map((ws) => h('span', {
+                      key: ws.sessionId,
+                      className: 'rt-tag rt-mono',
+                    }, (ws.role ? (ws.role + ' · ') : '') + (ws.title ? (ws.title + ' · ') : '') + ws.sessionId))))
+              : h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
+                  'Wave 1 任务已落库并通知主代理协调执行。')) : null,
 
           stageCards.length > 0 ? h('div', {
             className: 'rt-wish-blueprint-deck',
@@ -616,8 +929,16 @@
             },
           },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8, flexWrap: 'wrap' } },
-              h('strong', { style: { fontSize: 12.5 } }, '🗺️ 拆解蓝图预览（共 ' + stageCards.length + ' 个阶段卡片，启动前可自由微调）'),
-              h('button', { type: 'button', className: 'rt-btn', style: { fontSize: 11, padding: '2px 8px' }, onClick: addStageCard }, '+ 新增阶段卡片')),
+              h('strong', { style: { fontSize: 12.5 } }, '拆解蓝图（' + stageCards.length + ' 个分片）'),
+              h('div', { style: { display: 'inline-flex', gap: 6 } },
+                h('button', { type: 'button', className: 'rt-btn', style: { fontSize: 11, padding: '2px 8px' }, onClick: addStageCard }, '+ 新增分片'),
+                h('button', {
+                  type: 'button',
+                  className: 'rt-btn rt-btn-primary',
+                  disabled: isAiBusy,
+                  style: { fontSize: 11, padding: '2px 10px', fontWeight: 700 },
+                  onClick: handleConfirmAndDecompose,
+                }, launching ? '立项派发中…' : '确认立项并派发'))),
             h('div', {
               style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 },
             },
@@ -634,7 +955,13 @@
                 },
               },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-                  h('span', { className: 'rt-tag rt-tag-active' }, formatWaveHeaderByMode(card.wave, 'Wave ' + card.wave, uiMode)),
+                  h('select', {
+                    className: 'rt-select',
+                    value: String(card.wave || 3),
+                    'aria-label': '所属波次 Wave',
+                    onChange: (e) => updateCardField(idx, 'wave', Number(e.target.value)),
+                    style: { fontSize: 11, padding: '1px 6px', fontWeight: 600 },
+                  }, WIZARD_WAVE_OPTIONS.map((w) => h('option', { key: 'w-' + w, value: String(w) }, formatWaveHeaderByMode(w, 'Wave ' + w, uiMode)))),
                   h('div', { className: 'rt-spacer' }),
                   stageCards.length > 1 ? h('button', {
                     type: 'button',
@@ -642,7 +969,7 @@
                     style: { padding: '0 6px', fontSize: 10.5 },
                     onClick: () => removeStageCard(idx),
                   }, '移除') : null),
-                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '目标说明'),
+                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '分片标题与目标'),
                 h('input', {
                   className: 'rt-input',
                   value: card.title,
@@ -665,7 +992,7 @@
                   onChange: (e) => updateCardField(idx, 'role', e.target.value),
                   style: { fontSize: 11.5 },
                 }, WIZARD_ROLE_OPTIONS.map((opt) => h('option', { key: opt.value, value: opt.value }, opt.label))),
-                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '独占文件分片'),
+                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '独占文件分片 (files_owned)'),
                 h('input', {
                   className: 'rt-input rt-mono',
                   value: card.filesOwned,
@@ -752,7 +1079,6 @@
             || finalName
           ).trim()
           if (createdId) {
-            rememberEngagement(createdId)
             if (activeSid) {
               await api({
                 op: 'bindSessionEngagement',
@@ -789,7 +1115,6 @@
           if (activeSid) {
             await api({ op: 'bindSessionEngagement', session: activeSid, engagement: targetId, id: targetId })
           }
-          rememberEngagement(targetId)
           setForceShowGuide(false)
           if (typeof props.onWorkspaceSelect === 'function') props.onWorkspaceSelect(targetId)
           if (typeof props.onRefresh === 'function') props.onRefresh()
@@ -810,7 +1135,7 @@
           return
         }
         if (activeSid) {
-          api({ op: 'dismissSessionOnboarding', session: activeSid }).then(() => {
+          api({ op: 'sessionOnboarding', session: activeSid, action: 'skip', title: cleanSessionTitle || undefined }).then(() => {
             if (typeof props.onRefresh === 'function') props.onRefresh()
           }, () => {})
         }
@@ -821,12 +1146,6 @@
         if (!isBound && typeof props.onReopenOnboarding === 'function') {
           props.onReopenOnboarding()
         }
-      }
-
-      /* Card 2 状态：快捷澄清词追加信号 */
-      const [appendReq, setAppendReq] = React.useState({ seq: 0, text: '' })
-      const triggerChipAppend = (snippet) => {
-        setAppendReq((prev) => ({ seq: prev.seq + 1, text: snippet }))
       }
 
       /* Card 3 状态：工作流 DAG 与 Worker 审批队列（按当前 engagement 严格隔离） */
@@ -887,11 +1206,6 @@
             const approvalRaw = String(raw.approval_state || raw.approvalState || '').toLowerCase().trim()
             const isPendingDecision = PENDING_APPROVAL_STATES.has(statusRaw) || PENDING_APPROVAL_STATES.has(approvalRaw)
             const isApproved = approvalRaw === 'approved' || statusRaw === 'approved'
-            const pri = String(
-              raw.ui_priority
-              || raw.uiPriority
-              || (statusRaw === 'blocked' || approvalRaw === 'revision_required' ? 'P0' : (isPendingDecision ? 'P1' : 'P2'))
-            ).toUpperCase()
             const filesList = Array.isArray(raw.files_owned)
               ? raw.files_owned
               : (Array.isArray(raw.filesOwned)
@@ -908,7 +1222,7 @@
               || raw.output
               || raw.assigned_goal
               || raw.assignedGoal
-              || '阶段执行完毕，等待人工审阅压缩摘要。'
+              || '阶段执行完毕，等待审批。'
             ).trim()
             const touchedFiles = Array.isArray(digestSrc.files_touched)
               ? digestSrc.files_touched
@@ -918,7 +1232,7 @@
               || digestSrc.test_result
               || digestSrc.verifyResult
               || raw.verification
-              || (statusRaw === 'blocked' ? '存在阻塞项，建议调整目标或退回重跑' : (isApproved ? '已通过主控审批验收' : '分片自检完成，待确认放行'))
+              || (statusRaw === 'blocked' ? '存在阻塞项' : (isApproved ? '已通过验收' : '待确认放行'))
             ).trim()
             merged.push({
               id,
@@ -927,14 +1241,13 @@
               role: roleCode,
               roleLabel: ROLE_LABEL[roleCode] || roleCode,
               title: String(raw.title || raw.name || ('分片任务 ' + id)),
-              priority: ['P0', 'P1', 'P2', 'P3'].includes(pri) ? pri : 'P1',
               status: statusRaw || 'pending',
               approvalState: approvalRaw || (isPendingDecision ? 'pending_approval' : (isApproved ? 'approved' : 'pending_approval')),
               isPendingDecision,
               isApproved,
               filesOwned: filesList,
               assignedGoal: String(raw.assigned_goal || raw.assignedGoal || raw.prompt || ''),
-              nextGoalDefault: String(raw.next_goal || raw.nextGoal || raw.assigned_goal || raw.assignedGoal || '继续推进下一阶段验证与交付集成'),
+              nextGoalDefault: String(raw.next_goal || raw.nextGoal || raw.assigned_goal || raw.assignedGoal || ''),
               digest: {
                 whatDone,
                 touchedFiles,
@@ -981,7 +1294,13 @@
           setQueueToast({ tone: 'err', text: '审批提交失败：' + ((res && res.error) || '后端响应异常') })
           return
         }
-        setQueueToast({ tone: 'ok', text: '✓ 已审批通过「' + item.title + '」并下达目标：' + nextGoalStr })
+        const dispatchedRef = res.dispatched_session_id || res.next_session_id || res.next_worker_id || ''
+        setQueueToast({
+          tone: 'ok',
+          text: '✓ 已审批通过「' + item.title + '」'
+            + (dispatchedRef ? (' · 已派发 ' + dispatchedRef) : '')
+            + (res.note ? (' · ' + res.note) : ''),
+        })
         loadApprovalDag()
         if (typeof props.onRefresh === 'function') props.onRefresh()
       }
@@ -1015,13 +1334,19 @@
           setQueueToast({ tone: 'err', text: '退回重跑失败：' + (res.error || '请稍后重试') })
           return
         }
-        setQueueToast({ tone: 'ok', text: '↻ 已退回并触发「' + item.title + '」重跑分片任务。' })
+        const retrySid = (res && (res.session_id || res.sessionId || (res.worker_task && res.worker_task.session_id))) || ''
+        setQueueToast({
+          tone: 'ok',
+          text: '↻ 已触发「' + item.title + '」重跑分片'
+            + (retrySid ? ('（子会话 ' + retrySid + '）') : '')
+            + (res && res.note ? (' · ' + res.note) : ''),
+        })
         loadApprovalDag()
         if (typeof props.onRefresh === 'function') props.onRefresh()
       }
 
       const handleJumpItemChat = (item) => {
-        const res = activateHostAgentChatSession(item, {
+        const res = openAgentSessionInHostChat(item, {
           engagement: eng,
           sessionId: activeSid,
           sessionTitle: cleanSessionTitle,
@@ -1029,8 +1354,8 @@
         setQueueToast({
           tone: 'ok',
           text: res.targetSid
-            ? ('💬 已切换侧边对话至：' + res.targetTitle)
-            : ('💬 已返回侧边对话窗口：' + res.targetTitle),
+            ? ('已切换侧边对话至：' + res.targetTitle)
+            : ('已返回侧边对话窗口：' + res.targetTitle),
         })
       }
 
@@ -1041,32 +1366,21 @@
       const hasActiveTasks = reviewItems.length > 0
 
       return h('div', { className: 'rt-pane rt-collab-page' },
-        /* ── Card 1: SessionOnboardingCard（会话工作台初始化指引） ── */
+        /* ── Card 1: 仅在未绑定工作台或主动重开指引时渲染，已绑定状态不重复占屏 ── */
         showFullOnboardingCard
           ? h('section', { className: 'rt-card rt-onboard-card' },
               h('div', { className: 'rt-onboard-head' },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                  h('span', { className: 'rt-onboard-title' }, '🧭 会话专属工作台初始化指引'),
-                  h('span', { className: 'rt-tag rt-tag-active' }, '当前会话：' + sessionBadgeText),
+                  h('span', { className: 'rt-onboard-title' }, '初始化当前会话工作台'),
+                  h('span', { className: 'rt-tag rt-tag-active' }, sessionBadgeText),
                   sessionCwd
-                    ? h('span', { className: 'rt-tag rt-mono', title: sessionCwd }, '目录：' + sessionCwd)
+                    ? h('span', { className: 'rt-tag rt-mono', title: sessionCwd }, sessionCwd)
                     : null),
                 h('button', {
                   type: 'button',
                   className: 'rt-btn',
                   onClick: handleSkipGuide,
-                }, isBound ? '收起指引' : '跳过指引')),
-
-              h('div', { className: 'rt-onboard-steps' },
-                h('div', { className: 'rt-onboard-step' },
-                  h('strong', null, '① 为当前会话建立 1:1 独立工作台'),
-                  h('span', null, '每个对话拥有独立状态与分片锁，彻底杜绝新老会话串数据。')),
-                h('div', { className: 'rt-onboard-step' },
-                  h('strong', null, '② 对话澄清需求并拆解分片目标'),
-                  h('span', null, '通过下方需求澄清卡确认功能范围、负责角色与独占文件目录。')),
-                h('div', { className: 'rt-onboard-step' },
-                  h('strong', null, '③ 审阅压缩摘要并批准进入下一阶段'),
-                  h('span', null, '智能体提交阶段摘要后，在审批队列一键放行或原位修订重跑。'))),
+                }, isBound ? '收起' : '跳过指引')),
 
               !isBound
                 ? h('div', { className: 'rt-onboard-actions' },
@@ -1074,7 +1388,7 @@
                       className: 'rt-input',
                       value: wsNameDraft,
                       onChange: (e) => { setWsNameEdited(true); setWsNameDraft(e.target.value) },
-                      placeholder: '输入当前会话专属工作台名称…',
+                      placeholder: '输入工作台名称…',
                       style: { flex: '1 1 240px', minWidth: 200 },
                     }),
                     h('button', {
@@ -1083,13 +1397,12 @@
                       disabled: creatingWs,
                       onClick: handleCreateWorkspaceForSession,
                       style: { fontWeight: 700, padding: '6px 14px' },
-                    }, creatingWs ? '正在创建…' : '✨ 创建并初始化当前会话工作台'))
-                : h('div', { className: 'rt-note', style: { margin: 0 } },
-                    '✓ 当前会话已独立绑定工作台「' + boundDisplayName + '」，可直接在下方卡片澄清需求或审阅分片任务。'),
+                    }, creatingWs ? '正在创建…' : '创建并绑定工作台'))
+                : null,
 
               !isBound && engagements.length > 0
                 ? h('details', { className: 'rt-onboard-bind-details' },
-                    h('summary', null, '🔗 关联已有项目工作台（共 ' + engagements.length + ' 个可选）'),
+                    h('summary', null, '关联已有项目（' + engagements.length + '）'),
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 } },
                       h('select', {
                         className: 'rt-select',
@@ -1107,75 +1420,30 @@
 
               onboardNote
                 ? h('div', { className: 'rt-err', style: { margin: 0 } }, onboardNote.text)
-                : null,
-
-              !isBound
-                ? h('div', { className: 'rt-onboard-foot-note' },
-                    '跳过后将进入干净的空工作台；若当前会话尚未开始对话，您可随时重新打开本指引。')
                 : null)
           : (!isBound && isDismissed
-              ? /* Case 2: 已跳过初始化指引紧凑待机条 */
-                h('section', { className: 'rt-card rt-onboard-card is-compact' },
+              ? h('section', { className: 'rt-card rt-onboard-card is-compact' },
                   h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' } },
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5 } },
                       h('span', { className: 'rt-tag' }, '待初始化'),
                       h('span', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 600 } },
-                        '当前会话（' + (cleanSessionTitle || '新会话') + '）尚未绑定工作台 · 已跳过初始化指引')),
+                        (cleanSessionTitle || '当前会话') + ' 尚未绑定工作台')),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn' + (!hasConv ? ' rt-btn-primary' : ''),
                       onClick: handleReopenGuide,
                       style: { fontWeight: 700 },
-                    }, '🧭 重新获取初始化指引')))
-              : /* Case 3: 已独立绑定工作台 1 行身份条 */
-                h('section', { className: 'rt-card rt-onboard-card is-compact' },
-                  h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' } },
-                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5 } },
-                      h('span', { className: 'rt-tag rt-tag-live' }, '1:1 已绑定'),
-                      h('strong', { style: { color: 'var(--dsw-alias-label-primary)' } },
-                        '✓ 当前会话已独立绑定工作台：' + boundDisplayName),
-                      sessionCwd
-                        ? h('span', { className: 'rt-tag rt-mono', title: sessionCwd }, sessionCwd)
-                        : null),
-                    h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                      !hasConv
-                        ? h('button', {
-                            type: 'button',
-                            className: 'rt-btn',
-                            onClick: handleReopenGuide,
-                          }, '🧭 查看初始化指引')
-                        : null,
-                      props.onGo
-                        ? h('button', {
-                            type: 'button',
-                            className: 'rt-btn',
-                            onClick: () => props.onGo('overview'),
-                          }, '返回总览 →')
-                        : null)))),
+                    }, '重新获取初始化指引')))
+              : null),
 
-        /* ── Card 2: WishDialogueCard（需求对话澄清与蓝图立项卡） ── */
+        /* ── Card 2: WishRefinerWizard（真 AI 需求澄清与蓝图立项） ── */
         h('section', { className: 'rt-card rt-wish-dialogue-card' },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 } },
-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-              h('strong', { style: { fontSize: 13.5 } }, '💬 需求对话澄清与蓝图立项'),
-              h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
-                '点选澄清维度补充边界约束，生成互不冲突的分片蓝图后立项派发'))),
-          h('div', { className: 'rt-clarify-chips-row' },
-            h('span', { style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, '快捷补充澄清维度：'),
-            WISH_CLARIFY_CHIPS.map((chip, idx) => h('button', {
-              key: 'clarify-' + idx,
-              type: 'button',
-              className: 'rt-p3-pill',
-              title: chip.group + '：' + chip.snippet,
-              onClick: () => triggerChipAppend(chip.snippet),
-            }, '+ ' + chip.label))),
           h(WishRefinerWizard, {
             engagement: eng,
             engagementName: boundDisplayName,
             sessionId: activeSid,
             sessionTitle: cleanSessionTitle,
             hasActiveWork: hasActiveTasks,
-            appendRequest: appendReq,
             onWorkspaceCreated: (createdId) => {
               if (typeof props.onWorkspaceSelect === 'function') props.onWorkspaceSelect(createdId)
             },
@@ -1188,108 +1456,98 @@
             },
           })),
 
-        /* ── Card 3: ApprovalQueueCard（阶段验收与 Worker 审批决策卡） ── */
+        /* ── Card 3: ApprovalQueueCard（精简待审队列：标题 / 状态 / 审批动作） ── */
         h('section', { className: 'rt-card rt-approval-queue-wrap' },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 } },
-            h('strong', { style: { fontSize: 13.5 } }, '✅ 阶段产出与 Worker 审批队列'),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 } },
+            h('strong', { style: { fontSize: 13 } }, '阶段审批队列'),
             h('span', {
               className: 'rt-tag ' + (pendingCount > 0 ? 'rt-tag-warn' : 'rt-tag-live'),
-            }, pendingCount > 0 ? ('待审批 ' + pendingCount) : '全部已处理'),
+            }, pendingCount > 0 ? ('待审批 ' + pendingCount) : '已全部处理'),
             h('div', { className: 'rt-spacer' }),
-            h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
+            h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
               h('button', {
                 type: 'button',
-                className: 'rt-p3-pill' + (queueFilter === 'pending' ? ' on' : ''),
+                className: 'rt-btn' + (queueFilter === 'pending' ? ' rt-btn-primary' : ''),
+                style: { padding: '2px 9px', fontSize: 11.5 },
                 onClick: () => setQueueFilter('pending'),
               }, '待决策 (' + pendingCount + ')'),
               h('button', {
                 type: 'button',
-                className: 'rt-p3-pill' + (queueFilter === 'all' ? ' on' : ''),
+                className: 'rt-btn' + (queueFilter === 'all' ? ' rt-btn-primary' : ''),
+                style: { padding: '2px 9px', fontSize: 11.5 },
                 onClick: () => setQueueFilter('all'),
-              }, '全部记录 (' + reviewItems.length + ')')),
+              }, '全部 (' + reviewItems.length + ')')),
             eng
               ? h('button', {
                   type: 'button',
                   className: 'rt-btn',
                   disabled: dagLoading,
+                  style: { padding: '2px 9px', fontSize: 11.5 },
                   onClick: loadApprovalDag,
-                }, dagLoading ? '同步中…' : '刷新队列')
+                }, dagLoading ? '同步中…' : '刷新')
               : null),
 
           queueToast
             ? h('div', {
                 className: queueToast.tone === 'err' ? 'rt-err' : 'rt-note',
-                style: { margin: '0 0 10px' },
+                style: { margin: '0 0 8px' },
               }, queueToast.text)
             : null,
 
           visibleQueueItems.length === 0
-            ? h('div', { className: 'rt-empty' },
-                '当前暂无需要人工审批的分片任务，智能体完成后将自动在此汇总摘要供您决策。')
+            ? h('div', { className: 'rt-empty', style: { padding: '16px 12px', margin: 0 } },
+                '暂无待审批分片任务。')
             : h('div', { className: 'rt-approval-list' },
                 visibleQueueItems.map((item) => {
                   const isBusy = busyItemId === item.id
-                  const priCls = 'rt-pri-badge rt-pri-badge-' + item.priority.toLowerCase()
                   return h('div', {
                     key: item.id,
                     className: 'rt-approval-card' + (item.isPendingDecision ? ' is-pending' : ''),
                   },
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                      h('span', { className: priCls }, item.priority),
                       h('span', { className: 'rt-tag rt-tag-active' }, 'Wave ' + item.wave + ' · ' + item.roleLabel),
                       h('strong', { style: { fontSize: 13, color: 'var(--dsw-alias-label-primary)' } }, item.title),
                       h('div', { className: 'rt-spacer' }),
                       h('span', {
                         className: 'rt-tag ' + (item.isApproved ? 'rt-tag-live' : (item.isPendingDecision ? 'rt-tag-warn' : '')),
-                      }, item.isApproved ? '✓ 已审批通过' : (item.approvalState === 'revision_required' ? '↩ 待修订重跑' : '⏳ 待审批决策'))),
+                      }, item.isApproved ? '已审批' : (item.approvalState === 'revision_required' ? '待修订' : '待审批'))),
 
                     item.filesOwned.length > 0
-                      ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
-                          h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', fontWeight: 600 } }, '独占文件分片：'),
+                      ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' } },
                           item.filesOwned.map((fp) => h('span', { key: fp, className: 'rt-shard-lock-badge' }, fp)))
                       : null,
 
-                    h('div', { className: 'rt-digest-box rt-approval-digest-grid' },
-                      h('div', null,
-                        h('b', null, '做了什么：'),
-                        h('span', null, item.digest.whatDone)),
-                      h('div', null,
-                        h('b', null, '改动文件：'),
-                        h('span', { className: 'rt-mono' }, item.digest.touchedFiles.length > 0 ? item.digest.touchedFiles.join(', ') : '尚无落盘改动记录')),
-                      h('div', null,
-                        h('b', null, '验证结果：'),
-                        h('span', null, item.digest.verificationText))),
+                    h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } },
+                      item.digest.whatDone + ' · ' + item.digest.verificationText
+                      + (item.digest.touchedFiles.length > 0 ? (' · 文件：' + item.digest.touchedFiles.join(', ')) : '')),
 
-                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                      h('label', { style: { fontSize: 11.5, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, '下一阶段 / 修订目标：'),
+                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                       h('input', {
                         className: 'rt-input',
-                        style: { flex: '1 1 240px', minWidth: 200, fontSize: 12 },
+                        style: { flex: '1 1 200px', minWidth: 180, fontSize: 12 },
                         value: getDraftGoalFor(item),
                         onChange: (e) => {
                           const v = e.target.value
                           setNextGoalDrafts((prev) => Object.assign({}, prev, { [item.id]: v }))
                         },
-                        placeholder: '输入审批放行后的下一阶段目标，或退回重跑的修改说明…',
-                      })),
-
-                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                        placeholder: '下一阶段目标或修订说明…',
+                      }),
                       h('button', {
                         type: 'button',
                         className: 'rt-btn rt-btn-primary rt-plan-approve-btn',
                         disabled: isBusy,
                         onClick: () => handleApproveItem(item),
-                      }, isBusy ? '处理中…' : '✓ 审批通过并下达目标'),
+                      }, isBusy ? '处理中…' : '审批通过'),
                       h('button', {
                         type: 'button',
                         className: 'rt-btn',
                         disabled: isBusy,
                         onClick: () => handleRetryItem(item),
-                      }, '↻ 退回重跑该分片'),
+                      }, '退回重跑'),
                       h('button', {
                         type: 'button',
                         className: 'rt-btn rt-jump-chat-btn',
                         onClick: () => handleJumpItemChat(item),
-                      }, '💬 跳转侧边对话')))
+                      }, '打开对话')))
                 }))))
     }

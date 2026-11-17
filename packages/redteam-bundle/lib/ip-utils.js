@@ -8,6 +8,8 @@
  * 导出面与原来完全一致（core.js 会原样再导出一次），所以调用方无需改动。
  */
 
+const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/
+
 /**
  * IPv4 → 32 位整数（用于 ORDER BY 的自然排序）。
  * IPv6 走不了这条路（字符串 split('.') 只会得到一段），返回 null ——
@@ -15,7 +17,7 @@
  */
 export const ipToInt = (ip) => {
   const text = String(ip || '').trim()
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(text)) return null
+  if (!IPV4_RE.test(text)) return null
   return text.split('.').reduce((n, o) => (n * 256 + Number(o)) >>> 0, 0)
 }
 
@@ -47,7 +49,7 @@ export function expandIpv6(ip) {
  */
 export const cidrOf = (ip) => {
   const text = String(ip || '').trim()
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(text)) return text.split('.').slice(0, 3).join('.') + '.0/24'
+  if (IPV4_RE.test(text)) return text.split('.').slice(0, 3).join('.') + '.0/24'
   if (isIpv6(text)) {
     const groups = expandIpv6(text)
     return groups.slice(0, 4).join(':') + '::/64'

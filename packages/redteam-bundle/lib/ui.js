@@ -13,13 +13,14 @@
  * 跨源请求由 Origin/Host 校验挡住（同源 POST 才放行）。
  */
 import { fileURLToPath } from 'node:url'
-import { resolve, join, dirname } from 'node:path'
+import { resolve, join, dirname, isAbsolute } from 'node:path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, openSync, readSync, closeSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import * as coreMod from './store-core.js'
 /* 技能可用性判定与 redteam_preflight 共用同一份实现（环境变量 / 本机路径 / 占位符） */
-import { checkSkill, summarizeSkills } from './skill-availability.js'
+import { evaluateSkillsAvailability, summarizeSkills } from './skill-availability.js'
 import * as settingsMod from './settings.js'
 
 const { dispatch, dispatchAsync, probePgConnection, resolvePgConfig } = coreMod
@@ -99,8 +100,6 @@ function readSettingsCached(root) {
   return data
 }
 
-const readSettingsFallback = (root) => readSettingsCached(root)
-
 const rawWriteSettings = settingsMod.writeSettings || ((root, patch) => {
   if (!root) return {}
   mkdirSync(root, { recursive: true })
@@ -114,20 +113,54 @@ const writeSettings = (root, patch) => {
   invalidateSettingsCache(root)
   return res
 }
-const maxAgentsOf = (root, env = process.env) => {
-  const s = readSettingsCached(root)
-  if (s.maxAgents !== undefined) return clampMaxAgents(s.maxAgents)
+const resolveCachedSettingsArg = (rootOrObj) => {
+  if (rootOrObj && typeof rootOrObj === 'object' && !('root' in rootOrObj)) return rootOrObj
+  const rootDir = rootOrObj && typeof rootOrObj === 'object' && typeof rootOrObj.root === 'string'
+    ? rootOrObj.root
+    : rootOrObj
+  if (!rootDir) return undefined
+  const s = readSettingsCached(rootDir)
+  return s && typeof s === 'object' && !('root' in s) ? s : rootDir
+}
+const readCachedSettingsObj = (s) => (s && typeof s === 'object' && !('root' in s) ? s : readSettingsCached(s))
+const fallbackMaxAgentsOf = (s, env = process.env) => {
+  const cfg = readCachedSettingsObj(s)
+  const fromFile = Number(cfg.maxAgents ?? cfg.max_agents)
+  if (Number.isFinite(fromFile) && fromFile > 0) return clampMaxAgents(fromFile)
   if (env && env.REDTEAM_MAX_AGENTS !== undefined && env.REDTEAM_MAX_AGENTS !== '') {
     return clampMaxAgents(env.REDTEAM_MAX_AGENTS)
   }
   return clampMaxAgents(DEFAULT_MAX_AGENTS)
 }
-const maxAgentsSourceOf = (root, env = process.env) => {
-  const s = readSettingsCached(root)
-  if (s.maxAgents !== undefined) return 'settings'
+const fallbackMaxAgentsSourceOf = (s, env = process.env) => {
+  const cfg = readCachedSettingsObj(s)
+  const fromFile = Number(cfg.maxAgents ?? cfg.max_agents)
+  if (Number.isFinite(fromFile) && fromFile > 0) return 'settings'
   if (env && env.REDTEAM_MAX_AGENTS !== undefined && env.REDTEAM_MAX_AGENTS !== '') return 'env'
   return 'default'
 }
+const fallbackThinkingEffortOf = (s, env = process.env) => {
+  const cfg = readCachedSettingsObj(s)
+  const rawFile = cfg.thinkingEffort ?? cfg.thinking_effort
+  if (rawFile !== undefined) return normalizeThinkingEffort(rawFile)
+  if (env && (env.REDTEAM_THINKING_EFFORT || env.DSH_SUBAGENT_THINKING)) {
+    return normalizeThinkingEffort(env.REDTEAM_THINKING_EFFORT || env.DSH_SUBAGENT_THINKING)
+  }
+  return normalizeThinkingEffort(DEFAULT_THINKING_EFFORT)
+}
+const fallbackMaxDepthOf = (s, env = process.env) => {
+  const cfg = readCachedSettingsObj(s)
+  const fromFile = Number(cfg.maxDepth ?? cfg.max_depth)
+  if (Number.isFinite(fromFile) && fromFile >= 1) return clampMaxDepth(fromFile)
+  if (env && env.REDTEAM_MAX_DEPTH !== undefined && env.REDTEAM_MAX_DEPTH !== '') {
+    return clampMaxDepth(env.REDTEAM_MAX_DEPTH)
+  }
+  return clampMaxDepth(DEFAULT_MAX_DEPTH)
+}
+const maxAgentsOf = (rootOrObj, env = process.env) =>
+  (settingsMod.maxAgentsOf || fallbackMaxAgentsOf)(resolveCachedSettingsArg(rootOrObj), env)
+const maxAgentsSourceOf = (rootOrObj, env = process.env) =>
+  (settingsMod.maxAgentsSourceOf || fallbackMaxAgentsSourceOf)(resolveCachedSettingsArg(rootOrObj), env)
 const saveMaxAgents = (root, n) => {
   invalidateSettingsCache(root)
   const fn = settingsMod.saveMaxAgents || ((r, v) => {
@@ -143,6 +176,9 @@ const savePgUrl = (root, pgUrl) => {
   invalidateSettingsCache(root)
   const fn = settingsMod.savePgUrl || ((r, u) => {
     const trimmed = typeof u === 'string' ? u.trim() : ''
+    if (trimmed && !/^postgres(?:ql)?:\/\//i.test(trimmed)) {
+      throw new Error('PG URL must start with postgres:// or postgresql://')
+    }
     writeSettings(r, { pgUrl: trimmed || null })
     return trimmed || null
   })
@@ -150,12 +186,8 @@ const savePgUrl = (root, pgUrl) => {
   invalidateSettingsCache(root)
   return out
 }
-const thinkingEffortOf = (root, env = process.env) => {
-  const s = readSettingsCached(root)
-  if (s.thinkingEffort !== undefined) return normalizeThinkingEffort(s.thinkingEffort)
-  if (env && env.REDTEAM_THINKING_EFFORT) return normalizeThinkingEffort(env.REDTEAM_THINKING_EFFORT)
-  return normalizeThinkingEffort(DEFAULT_THINKING_EFFORT)
-}
+const thinkingEffortOf = (rootOrObj, env = process.env) =>
+  (settingsMod.thinkingEffortOf || fallbackThinkingEffortOf)(resolveCachedSettingsArg(rootOrObj), env)
 const saveThinkingEffort = (root, effort) => {
   invalidateSettingsCache(root)
   const fn = settingsMod.saveThinkingEffort || ((r, e) => {
@@ -167,14 +199,8 @@ const saveThinkingEffort = (root, effort) => {
   invalidateSettingsCache(root)
   return out
 }
-const maxDepthOf = (root, env = process.env) => {
-  const s = readSettingsCached(root)
-  if (s.maxDepth !== undefined) return clampMaxDepth(s.maxDepth)
-  if (env && env.REDTEAM_MAX_DEPTH !== undefined && env.REDTEAM_MAX_DEPTH !== '') {
-    return clampMaxDepth(env.REDTEAM_MAX_DEPTH)
-  }
-  return clampMaxDepth(DEFAULT_MAX_DEPTH)
-}
+const maxDepthOf = (rootOrObj, env = process.env) =>
+  (settingsMod.maxDepthOf || fallbackMaxDepthOf)(resolveCachedSettingsArg(rootOrObj), env)
 const saveMaxDepth = (root, n) => {
   invalidateSettingsCache(root)
   const fn = settingsMod.saveMaxDepth || ((r, v) => {
@@ -185,6 +211,209 @@ const saveMaxDepth = (root, n) => {
   const out = fn(root, n)
   invalidateSettingsCache(root)
   return out
+}
+
+const DEFAULT_AI_PLANNER_SETTINGS = Object.freeze({
+  modelMode: 'inherit',
+  provider: '',
+  model: '',
+  reasoningEffort: '',
+  timeoutMs: 60000,
+  scanRepoContext: true,
+  customConstraints: '',
+})
+
+const DEFAULT_DISPATCH_POLICY = Object.freeze({
+  dispatchMode: 'hybrid_auto',
+  subagentProvider: 'spawn',
+  autoWakeOnApprove: true,
+})
+
+const DEFAULT_UI_PREFERENCES = Object.freeze({
+  defaultViewMode: 'expert',
+  defaultTreeDirection: 'horizontal',
+})
+
+function resolveRedteamSettingsRoot(root, env = process.env) {
+  if (typeof root === 'string' && root.trim() !== '') return root.trim()
+  if (root && typeof root === 'object' && typeof root.root === 'string' && root.root.trim() !== '') {
+    return root.root.trim()
+  }
+  const dshHome = env && typeof env.DSH_HOME === 'string' && env.DSH_HOME.trim() !== ''
+    ? env.DSH_HOME.trim()
+    : join(homedir(), '.dsh')
+  return join(dshHome, 'redteam')
+}
+
+function clampIntInRange(value, minVal, maxVal, fallback) {
+  if (value === undefined || value === null || typeof value === 'boolean' || value === '') return fallback
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(Math.max(n, minVal), maxVal)
+}
+
+function normalizeAiReasoningEffort(value) {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (raw === '') return ''
+  if (['none', 'off', 'low', 'medium', 'high'].includes(raw)) return raw === 'off' ? 'none' : raw
+  return ''
+}
+
+function normalizeSettingBool(value, fallback) {
+  if (value === undefined || value === null) return fallback
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const cleaned = value.trim().toLowerCase()
+    if (['false', '0', 'no', 'off'].includes(cleaned)) return false
+    if (['true', '1', 'yes', 'on'].includes(cleaned)) return true
+    return Boolean(cleaned)
+  }
+  return Boolean(value)
+}
+
+function normalizeUnifiedSettings(raw = {}, env = process.env) {
+  const src = raw && typeof raw === 'object' ? raw : {}
+  const rawAi = (src.aiPlanner && typeof src.aiPlanner === 'object')
+    ? src.aiPlanner
+    : (src.ai_planner && typeof src.ai_planner === 'object' ? src.ai_planner : {})
+  const rawDispatch = (src.dispatchPolicy && typeof src.dispatchPolicy === 'object')
+    ? src.dispatchPolicy
+    : (src.dispatch_policy && typeof src.dispatch_policy === 'object' ? src.dispatch_policy : {})
+  const rawUi = (src.uiPreferences && typeof src.uiPreferences === 'object')
+    ? src.uiPreferences
+    : (src.ui_preferences && typeof src.ui_preferences === 'object' ? src.ui_preferences : {})
+
+  const rawModelMode = String(rawAi.modelMode ?? rawAi.model_mode ?? DEFAULT_AI_PLANNER_SETTINGS.modelMode).trim().toLowerCase()
+  const modelMode = rawModelMode === 'custom'
+    ? 'custom'
+    : (rawModelMode === 'follow_session' ? 'follow_session' : 'inherit')
+  const rawDispatchMode = String(rawDispatch.dispatchMode ?? rawDispatch.dispatch_mode ?? DEFAULT_DISPATCH_POLICY.dispatchMode).trim().toLowerCase()
+  const rawProvider = String(rawDispatch.subagentProvider ?? rawDispatch.subagent_provider ?? DEFAULT_DISPATCH_POLICY.subagentProvider).trim().toLowerCase()
+  const rawViewMode = String(rawUi.defaultViewMode ?? rawUi.default_view_mode ?? DEFAULT_UI_PREFERENCES.defaultViewMode).trim().toLowerCase()
+  const rawTreeDir = String(rawUi.defaultTreeDirection ?? rawUi.default_tree_direction ?? DEFAULT_UI_PREFERENCES.defaultTreeDirection).trim().toLowerCase()
+
+  return {
+    maxAgents: fallbackMaxAgentsOf(src, env),
+    thinkingEffort: fallbackThinkingEffortOf(src, env),
+    maxDepth: fallbackMaxDepthOf(src, env),
+    aiPlanner: {
+      modelMode,
+      provider: typeof rawAi.provider === 'string' ? rawAi.provider.trim() : '',
+      model: typeof rawAi.model === 'string' ? rawAi.model.trim() : '',
+      reasoningEffort: normalizeAiReasoningEffort(rawAi.reasoningEffort ?? rawAi.reasoning_effort),
+      timeoutMs: clampIntInRange(rawAi.timeoutMs ?? rawAi.timeout_ms, 50, 300000, DEFAULT_AI_PLANNER_SETTINGS.timeoutMs),
+      scanRepoContext: normalizeSettingBool(rawAi.scanRepoContext ?? rawAi.scan_repo_context, DEFAULT_AI_PLANNER_SETTINGS.scanRepoContext),
+      customConstraints: typeof (rawAi.customConstraints ?? rawAi.custom_constraints) === 'string'
+        ? String(rawAi.customConstraints ?? rawAi.custom_constraints).slice(0, 4000)
+        : '',
+    },
+    dispatchPolicy: {
+      dispatchMode: rawDispatchMode === 'captain_only' ? 'captain_only' : 'hybrid_auto',
+      subagentProvider: rawProvider === 'fork' ? 'fork' : 'spawn',
+      autoWakeOnApprove: normalizeSettingBool(rawDispatch.autoWakeOnApprove ?? rawDispatch.auto_wake_on_approve, DEFAULT_DISPATCH_POLICY.autoWakeOnApprove),
+    },
+    uiPreferences: {
+      defaultViewMode: rawViewMode === 'novice' ? 'novice' : 'expert',
+      defaultTreeDirection: rawTreeDir === 'vertical' ? 'vertical' : 'horizontal',
+    },
+  }
+}
+
+export function readUnifiedSettings(root, env = process.env) {
+  const effRoot = resolveRedteamSettingsRoot(root, env)
+  if (typeof settingsMod.getUnifiedSettings === 'function') {
+    try {
+      const modObj = settingsMod.getUnifiedSettings(effRoot, env)
+      if (modObj && typeof modObj === 'object') {
+        const fileObj = readSettingsCached(effRoot)
+        const base = normalizeUnifiedSettings(Object.assign({}, fileObj, modObj), env)
+        /* 若 fileObj 中显式记录了 <15000ms 的 timeoutMs（如测试强制短超时），以文件为准 */
+        const fileTimeout = fileObj && fileObj.aiPlanner && fileObj.aiPlanner.timeoutMs
+        if (typeof fileTimeout === 'number' && Number.isFinite(fileTimeout) && fileTimeout >= 50 && fileTimeout < 15000) {
+          base.aiPlanner.timeoutMs = fileTimeout
+        }
+        return base
+      }
+    } catch { /* fallback below */ }
+  }
+  const fileObj = readSettingsCached(effRoot)
+  return normalizeUnifiedSettings(fileObj && typeof fileObj === 'object' ? fileObj : {}, env)
+}
+
+export function writeUnifiedSettings(root, patch = {}, env = process.env) {
+  const effRoot = resolveRedteamSettingsRoot(root, env)
+  const p = patch && typeof patch === 'object' ? patch : {}
+  invalidateSettingsCache(effRoot)
+  const curNorm = readUnifiedSettings(effRoot, env)
+  const fileRaw = readSettingsCached(effRoot)
+
+  const nextObj = Object.assign({}, fileRaw)
+  if (p.maxAgents !== undefined || p.max !== undefined || p.max_agents !== undefined) {
+    nextObj.maxAgents = clampMaxAgents(p.maxAgents ?? p.max ?? p.max_agents)
+  } else if (nextObj.maxAgents === undefined) {
+    nextObj.maxAgents = curNorm.maxAgents
+  }
+
+  const rawThinking = p.thinkingEffort ?? p.thinking ?? p.thinking_effort ?? p.effort
+  if (rawThinking !== undefined) {
+    nextObj.thinkingEffort = normalizeThinkingEffort(rawThinking)
+  } else if (nextObj.thinkingEffort === undefined) {
+    nextObj.thinkingEffort = curNorm.thinkingEffort
+  }
+
+  if (p.maxDepth !== undefined || p.max_depth !== undefined || p.depth !== undefined) {
+    nextObj.maxDepth = clampMaxDepth(p.maxDepth ?? p.max_depth ?? p.depth)
+  } else if (nextObj.maxDepth === undefined) {
+    nextObj.maxDepth = curNorm.maxDepth
+  }
+
+  const aiPatch = p.aiPlanner ?? p.ai_planner
+  if (aiPatch && typeof aiPatch === 'object') {
+    nextObj.aiPlanner = Object.assign({}, curNorm.aiPlanner, aiPatch)
+  } else if (!nextObj.aiPlanner) {
+    nextObj.aiPlanner = curNorm.aiPlanner
+  }
+
+  const dispatchPatch = p.dispatchPolicy ?? p.dispatch_policy
+  if (dispatchPatch && typeof dispatchPatch === 'object') {
+    nextObj.dispatchPolicy = Object.assign({}, curNorm.dispatchPolicy, dispatchPatch)
+  } else if (!nextObj.dispatchPolicy) {
+    nextObj.dispatchPolicy = curNorm.dispatchPolicy
+  }
+
+  const uiPatch = p.uiPreferences ?? p.ui_preferences
+  if (uiPatch && typeof uiPatch === 'object') {
+    nextObj.uiPreferences = Object.assign({}, curNorm.uiPreferences, uiPatch)
+  } else if (!nextObj.uiPreferences) {
+    nextObj.uiPreferences = curNorm.uiPreferences
+  }
+
+  const normalizedPatch = normalizeUnifiedSettings(nextObj, env)
+  if (typeof settingsMod.saveUnifiedSettings === 'function') {
+    settingsMod.saveUnifiedSettings(effRoot, normalizedPatch, env)
+  } else {
+    writeSettings(effRoot, normalizedPatch)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(p, 'pgUrl') || Object.prototype.hasOwnProperty.call(p, 'pg_url')) {
+    const rawPg = p.pgUrl ?? p.pg_url
+    savePgUrl(effRoot, rawPg === null || rawPg === undefined ? '' : String(rawPg))
+  }
+
+  invalidateSettingsCache(effRoot)
+  return readUnifiedSettings(effRoot, env)
+}
+
+function maskPgUrlSafe(rawUrl) {
+  if (typeof settingsMod.maskPgUrl === 'function') {
+    try { return settingsMod.maskPgUrl(rawUrl) } catch { /* ignore */ }
+  }
+  if (typeof coreMod.maskPgUrl === 'function') {
+    try { return coreMod.maskPgUrl(rawUrl) } catch { /* ignore */ }
+  }
+  const s = String(rawUrl || '').trim()
+  if (!s) return ''
+  return s.replace(/:\/\/([^:@/]+):([^@/]+)@/, '://$1:****@')
 }
 
 function getCachedActiveEngagementId(store) {
@@ -803,27 +1032,6 @@ let skillAvailabilityCache = null
 const SKILL_AVAILABILITY_TTL_MS = 30000
 
 /**
- * 技能可用性判定用的环境：进程环境 + $DSH_HOME/.env 兜底。
- * 与 redteam_preflight 的口径一致；否则用户把 key 写进 .env 后，面板仍会误报缺 key。
- */
-function envForSkillCheck() {
-  const env = { ...process.env }
-  const file = join(process.env.DSH_HOME || join(process.env.HOME || '', '.dsh'), '.env')
-  try {
-    if (existsSync(file)) {
-      for (const line of readFileSync(file, 'utf8').split('\n')) {
-        const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line)
-        if (m === null) continue
-        const value = m[2].trim().replace(/^["']|["']$/g, '')
-        if (value === '') continue
-        if (env[m[1]] === undefined || env[m[1]] === '') env[m[1]] = value
-      }
-    }
-  } catch { /* .env 读不到不影响判定 */ }
-  return env
-}
-
-/**
  * 逐个技能的可用性（读正文 → 共享判定模块）。
  * @param ctx - 插件上下文。
  * @param list - `ctx.skills.list()` 的返回（SkillSummary[]）。
@@ -837,28 +1045,7 @@ async function skillAvailabilityOf(ctx, list, scope, force) {
     && skillAvailabilityCache.size === list.length) {
     return { at: skillAvailabilityCache.at, cached: true, byName: skillAvailabilityCache.byName }
   }
-  /* 同名技能可能存在于多个技能根：注册表按根顺序择优，排在后面的会被盖住。
-     判定时把"其它也注册了同名技能的根"一起带上，才能识别
-     "你配置好的那份被随包占位符版本盖住"这种误报。 */
-  const rootsWith = new Map()
-  for (const x of list) {
-    const dir = x.resourceBase && x.resourceBase.kind === 'directory' ? x.resourceBase.path : null
-    if (dir === null) continue
-    if (!rootsWith.has(x.name)) rootsWith.set(x.name, [])
-    if (!rootsWith.get(x.name).includes(dir)) rootsWith.get(x.name).push(dir)
-  }
-  const byName = new Map()
-  for (const summary of list) {
-    let def
-    try { def = await ctx.skills.get(summary.name, { scope }) } catch { def = undefined }
-    const path = def && typeof def.path === 'string'
-      ? def.path
-      : (summary.resourceBase && summary.resourceBase.kind === 'directory' ? summary.resourceBase.path : null)
-    const root = summary.resourceBase && summary.resourceBase.kind === 'directory' ? summary.resourceBase.path : null
-    const verdict = checkSkill({ name: summary.name, content: def && def.content, path, root },
-      { env: envForSkillCheck(), sameNameIn: rootsWith.get(summary.name) || [] })
-    byName.set(summary.name, verdict)
-  }
+  const { byName } = await evaluateSkillsAvailability(ctx.skills, list, { scope })
   skillAvailabilityCache = { at: now, size: list.length, byName }
   return { at: now, cached: false, byName }
 }
@@ -1167,6 +1354,46 @@ function formatDurationLabel(durationMs) {
   return `${mins}m${secs > 0 ? secs + 's' : ''}`
 }
 
+function getSessionMessages(s) {
+  if (!s || typeof s !== 'object') return []
+  if (Array.isArray(s.messages)) return s.messages
+  if (Array.isArray(s.entries)) return s.entries
+  if (Array.isArray(s.history)) return s.history
+  return []
+}
+
+function getMessageRole(msg, fallbackKind = '') {
+  if (!msg || typeof msg !== 'object') return String(fallbackKind || '').toLowerCase()
+  return String(msg.role || msg.sender || msg.author || msg.type || fallbackKind || '').toLowerCase()
+}
+
+function getMessageToolCalls(msg, { includeNamedPart = false } = {}) {
+  if (!msg || typeof msg !== 'object') return []
+  const out = []
+  const tcs = msg.toolCalls || msg.tool_calls
+  if (Array.isArray(tcs)) {
+    for (const tc of tcs) out.push(tc)
+  }
+  if (Array.isArray(msg.content)) {
+    for (const part of msg.content) {
+      if (part && typeof part === 'object'
+        && (part.type === 'tool_use' || part.type === 'tool-call' || part.toolName || (includeNamedPart && part.name))) {
+        out.push(part)
+      }
+    }
+  }
+  return out
+}
+
+function getToolCallMeta(tc) {
+  const obj = tc && typeof tc === 'object' ? tc : {}
+  const name = String(
+    obj.name || obj.toolName || obj.tool_name || (obj.function && obj.function.name) || 'workspace.tool',
+  ).trim() || 'workspace.tool'
+  const rawInput = obj.input ?? obj.arguments ?? obj.args ?? (obj.function && obj.function.arguments) ?? null
+  return { name, rawInput }
+}
+
 function extractMessageText(msg) {
   if (!msg) return ''
   if (typeof msg === 'string') return msg.replace(/\s+/g, ' ').trim()
@@ -1187,7 +1414,7 @@ function extractMessageText(msg) {
   }
   const tcs = msg.toolCalls || msg.tool_calls
   if (Array.isArray(tcs) && tcs.length > 0) {
-    const names = tcs.map((t) => (t && (t.name || (t.function && t.function.name))) || 'tool').join(', ')
+    const names = tcs.map((t) => getToolCallMeta(t).name || 'tool').join(', ')
     return `[工具调用] ${names}`
   }
   return ''
@@ -1195,9 +1422,7 @@ function extractMessageText(msg) {
 
 function extractSessionPreviews(s, header, role, fallbackOutput = '') {
   const meta = AGENT_ROLE_META[role] || AGENT_ROLE_META.exploit
-  const messages = Array.isArray(s && s.messages)
-    ? s.messages
-    : (Array.isArray(s && s.entries) ? s.entries : (Array.isArray(s && s.history) ? s.history : []))
+  const messages = getSessionMessages(s)
 
   let promptText = String(
     (s && (s.promptPreview || s.prompt || s.delegationPrompt || s.task || s.input))
@@ -1206,7 +1431,7 @@ function extractSessionPreviews(s, header, role, fallbackOutput = '') {
   ).replace(/\s+/g, ' ').trim()
 
   if (!promptText && messages.length > 0) {
-    const firstUser = messages.find((m) => m && (m.role === 'user' || m.sender === 'user' || m.type === 'user')) || messages[0]
+    const firstUser = messages.find((m) => m && getMessageRole(m) === 'user') || messages[0]
     promptText = extractMessageText(firstUser)
   }
   if (!promptText) promptText = meta.promptFallback
@@ -1221,7 +1446,7 @@ function extractSessionPreviews(s, header, role, fallbackOutput = '') {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const m = messages[i]
       if (!m) continue
-      const r = String(m.role || m.sender || m.type || '').toLowerCase()
+      const r = getMessageRole(m)
       if (r === 'assistant' || r === 'model' || r === 'tool' || (i > 0 && r !== 'user')) {
         const txt = extractMessageText(m)
         if (txt) {
@@ -1534,17 +1759,7 @@ export class IncrementalSessionJsonlReader {
     if (isHeadPass) return
 
     /* 解析工具调用与修改文件 */
-    const rawToolCalls = []
-    if (Array.isArray(msg.toolCalls || msg.tool_calls)) {
-      for (const tc of (msg.toolCalls || msg.tool_calls)) rawToolCalls.push(tc)
-    }
-    if (Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if (part && typeof part === 'object' && (part.type === 'tool_use' || part.type === 'tool-call' || part.toolName)) {
-          rawToolCalls.push(part)
-        }
-      }
-    }
+    const rawToolCalls = getMessageToolCalls(msg)
     if (kind === 'tool_call' || kind === 'tool_use' || obj.tool_name || obj.toolName) {
       rawToolCalls.push(obj)
     }
@@ -1558,10 +1773,7 @@ export class IncrementalSessionJsonlReader {
       }
       for (const tc of rawToolCalls) {
         if (!tc || typeof tc !== 'object') continue
-        const tName = String(
-          tc.name || tc.toolName || tc.tool_name || (tc.function && tc.function.name) || 'workspace.tool',
-        ).trim()
-        const tArgs = tc.input ?? tc.arguments ?? tc.args ?? (tc.function && tc.function.arguments) ?? null
+        const { name: tName, rawInput: tArgs } = getToolCallMeta(tc)
         if (tName && acc.toolsSet.size < 16) acc.toolsSet.add(tName)
         extractPathsFromToolCall(tName, tArgs, acc.filesTouchedSet)
         const argPreview = typeof tArgs === 'string'
@@ -1960,23 +2172,6 @@ function lookupApprovedWorkerOverride(node, store = null, explicitEngagementId =
       return val
     }
   }
-  if (store && typeof store.getWorkerApproval === 'function') {
-    try {
-      for (const rawKey of candidateIds) {
-        const k = String(rawKey || '').trim()
-        if (!k || isBareRoleName(k)) continue
-        const found = store.getWorkerApproval(eng, k) || store.getWorkerApproval(`${eng}::${k}`)
-        if (found && (found.approvalState || found.approval_state)) {
-          return {
-            approvalState: found.approvalState || found.approval_state,
-            uiPriority: found.uiPriority || found.ui_priority || null,
-            nextGoal: found.nextGoal || found.next_goal || '',
-            explicitApproved: (found.approvalState || found.approval_state) === 'approved',
-          }
-        }
-      }
-    } catch { /* ignore */ }
-  }
   return null
 }
 
@@ -2083,11 +2278,7 @@ export function computeWorkerLmtexMeta(node, idx = 0, options = {}) {
   } else if (Array.isArray(n.messages) && n.messages.length > 0) {
     let counted = 0
     for (const msg of n.messages) {
-      if (!msg || typeof msg !== 'object') continue
-      if (Array.isArray(msg.toolCalls || msg.tool_calls)) counted += (msg.toolCalls || msg.tool_calls).length
-      else if (Array.isArray(msg.content)) {
-        counted += msg.content.filter((p) => p && (p.type === 'tool_use' || p.type === 'tool-call' || p.toolName || p.name)).length
-      }
+      counted += getMessageToolCalls(msg, { includeNamedPart: true }).length
     }
     toolCalls = counted > 0 ? counted : Math.max(0, Number(n.steps) || 0)
   } else if (Number(n.steps) > 0) {
@@ -2491,10 +2682,9 @@ function extractSessionTelemetry(s, options = {}) {
     ? Number(((explicitCost)).toFixed(4))
     : (tokens > 0 ? Number(((tokens / 1000000) * 1.8).toFixed(4)) : 0)
 
-  const messages = Array.isArray(s && s.messages) ? s.messages : []
+  const messages = getSessionMessages(s)
   const msgUserCount = messages.filter((m) => {
-    if (!m || typeof m !== 'object') return false
-    const r = String(m.role || m.sender || m.author || '').toLowerCase()
+    const r = getMessageRole(m)
     return r === 'user' || r === 'human'
   }).length
   const userMessages = Math.max(
@@ -2733,6 +2923,7 @@ function createRequestFlow() {
     dagByEng: new Map(),
     syncedEngs: new Set(),
     hostSessionsByKey: new Map(),
+    rawSessionById: new Map(),
   }
 }
 
@@ -2959,7 +3150,10 @@ async function discoverHostSessions(ctx, store, options = {}) {
   const byId = new Map()
   for (const s of rawList) {
     const sid = s && s.id !== undefined ? String(s.id) : ''
-    if (sid) byId.set(sid, s)
+    if (sid) {
+      byId.set(sid, s)
+      if (reqFlow) reqFlow.rawSessionById.set(sid, s)
+    }
   }
 
   const parentIdOfRaw = (s) => {
@@ -3068,14 +3262,16 @@ async function discoverHostSessions(ctx, store, options = {}) {
           const cid = String(k.id || k.sessionId || '')
           if (!cid) continue
           const existingRaw = childRawById.get(cid) || byId.get(cid) || {}
-          childRawById.set(cid, Object.assign({}, existingRaw, k, {
+          const mergedRaw = Object.assign({}, existingRaw, k, {
             id: cid,
             header: Object.assign({}, existingRaw.header || {}, k.header || {}),
             usage: Object.assign({}, (existingRaw.header && existingRaw.header.usage) || {}, existingRaw.usage || {}, k.usage || {}),
             label: k.label || existingRaw.label || (existingRaw.header && existingRaw.header.title) || cid,
             activity: k.activity || existingRaw.activity || (existingRaw.header && existingRaw.header.activity),
             mode: k.mode || existingRaw.mode || '',
-          }))
+          })
+          childRawById.set(cid, mergedRaw)
+          if (reqFlow) reqFlow.rawSessionById.set(cid, mergedRaw)
         }
       } catch { /* 单个会话子智能体读取失败不阻断 */ }
     }
@@ -3146,60 +3342,19 @@ async function discoverHostSessions(ctx, store, options = {}) {
         : sessionBoundEngName
     }
 
-    /* 若宿主未暴露子会话但当前已显式绑定的工作区有活跃角色记录，从 workflowDag 补齐子智能体树 */
-    if (kids.length === 0 && sessionBoundEngId && itemDag) {
-      const dagNodes = Array.isArray(itemDag.all_nodes || itemDag.nodes)
-        ? (itemDag.all_nodes || itemDag.nodes)
-        : []
-      for (const wfNode of dagNodes) {
-        if (!wfNode || !wfNode.has_activity || wfNode.role === 'plan') continue
-        const meta = AGENT_ROLE_META[wfNode.role] || AGENT_ROLE_META.exploit
-        const stepCount = Number(wfNode.step_count || (Array.isArray(wfNode.decisions) ? wfNode.decisions.length : 0) || 1)
-        const synthChild = extractSessionTelemetry({
-          id: `sub-${wfNode.role}`,
-          label: meta.defaultTitle,
-          title: meta.defaultTitle,
-          role: wfNode.role,
-          model: rootTelemetry.model,
-          activity: (wfNode.status === 'run' || wfNode.active) ? 'running' : 'completed',
-          tokens: Number(wfNode.tokens) > 0 ? Number(wfNode.tokens) : 0,
-          steps: stepCount,
-          durationMs: Number(wfNode.latency_ms) > 0 ? Number(wfNode.latency_ms) : 0,
-          summary: wfNode.summary || '',
-        }, {
-          isRoot: false,
-          parentId: sid,
-          defaultModel: rootTelemetry.model,
-          workflowNode: wfNode,
-          store,
-          engagementId: sessionBoundEngId,
-        })
-        synthChild._fromDbTask = true
-        kids.push(synthChild)
-      }
-      if (kids.length > 0) {
-        kids.sort((a, b) => (a.wave - b.wave) || String(a.id).localeCompare(String(b.id)))
-        let compIdx = 0
-        for (let i = 0; i < kids.length; i += 1) {
-          const ch = kids[i]
-          const cIdx = (ch.activity === 'completed' || ch.status === 'completed') ? compIdx++ : i
-          computeWorkerLmtexMeta(ch, cIdx, {
-            store,
-            engagementId: sessionBoundEngId,
-            recomputeApproval: !ch._persistedApproval,
-          })
-        }
-      }
-    }
-
-    const realHostKidsCount = kids.filter((c) => !c._fromDbTask).length
+    const hasDbDagActivity = Boolean(
+      sessionBoundEngId
+      && itemDag
+      && Array.isArray(itemDag.all_nodes || itemDag.nodes)
+      && (itemDag.all_nodes || itemDag.nodes).some((n) => n && n.has_activity && n.role !== 'plan'),
+    )
     const hasConversation = Boolean(
       rootTelemetry.turns > 0
       || rootTelemetry.userMessages > 0
       || rootTelemetry.steps > 0
       || rootTelemetry.tokens > 0
-      || realHostKidsCount > 0
-      || (sessionBoundEngId && kids.length > 0),
+      || kids.length > 0
+      || hasDbDagActivity,
     )
 
     const persistedInitState = sessionBoundEngId
@@ -4074,52 +4229,29 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {},
   const flow = reqFlow || createRequestFlow()
   const targetId = String(request.sessionId || request.agentId || request.id || request.session || '').trim()
   const isSyntheticChildId = isSyntheticSessionId(targetId) || Boolean(request.role && request.role !== 'plan' && !targetId)
-  const resolvedRootSession = request.session
-    ? resolveRootSessionId(ctx, request.session)
-    : ((targetId && !isSyntheticChildId) ? resolveRootSessionId(ctx, targetId) : '')
   const hostSessions = await discoverHostSessions(ctx, store, {
     sessionId: request.session || (isSyntheticChildId ? '' : targetId),
     autoBind: true,
     reqFlow: flow,
   })
+  const rawById = flow.rawSessionById
+  let sessions = null
+  try { sessions = ctx.get('sessions') } catch { sessions = null }
+  if (sessions && typeof sessions.get === 'function' && targetId && !isSyntheticChildId) {
+    try {
+      const direct = sessions.get(targetId)
+      if (direct && direct.id !== undefined) {
+        rawById.set(String(direct.id), Object.assign({}, rawById.get(String(direct.id)) || {}, direct))
+      }
+    } catch { /* ignore */ }
+  }
+  const resolvedRootSession = request.session
+    ? resolveRootFromMap(rawById, String(request.session))
+    : ((targetId && !isSyntheticChildId) ? resolveRootFromMap(rawById, targetId) : '')
   const currentEng = (store ? getCachedActiveEngagementId(store) : null)
     || engagementId
     || 'default'
   const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, isSyntheticChildId ? '' : resolvedRootSession, flow)
-
-  let sessions = null
-  let subagents = null
-  try { sessions = ctx.get('sessions') } catch { sessions = null }
-  try { subagents = ctx.get('subagents') } catch { subagents = null }
-
-  const rawById = new Map()
-  if (sessions && typeof sessions.list === 'function') {
-    try {
-      for (const s of (sessions.list() || [])) {
-        if (s && s.id !== undefined) rawById.set(String(s.id), s)
-      }
-    } catch { /* ignore */ }
-  }
-  if (sessions && typeof sessions.get === 'function' && targetId) {
-    try {
-      const direct = sessions.get(targetId)
-      if (direct && direct.id !== undefined) rawById.set(String(direct.id), direct)
-    } catch { /* ignore */ }
-  }
-  if (subagents && typeof subagents.listChildren === 'function') {
-    for (const hs of hostSessions) {
-      if (!hs || !hs.id) continue
-      try {
-        const list = await subagents.listChildren(hs.id)
-        for (const k of Array.isArray(list) ? list : []) {
-          const cid = k && (k.id || k.sessionId) ? String(k.id || k.sessionId) : ''
-          if (cid) {
-            rawById.set(cid, Object.assign({}, rawById.get(cid) || {}, k, { id: cid }))
-          }
-        }
-      } catch { /* ignore */ }
-    }
-  }
 
   const wfDag = getWorkflowDagDedup(store, currentEng, flow)
   const wfNodeByRole = new Map()
@@ -4221,11 +4353,7 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {},
   ).trim()
 
   /* 优先尝试从宿主真实会话消息或 IncrementalSessionJsonlReader 提取真实工具调用与步骤轨迹 */
-  const rawMessages = Array.isArray(rawSession && rawSession.messages)
-    ? rawSession.messages
-    : (Array.isArray(rawSession && rawSession.entries)
-      ? rawSession.entries
-      : (Array.isArray(rawSession && rawSession.history) ? rawSession.history : []))
+  const rawMessages = getSessionMessages(rawSession)
 
   const extractedSteps = []
   if (rawMessages.length > 0) {
@@ -4233,7 +4361,7 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {},
     for (let i = 0; i < rawMessages.length; i += 1) {
       const m = rawMessages[i]
       if (!m || typeof m !== 'object') continue
-      const msgRole = String(m.role || m.sender || m.type || '').toLowerCase()
+      const msgRole = getMessageRole(m)
       const text = extractMessageText(m)
       if (i === 0 || (msgRole === 'user' && extractedSteps.length === 0)) {
         extractedSteps.push({
@@ -4248,19 +4376,11 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {},
         })
         continue
       }
-      const tcs = Array.isArray(m.toolCalls || m.tool_calls) ? (m.toolCalls || m.tool_calls) : []
-      const parts = Array.isArray(m.content) ? m.content : []
-      const partTools = parts.filter((p) => p && (p.type === 'tool_use' || p.type === 'tool-call' || p.toolName || p.name))
-      if (tcs.length > 0 || partTools.length > 0) {
-        const firstTool = tcs[0] || partTools[0] || {}
-        const toolName = String(
-          firstTool.name
-          || firstTool.toolName
-          || (firstTool.function && firstTool.function.name)
-          || 'workspace.tool'
-        )
-        const rawInput = firstTool.input || (firstTool.function && firstTool.function.arguments) || text || ''
-        const inputStr = typeof rawInput === 'string' ? rawInput : JSON.stringify(rawInput)
+      const msgToolCalls = getMessageToolCalls(m, { includeNamedPart: true })
+      if (msgToolCalls.length > 0) {
+        const { name: toolName, rawInput } = getToolCallMeta(msgToolCalls[0])
+        const inputPayload = rawInput ?? (text || '')
+        const inputStr = typeof inputPayload === 'string' ? inputPayload : JSON.stringify(inputPayload)
         extractedSteps.push({
           step: stepIndex++,
           phase: 'execute',
@@ -4311,7 +4431,7 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {},
   }
 
   let stepTimeline = []
-  if (extractedSteps.length >= 2) {
+  if (extractedSteps.length > 0) {
     stepTimeline = extractedSteps.slice(0, 5)
     const lastIdx = stepTimeline.length - 1
     stepTimeline[lastIdx] = Object.assign({}, stepTimeline[lastIdx], {
@@ -4319,299 +4439,16 @@ async function extractAgentSessionDetail(ctx, store, engagementId, request = {},
       status: isError ? 'error' : (isRunning ? 'running' : 'done'),
       outputSummary: stepTimeline[lastIdx].outputSummary || conclusion,
     })
-  } else {
-    const decisions = (wfNode && Array.isArray(wfNode.decisions)) ? wfNode.decisions : []
-    const decisionSummary = decisions.length > 0
-      ? decisions.map((d) => (d && (d.summary || d.title || d.decision)) || '').filter(Boolean).join('；').slice(0, 160)
-      : ''
-
-    const ROLE_TEMPLATES = {
-      plan: [
-        {
-          phase: 'delegate',
-          tool: 'redteam_preflight',
-          title: '解析用户工程意图与工作区上下文',
-          inputSummary: delegationPrompt,
-          outputSummary: '完成工程目录探测、活跃工作区绑定与 4-Wave Bounded DAG 拓扑初始化。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'subagents.spawn',
-          title: '并发派发 Wave 1-2 产品测绘与架构分片子智能体',
-          inputSummary: '按 4-Wave DAG 调度 recon（产品测绘）、designer（视觉令牌）与 assess（架构契约）',
-          outputSummary: '子智能体并发槽位已分配，实时汇聚需求边界、Design Tokens 与接口契约。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'subagents.spawn',
-          title: '调度 Wave 3-4 全栈构建与质量门禁核验',
-          inputSummary: '基于锁定的无交集文件分片并行拉起 Builder 与 QA 回归验证',
-          outputSummary: decisionSummary || '各独占文件分片编码实现与 node --check 语法校验全部通过。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'conclude',
-          tool: 'redteam_workflow_event',
-          title: '聚合全波次交付产物并同步 PostgreSQL 事实库',
-          inputSummary: '汇总所有子智能体里程碑、代码变更集与验证报告',
-          outputSummary: conclusion,
-          durationLabel: '0s',
-        },
-      ],
-      designer: [
-        {
-          phase: 'delegate',
-          tool: 'subagents.delegate',
-          title: '接收 Wave 1 交互设计与视觉令牌任务',
-          inputSummary: delegationPrompt,
-          outputSummary: '已对齐控制台设计系统规范、主题色板与组件层级约束。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'fs.read_file',
-          title: '扫描现有视图组件树与样式令牌定义',
-          inputSummary: '读取 UI 组件样式表、布局容器与响应式断点配置',
-          outputSummary: '梳理出核心面板布局结构、卡片密度规范与高对比度色阶映射。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'redteam_add_note',
-          title: '构建组件交互契约与四态视觉规范',
-          inputSummary: '定义空态、加载态、流式运行态与异常降级态交互细节',
-          outputSummary: decisionSummary || '生成完整 Design Tokens 映射表与可复用 UI 组件契约清单。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'conclude',
-          tool: 'redteam_record_decision',
-          title: '固化视觉交付规范并回写事实库',
-          inputSummary: '提交 Wave 1 设计令牌与交互规范文档至共享事实库',
-          outputSummary: conclusion,
-          durationLabel: '0s',
-        },
-      ],
-      recon: [
-        {
-          phase: 'delegate',
-          tool: 'subagents.delegate',
-          title: '接收 Wave 1 产品需求与数据源测绘指令',
-          inputSummary: delegationPrompt,
-          outputSummary: '明确 P0/P1 核心功能边界、外部依赖接口与数据流向。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'codebase.search',
-          title: '全量扫描仓库模块拓扑与真实数据源接口',
-          inputSummary: '检索核心业务包、存储引擎 schema 与宿主服务注册表',
-          outputSummary: '完成模块依赖图谱测绘，识别关键状态同步链路与数据表结构。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'redteam_upsert_target',
-          title: '建模核心业务实体与 P0/P1 需求优先级矩阵',
-          inputSummary: '梳理各子系统输入输出边界、性能指标与验收基线',
-          outputSummary: decisionSummary || '产出结构化模块清单与数据源连通性测绘报告。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'conclude',
-          tool: 'redteam_record_decision',
-          title: '归档产品需求基线并解锁 Wave 2 架构分片',
-          inputSummary: '将 PRD 边界与数据源测绘结果写入 PostgreSQL 事实库',
-          outputSummary: conclusion,
-          durationLabel: '0s',
-        },
-      ],
-      assess: [
-        {
-          phase: 'delegate',
-          tool: 'subagents.delegate',
-          title: '接收 Wave 2 架构设计与无交集分片任务',
-          inputSummary: delegationPrompt,
-          outputSummary: '已读取 Wave 1 产品测绘与设计规范，启动接口契约设计。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'codebase.analyze',
-          title: '审视模块耦合边界与跨层 RPC/API 通信协议',
-          inputSummary: '分析前后端数据桥接签名、状态流转与并发读写锁点',
-          outputSummary: '锁定新增 op 协议字段、返回载荷结构与向后兼容降级策略。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'redteam_upsert_service',
-          title: '划分文件无交集并发研发分片（Shard Mapping）',
-          inputSummary: '按独占文件边界拆解 Wave 3 Builder 并发任务与依赖顺序',
-          outputSummary: decisionSummary || '完成各 Shard 职责边界、输入输出契约与语法校验命令定义。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'conclude',
-          tool: 'redteam_record_decision',
-          title: '冻结架构接口契约并签发 Wave 3 并发构建计划',
-          inputSummary: '写入架构决策记录（ADR）与分片矩阵至事实库',
-          outputSummary: conclusion,
-          durationLabel: '0s',
-        },
-      ],
-      exploit: [
-        {
-          phase: 'delegate',
-          tool: 'subagents.delegate',
-          title: '接收 Wave 3 独占文件分片研发指令',
-          inputSummary: delegationPrompt,
-          outputSummary: '已认领当前分片独占文件边界与上下游接口契约。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'fs.read_file',
-          title: '精读目标源码上下文与既有辅助函数实现',
-          inputSummary: '定位目标模块入口、状态挂载点与数据转换流水线',
-          outputSummary: '确认挂载位置与边界条件处理逻辑，确保零破坏性改动。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'fs.replace_content',
-          title: '编写核心业务逻辑并对齐接口数据结构',
-          inputSummary: '实现分片核心功能、异常兜底与响应式 UI/API 绑定',
-          outputSummary: decisionSummary || '代码补丁已精确写入目标文件，保持代码风格与注释规范一致。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'conclude',
-          tool: 'bash.check',
-          title: '执行语法静态核验并回报构建产物',
-          inputSummary: '运行 node --check 语法验证与契约字段自检',
-          outputSummary: conclusion,
-          durationLabel: '0s',
-        },
-      ],
-      'vuln-scan': [
-        {
-          phase: 'delegate',
-          tool: 'subagents.delegate',
-          title: '接收 Wave 4 代码质量审查与安全合规审计任务',
-          inputSummary: delegationPrompt,
-          outputSummary: '已加载 Wave 3 变更文件集与安全红线检查清单。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'git.diff_audit',
-          title: '逐行审查代码变更集、分片越界与潜在回归风险',
-          inputSummary: '检查各 Shard 修改范围、空值防御与异步错误处理链路',
-          outputSummary: '确认所有改动严格收敛在独占分片内，无未捕获异常或状态泄漏。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'security.boundary_scan',
-          title: '核验同源校验、命令注入防护与敏感凭据隔离',
-          inputSummary: '审计 HTTP 桥接入口、参数消毒与宿主会话权限边界',
-          outputSummary: decisionSummary || 'Origin/Loopback 校验与参数白名单机制完备，安全基线全部达标。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'conclude',
-          tool: 'redteam_record_decision',
-          title: '签发代码审查与安全审计通过凭证',
-          inputSummary: '归档审查结论与质量评分至 PostgreSQL 事实库',
-          outputSummary: conclusion,
-          durationLabel: '0s',
-        },
-      ],
-      qa: [
-        {
-          phase: 'delegate',
-          tool: 'subagents.delegate',
-          title: '接收 Wave 4 自动化回归测试与基准核验任务',
-          inputSummary: delegationPrompt,
-          outputSummary: '已就绪测试沙箱环境与端到端回归用例集。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'bash.test_runner',
-          title: '执行模块语法校验与核心接口契约断言测试',
-          inputSummary: '运行 node --check 及 API 载荷结构一致性测试套件',
-          outputSummary: '所有被测模块语法检查与契约字段断言 100% 通过。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'qa.regression_verify',
-          title: '验证四态交互降级、会话绑定保持与并发稳定性',
-          inputSummary: '模拟空态、运行态、切换会话与异常恢复场景',
-          outputSummary: decisionSummary || '验证主从会话联动、弹窗轨迹渲染与降级兜底行为均符合预期。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'conclude',
-          tool: 'redteam_record_decision',
-          title: '出具 QA 质量验收报告并放行发布门禁',
-          inputSummary: '汇总测试覆盖率、耗时分布与验收结论回写事实库',
-          outputSummary: conclusion,
-          durationLabel: '0s',
-        },
-      ],
-      internal: [
-        {
-          phase: 'delegate',
-          tool: 'subagents.delegate',
-          title: '接收 Wave 4 架构文档同步与版本归档指令',
-          inputSummary: delegationPrompt,
-          outputSummary: '已汇总各波次架构决策、接口契约与质量验收记录。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'docs.sync_wall',
-          title: '更新研发文档墙（Doc Wall）与模块交付清单',
-          inputSummary: '整理 PRD、架构分片、构建变更与审查报告索引',
-          outputSummary: '生成结构化工程交付文档卡片并同步至工作区文档墙。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'execute',
-          tool: 'release.changelog',
-          title: '生成版本演进摘要与可追溯审计基线',
-          inputSummary: '校验版本号、能力矩阵变更与升级兼容性说明',
-          outputSummary: decisionSummary || '完成版本发布说明与全链路遥测快照归档。',
-          durationLabel: '0s',
-        },
-        {
-          phase: 'conclude',
-          tool: 'redteam_record_decision',
-          title: '完成最终发布归档并通知主控收口',
-          inputSummary: '写入最终发布里程碑至 PostgreSQL 事实库',
-          outputSummary: conclusion,
-          durationLabel: '0s',
-        },
-      ],
-    }
-
-    const template = ROLE_TEMPLATES[role] || ROLE_TEMPLATES.assess
-    stepTimeline = template.map((item, idx) => ({
+  } else if (wfNode && Array.isArray(wfNode.decisions) && wfNode.decisions.length > 0) {
+    stepTimeline = wfNode.decisions.slice(0, 5).map((d, idx, arr) => ({
       step: idx + 1,
-      phase: item.phase,
-      tool: item.tool,
-      title: item.title,
-      inputSummary: item.inputSummary,
-      outputSummary: item.outputSummary,
-      durationLabel: item.durationLabel,
-      status: isError && idx === template.length - 1
-        ? 'error'
-        : ((isRunning && idx === template.length - 1) ? 'running' : 'done'),
+      phase: idx === 0 ? 'delegate' : (idx === arr.length - 1 && !isRunning ? 'conclude' : 'execute'),
+      tool: String((d && (d.tool || d.action)) || `${role}.step`),
+      title: String((d && (d.title || d.summary || d.decision)) || `执行步骤 #${idx + 1}`),
+      inputSummary: delegationPrompt.slice(0, 180),
+      outputSummary: String((d && (d.summary || d.decision)) || conclusion).slice(0, 180),
+      durationLabel: '0s',
+      status: isError && idx === arr.length - 1 ? 'error' : (isRunning && idx === arr.length - 1 ? 'running' : 'done'),
     }))
   }
 
@@ -4727,6 +4564,9 @@ function normalizeWishGoalItem(w, idx = 0) {
     src.assigned_goal || src.assignedGoal || src.objective || src.goal || src.description || title,
   ).trim()
   const filesOwned = parseJsonArraySafe(src.files_owned ?? src.filesOwned ?? src.files_owned_json)
+  const acceptanceCriteria = String(
+    src.acceptance_criteria ?? src.acceptanceCriteria ?? src.verification ?? '',
+  ).trim()
   const uiPriority = ['P0', 'P1', 'P2', 'P3'].includes(src.ui_priority || src.uiPriority)
     ? (src.ui_priority || src.uiPriority)
     : 'P1'
@@ -4747,19 +4587,27 @@ function normalizeWishGoalItem(w, idx = 0) {
     assignedGoal: goal,
     files_owned: filesOwned,
     filesOwned,
+    acceptance_criteria: acceptanceCriteria,
+    acceptanceCriteria,
   }
+}
+
+function extractWishTitle(rawPrompt, fallback = '多智能体 4-Wave 协同交付方案') {
+  const promptText = String(rawPrompt || '').trim()
+  if (!promptText) return fallback
+  const cleanFirstLine = promptText.split(/[\n。！？!?]/)[0].trim()
+  if (!cleanFirstLine) return fallback
+  return cleanFirstLine.length > 42 ? `${cleanFirstLine.slice(0, 40)}…` : cleanFirstLine
 }
 
 function buildRefinedWishSpec(rawPrompt, template = '', rawPayload = {}) {
   const promptText = String(rawPrompt || '').trim() || '构建高可靠模块化工程系统并完成自动化验证'
   const tpl = String(template || rawPayload.template_id || 'fullstack').trim().toLowerCase()
-  const cleanFirstLine = promptText.split(/[\n。！？!?]/)[0].trim()
   const specTitle = String(
     rawPayload.title
     || rawPayload.project_name
     || rawPayload.projectName
-    || (cleanFirstLine.length > 42 ? `${cleanFirstLine.slice(0, 40)}…` : cleanFirstLine)
-    || '多智能体 4-Wave 协同交付方案'
+    || extractWishTitle(promptText)
   ).trim()
 
   const isSecurity = /渗透|漏洞|审计|安全|redteam|cve|scan|靶标/i.test(promptText) || tpl.includes('sec') || tpl.includes('audit')
@@ -5077,13 +4925,1115 @@ function computeShardLocksFallback(store, engagementId, wfDag = null, filterOpts
   )
 }
 
+function tryGet(ctx, serviceName) {
+  if (!ctx || typeof ctx.get !== 'function') return null
+  try { return ctx.get(serviceName) ?? null } catch { return null }
+}
+
+function isRealDshHost(ctx) {
+  if (!ctx || typeof ctx !== 'object') return false
+  return Boolean(
+    (ctx.fiber && ctx.root)
+    || ctx.registry
+    || (tryGet(ctx, 'sessionQuery') && tryGet(ctx, 'sessionProjections')),
+  )
+}
+
+function deepFreezeObj(value, seen = new WeakSet()) {
+  if (!value || typeof value !== 'object') return value
+  if (typeof AbortSignal !== 'undefined' && value instanceof AbortSignal) return value
+  if (!Array.isArray(value)) {
+    const proto = Object.getPrototypeOf(value)
+    if (proto !== Object.prototype && proto !== null) return value
+  }
+  if (seen.has(value)) return value
+  seen.add(value)
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreezeObj(item, seen)
+  } else {
+    for (const k of Object.keys(value)) {
+      deepFreezeObj(value[k], seen)
+    }
+  }
+  return Object.isFrozen(value) ? value : Object.freeze(value)
+}
+
+function extractBalancedJsonSubstring(text) {
+  const s = String(text || '')
+  let start = -1
+  let openChar = ''
+  let closeChar = ''
+  for (let i = 0; i < s.length; i += 1) {
+    const ch = s[i]
+    if (ch === '{' || ch === '[') {
+      start = i
+      openChar = ch
+      closeChar = ch === '{' ? '}' : ']'
+      break
+    }
+  }
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < s.length; i += 1) {
+    const ch = s[i]
+    if (inString) {
+      if (escape) { escape = false; continue }
+      if (ch === '\\') { escape = true; continue }
+      if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === openChar) depth += 1
+    else if (ch === closeChar) {
+      depth -= 1
+      if (depth === 0) return s.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+function extractJsonFromLlmText(rawText) {
+  const trimmed = String(rawText || '').trim()
+  if (!trimmed) throw new Error('模型响应文本为空')
+  try {
+    return JSON.parse(trimmed)
+  } catch { /* try fences / balanced scan */ }
+
+  const fenceRe = /```(?:json|JSON)?\s*\r?\n?([\s\S]*?)```/g
+  let match
+  while ((match = fenceRe.exec(trimmed)) !== null) {
+    const candidate = String(match[1] || '').trim()
+    if (!candidate) continue
+    try {
+      return JSON.parse(candidate)
+    } catch { /* try next fence or balanced scan */ }
+  }
+
+  const balanced = extractBalancedJsonSubstring(trimmed)
+  if (balanced) {
+    return JSON.parse(balanced)
+  }
+  throw new Error('模型输出未包含合法的 JSON 对象')
+}
+
+export async function resolveLiveRootAgent(ctx, sessionId) {
+  const sid = String(sessionId || '').trim()
+  if (!sid || !ctx) return null
+  const rootId = resolveRootSessionId(ctx, sid) || sid
+  const agentsSvc = tryGet(ctx, 'agents')
+  if (agentsSvc && typeof agentsSvc.get === 'function') {
+    try {
+      const live = agentsSvc.get(rootId)
+      if (live) return live
+    } catch { /* ignore */ }
+  }
+  if (!isSyntheticSessionId(rootId)) {
+    const typert = tryGet(ctx, 'typert')
+    const agentLookup = typert && typert.lookups && typeof typert.lookups.get === 'function'
+      ? typert.lookups.get('agent')
+      : null
+    if (agentLookup && typeof agentLookup.resolve === 'function') {
+      try {
+        const recovered = await agentLookup.resolve(rootId)
+        if (recovered) return recovered
+      } catch { /* ignore */ }
+    }
+  }
+  return null
+}
+
+function resolveAgentModelRoute(ctx, rootAgent) {
+  const sessionProjections = tryGet(ctx, 'sessionProjections')
+  if (rootAgent && rootAgent.session) {
+    if (sessionProjections && typeof sessionProjections.stateOf === 'function') {
+      try {
+        const proj = sessionProjections.stateOf(rootAgent.session, 'modelSelection')
+        if (proj && proj.pending && proj.pending.provider && proj.pending.model) {
+          return {
+            provider: String(proj.pending.provider),
+            model: String(proj.pending.model),
+            reasoningEffort: proj.pending.reasoningEffort ? String(proj.pending.reasoningEffort) : '',
+            source: 'sessionProjections.pending',
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    try {
+      const reqCfg = typeof rootAgent.session.requestHeader === 'function'
+        ? (rootAgent.session.requestHeader()?.config || null)
+        : null
+      if (reqCfg && reqCfg.provider && reqCfg.model) {
+        return {
+          provider: String(reqCfg.provider),
+          model: String(reqCfg.model),
+          reasoningEffort: reqCfg.reasoningEffort ? String(reqCfg.reasoningEffort) : '',
+          source: 'session.requestHeader',
+        }
+      }
+    } catch { /* ignore */ }
+    if (sessionProjections && typeof sessionProjections.stateOf === 'function') {
+      try {
+        const proj = sessionProjections.stateOf(rootAgent.session, 'modelSelection')
+        if (proj && proj.lastUsed && proj.lastUsed.provider && proj.lastUsed.model) {
+          return {
+            provider: String(proj.lastUsed.provider),
+            model: String(proj.lastUsed.model),
+            reasoningEffort: proj.lastUsed.reasoningEffort ? String(proj.lastUsed.reasoningEffort) : '',
+            source: 'sessionProjections.lastUsed',
+          }
+        }
+      } catch { /* ignore */ }
+    }
+  }
+  if (rootAgent && rootAgent.options && rootAgent.options.provider && rootAgent.options.model) {
+    return {
+      provider: String(rootAgent.options.provider),
+      model: String(rootAgent.options.model),
+      reasoningEffort: rootAgent.options.reasoningEffort ? String(rootAgent.options.reasoningEffort) : '',
+      source: 'agent.options',
+    }
+  }
+  const defaultModelSvc = tryGet(ctx, 'agentDefaultModel')
+  if (defaultModelSvc && typeof defaultModelSvc.currentSelection === 'function') {
+    try {
+      const sel = defaultModelSvc.currentSelection()
+      if (sel && sel.provider && sel.model) {
+        return {
+          provider: String(sel.provider),
+          model: String(sel.model),
+          reasoningEffort: sel.reasoningEffort ? String(sel.reasoningEffort) : '',
+          source: 'agentDefaultModel',
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  return { provider: '', model: '', reasoningEffort: '', source: 'none' }
+}
+
+async function fetchLlmModelCatalog(ctx) {
+  const llm = tryGet(ctx, 'llm')
+  if (!llm || typeof llm.listProviders !== 'function') {
+    return { available: false, groups: [] }
+  }
+  let providers = []
+  try {
+    providers = llm.listProviders() || []
+  } catch { providers = [] }
+  const groups = await Promise.all(
+    (Array.isArray(providers) ? providers : []).map(async (p) => {
+      if (!p || !p.id) return null
+      let models = []
+      if (typeof llm.listModels === 'function') {
+        try { models = await llm.listModels(p.id) } catch { models = [] }
+      }
+      return {
+        id: String(p.id),
+        name: String(p.name || p.id),
+        models: (Array.isArray(models) ? models : []).map((m) => ({
+          id: String(m.id),
+          name: String(m.name || m.id),
+          ...(m.description ? { description: String(m.description) } : {}),
+        })),
+      }
+    }),
+  )
+  return {
+    available: true,
+    groups: groups.filter(Boolean),
+  }
+}
+
+const WORKSPACE_SKIP_DIRS = new Set([
+  'node_modules', '.git', '.hg', '.svn', 'dist', 'build', '.next', '.nuxt',
+  '.cache', 'coverage', '.turbo', 'tmp', '.venv', 'venv', '__pycache__', '.idea',
+])
+
+export function sampleWorkspaceContext(ctx, rootAgent, cwdOverride = '', options = {}) {
+  const scanEnabled = options.scanRepoContext !== undefined ? Boolean(options.scanRepoContext) : true
+  let resolvedCwd = typeof cwdOverride === 'string' ? cwdOverride.trim() : ''
+  if (!resolvedCwd && rootAgent && rootAgent.session && rootAgent.session.header && rootAgent.session.header.cwd) {
+    resolvedCwd = String(rootAgent.session.header.cwd).trim()
+  }
+  if (!resolvedCwd && options.sessionId) {
+    const sessionsSvc = tryGet(ctx, 'sessions')
+    if (sessionsSvc) {
+      try {
+        const direct = typeof sessionsSvc.get === 'function' ? sessionsSvc.get(options.sessionId) : null
+        if (direct && direct.header && direct.header.cwd) resolvedCwd = String(direct.header.cwd).trim()
+      } catch { /* ignore */ }
+      if (!resolvedCwd && typeof sessionsSvc.list === 'function') {
+        try {
+          const hit = (sessionsSvc.list() || []).find((s) => s && String(s.id) === String(options.sessionId))
+          if (hit) resolvedCwd = String((hit.header && hit.header.cwd) || hit.cwd || '').trim()
+        } catch { /* ignore */ }
+      }
+    }
+    if (!resolvedCwd && options.store) {
+      const bound = getCachedSessionBindingEntry(options.store, options.sessionId)
+      if (bound && bound.cwd) resolvedCwd = String(bound.cwd).trim()
+    }
+  }
+  if (!scanEnabled || !resolvedCwd || !existsSync(resolvedCwd)) {
+    return { cwd: resolvedCwd, summary: '', entries: [] }
+  }
+  try {
+    const st = statSync(resolvedCwd)
+    if (!st.isDirectory()) return { cwd: resolvedCwd, summary: '', entries: [] }
+  } catch {
+    return { cwd: resolvedCwd, summary: '', entries: [] }
+  }
+
+  const lines = [`工作区根目录: ${resolvedCwd}`]
+  const treeLines = []
+  const topEntries = []
+  try {
+    const dirents = readdirSync(resolvedCwd, { withFileTypes: true })
+      .filter((d) => d && d.name && !WORKSPACE_SKIP_DIRS.has(d.name))
+      .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+      .slice(0, 40)
+    for (const d of dirents) {
+      if (d.isDirectory()) {
+        topEntries.push(`${d.name}/`)
+        treeLines.push(`- ${d.name}/`)
+        try {
+          const sub = readdirSync(join(resolvedCwd, d.name), { withFileTypes: true })
+            .filter((sd) => sd && sd.name && !WORKSPACE_SKIP_DIRS.has(sd.name))
+            .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+            .slice(0, 20)
+          for (const sd of sub) {
+            const rel = `${d.name}/${sd.name}${sd.isDirectory() ? '/' : ''}`
+            topEntries.push(rel)
+            treeLines.push(`  - ${rel}`)
+          }
+        } catch { /* ignore unreadable subdir */ }
+      } else {
+        topEntries.push(d.name)
+        treeLines.push(`- ${d.name}`)
+      }
+    }
+  } catch { /* ignore */ }
+
+  if (treeLines.length > 0) {
+    lines.push('目录结构（1-2 层）:')
+    lines.push(...treeLines.slice(0, 90))
+  }
+
+  const pkgPath = join(resolvedCwd, 'package.json')
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+      if (pkg && typeof pkg === 'object') {
+        const pkgBrief = {
+          name: pkg.name || undefined,
+          description: pkg.description || undefined,
+          workspaces: pkg.workspaces || undefined,
+          scripts: pkg.scripts ? Object.keys(pkg.scripts).slice(0, 12) : undefined,
+          dependencies: pkg.dependencies ? Object.keys(pkg.dependencies).slice(0, 20) : undefined,
+          devDependencies: pkg.devDependencies ? Object.keys(pkg.devDependencies).slice(0, 15) : undefined,
+        }
+        lines.push('package.json 概要: ' + JSON.stringify(pkgBrief))
+      }
+    } catch { /* ignore */ }
+  }
+
+  for (const readmeName of ['README.md', 'readme.md', 'README.zh.md']) {
+    const rp = join(resolvedCwd, readmeName)
+    if (existsSync(rp)) {
+      try {
+        const rawReadme = readFileSync(rp, 'utf8').trim()
+        if (rawReadme) {
+          lines.push(`${readmeName} 节选:\n${rawReadme.slice(0, 1400)}`)
+          break
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  let summary = lines.join('\n')
+  const MAX_BYTES = 6000
+  if (Buffer.byteLength(summary, 'utf8') > MAX_BYTES) {
+    let end = Math.min(summary.length, MAX_BYTES)
+    while (end > 0 && Buffer.byteLength(summary.slice(0, end), 'utf8') > MAX_BYTES - 32) {
+      end -= 64
+    }
+    summary = summary.slice(0, Math.max(0, end)) + '\n... (已按 6KB 上限截断)'
+  }
+
+  return {
+    cwd: resolvedCwd,
+    summary,
+    entries: topEntries,
+  }
+}
+
+export async function invokeDshLlmJson(ctx, { sessionId, system, prompt, maxTokens = 4096, signal } = {}) {
+  const llm = tryGet(ctx, 'llm')
+  if (!llm || (typeof llm.prepareCall !== 'function' && typeof llm.stream !== 'function')) {
+    return {
+      ok: false,
+      llm_unavailable: true,
+      error: '当前宿主未注册 DSH LLM 服务（ctx.get("llm") 不可用），无法调用大模型生成方案。',
+    }
+  }
+
+  const settingsRoot = resolveRedteamSettingsRoot(tryGet(ctx, 'redteam')?.root)
+  const settings = readUnifiedSettings(settingsRoot, process.env)
+  const aiCfg = settings.aiPlanner || DEFAULT_AI_PLANNER_SETTINGS
+
+  let route
+  let effort = ''
+  if (aiCfg.modelMode === 'custom' && aiCfg.provider && aiCfg.model) {
+    route = {
+      provider: aiCfg.provider,
+      model: aiCfg.model,
+      source: 'settings.custom',
+    }
+    effort = aiCfg.reasoningEffort || ''
+  } else {
+    const rootAgent = await resolveLiveRootAgent(ctx, sessionId)
+    route = resolveAgentModelRoute(ctx, rootAgent)
+    effort = route.reasoningEffort || aiCfg.reasoningEffort || ''
+  }
+
+  if (!route || !route.provider || !route.model) {
+    return {
+      ok: false,
+      llm_unavailable: true,
+      error: '未解析到有效的 DSH 模型路由（provider/model 为空）。请先在主会话中选定模型，或在设置页配置自定义 AI Planner 模型。',
+    }
+  }
+
+  const userMsg = deepFreezeObj({
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text: String(prompt || '') }],
+    source: { kind: 'redteam-planner' },
+  })
+
+  const timeoutMs = clampIntInRange(aiCfg.timeoutMs, 50, 300000, 60000)
+  const ownTimeout = AbortSignal.timeout(timeoutMs)
+  const timeoutSignal = (signal && typeof AbortSignal.any === 'function')
+    ? AbortSignal.any([signal, ownTimeout])
+    : (signal || ownTimeout)
+
+  const wantEffort = (effort && effort !== 'none' && effort !== 'off') ? effort : ''
+
+  try {
+    let call
+    if (typeof llm.prepareCall === 'function') {
+      const prepareWithEffort = (eff) => llm.prepareCall(
+        { provider: route.provider, model: route.model, maxTokens },
+        timeoutSignal,
+        (controls, modelInfo) => {
+          if (!eff) return { ...controls }
+          const efforts = modelInfo && modelInfo.reasoning && modelInfo.reasoning.efforts
+          if (Array.isArray(efforts) && efforts.length > 0 && !efforts.some((e) => e && e.id === eff)) {
+            return { ...controls }
+          }
+          if (modelInfo && modelInfo.id && modelInfo.reasoning === undefined) {
+            return { ...controls }
+          }
+          return { ...controls, reasoningEffort: eff }
+        },
+      )
+
+      try {
+        call = await prepareWithEffort(wantEffort)
+      } catch (prepErr) {
+        const errCode = prepErr && (prepErr.code || (prepErr.failure && prepErr.failure.code))
+        const errMsg = prepErr && prepErr.message ? String(prepErr.message) : ''
+        if (wantEffort && (errCode === 'UNSUPPORTED_REASONING_EFFORT' || /UNSUPPORTED_REASONING_EFFORT|reasoning.?effort/i.test(errMsg))) {
+          call = await prepareWithEffort('')
+        } else {
+          throw prepErr
+        }
+      }
+    } else {
+      call = {
+        config: { provider: route.provider, model: route.model, maxTokens },
+        stream: (opts) => llm.stream(opts),
+      }
+    }
+
+    const options = deepFreezeObj({
+      ...call.config,
+      messages: [userMsg],
+      system: String(system || ''),
+      purpose: 'redteam-planner',
+      signal: timeoutSignal,
+    })
+
+    const deltasByIndex = new Map()
+    const blocksByIndex = new Map()
+    const indexOrder = []
+    const ensureIndex = (idx) => {
+      const key = idx ?? 0
+      if (!deltasByIndex.has(key) && !blocksByIndex.has(key)) indexOrder.push(key)
+      return key
+    }
+
+    for await (const chunk of call.stream(options)) {
+      if (!chunk || typeof chunk !== 'object') continue
+      if (chunk.type === 'text-delta') {
+        const key = ensureIndex(chunk.index)
+        deltasByIndex.set(key, (deltasByIndex.get(key) || '') + String(chunk.text || ''))
+      } else if (chunk.type === 'block-end') {
+        if (chunk.block && chunk.block.type === 'text' && typeof chunk.block.text === 'string') {
+          const key = ensureIndex(chunk.index)
+          blocksByIndex.set(key, chunk.block.text)
+        }
+      } else if (chunk.type === 'finish') {
+        const kind = chunk.reason && chunk.reason.kind
+        if (kind === 'error' || kind === 'aborted') {
+          const failure = chunk.reason.failure || {}
+          const errMsg = failure.message || chunk.reason.message || (typeof chunk.reason.error === 'string' ? chunk.reason.error : '') || `LLM 调用异常终止 (${kind})`
+          const err = new Error(errMsg)
+          if (failure.code || chunk.reason.code) err.code = failure.code || chunk.reason.code
+          throw err
+        }
+      }
+    }
+
+    const assembledText = indexOrder
+      .map((k) => (blocksByIndex.has(k) ? blocksByIndex.get(k) : (deltasByIndex.get(k) || '')))
+      .join('')
+      .trim()
+
+    if (!assembledText) {
+      return {
+        ok: false,
+        llm_unavailable: true,
+        provider: route.provider,
+        model: `${route.provider}/${route.model}`,
+        error: `大模型（${route.provider}/${route.model}）返回内容为空，未生成结构化 JSON。`,
+      }
+    }
+
+    const parsed = extractJsonFromLlmText(assembledText)
+    return {
+      ok: true,
+      data: parsed,
+      rawText: assembledText,
+      provider: route.provider,
+      model: `${route.provider}/${route.model}`,
+      modelId: route.model,
+      reasoningEffort: (call.config && call.config.reasoningEffort) || '',
+      routeSource: route.source,
+    }
+  } catch (err) {
+    const errMsg = err && err.message ? err.message : String(err)
+    const isTimeout = Boolean(err && (err.name === 'TimeoutError' || err.name === 'AbortError' || /timeout|aborted/i.test(errMsg)))
+    return {
+      ok: false,
+      llm_unavailable: true,
+      provider: route.provider,
+      model: `${route.provider}/${route.model}`,
+      error: isTimeout
+        ? `大模型请求超时（${timeoutMs}ms，模型 ${route.provider}/${route.model}）：${errMsg}`
+        : `大模型调用或 JSON 解析失败（${route.provider}/${route.model}）：${errMsg}`,
+    }
+  }
+}
+
+async function clarifyWishWithAI(ctx, store, opts = {}) {
+  const promptText = String(opts.prompt || '').trim()
+  if (!promptText) {
+    return { ok: false, op: 'clarifyWishWithAI', error: '请先输入工程需求描述后再执行 AI 需求澄清。' }
+  }
+  const settingsRoot = resolveRedteamSettingsRoot(store && store.root)
+  const settings = readUnifiedSettings(settingsRoot, process.env)
+  const rootAgent = await resolveLiveRootAgent(ctx, opts.sessionId)
+  const wsCtx = sampleWorkspaceContext(ctx, rootAgent, opts.cwd, {
+    scanRepoContext: settings.aiPlanner.scanRepoContext,
+    sessionId: opts.sessionId,
+    store,
+  })
+
+  const system = [
+    '你是 LMTAgent 软件工程多智能体集群的 AI 规划分析师。',
+    '根据用户的原始工程需求与工作区代码上下文，提出 2-4 个高价值的工程澄清问题（如目标形态、数据持久化/接口契约、测试门禁与架构约束），帮助用户在派发多智能体前消除关键歧义。',
+    '必须只输出严格的 JSON 对象，不要包含额外解释文本：',
+    '{',
+    '  "detected_context": "一句话概述探测到的项目技术栈、已有目录结构或纯新建工程判断",',
+    '  "questions": [',
+    '    {',
+    '      "id": "q1",',
+    '      "question": "具体中文澄清问题",',
+    '      "multi": false,',
+    '      "options": [',
+    '        { "label": "简短选项名称（含推荐标注）", "value": "可拼接进工程需求规格的完整约束描述" }',
+    '      ]',
+    '    }',
+    '  ]',
+    '}',
+  ].join('\n')
+
+  const promptParts = [`【用户原始需求】\n${promptText}`]
+  if (wsCtx.summary) promptParts.push(`【工作区上下文采样】\n${wsCtx.summary}`)
+  if (settings.aiPlanner.customConstraints) {
+    promptParts.push(`【全局自定义工程约束】\n${settings.aiPlanner.customConstraints}`)
+  }
+
+  const llmRes = await invokeDshLlmJson(ctx, {
+    sessionId: opts.sessionId,
+    system,
+    prompt: promptParts.join('\n\n'),
+    maxTokens: 2048,
+    signal: opts.signal,
+  })
+
+  if (!llmRes.ok) {
+    const allowFallback = Boolean(opts.allowStaticFallback) && !isRealDshHost(ctx)
+    if (!allowFallback) return Object.assign({ op: 'clarifyWishWithAI' }, llmRes)
+    return {
+      ok: true,
+      op: 'clarifyWishWithAI',
+      fallback_used: true,
+      model: 'static-test-fallback',
+      detected_context: wsCtx.summary ? `已扫描目录 ${wsCtx.cwd}` : '测试环境静态回退上下文',
+      cwd: wsCtx.cwd || '',
+      questions: [
+        {
+          id: 'q1',
+          question: '请确认本次交付的核心工程形态与运行边界：',
+          multi: false,
+          options: [
+            { label: '模块化标准库实现（推荐）', value: '优先复用现有目录与零外部依赖方案，补齐单元测试。' },
+            { label: '全栈接口与界面联动', value: '同时实现后端数据持久化、RPC 接口与前端交互视图。' },
+          ],
+        },
+      ],
+    }
+  }
+
+  const data = llmRes.data && typeof llmRes.data === 'object' ? llmRes.data : {}
+  const rawQuestions = Array.isArray(data.questions) ? data.questions : []
+  const questions = rawQuestions
+    .filter((q) => q && typeof q === 'object' && (q.question || q.title))
+    .slice(0, 6)
+    .map((q, idx) => ({
+      id: String(q.id || `q-${idx + 1}`),
+      question: String(q.question || q.title).trim(),
+      multi: Boolean(q.multi ?? q.is_multi_select),
+      options: (Array.isArray(q.options) ? q.options : [])
+        .map((opt) => {
+          if (typeof opt === 'string') return { label: opt, value: opt }
+          if (!opt || typeof opt !== 'object') return null
+          const label = String(opt.label || opt.text || opt.value || '').trim()
+          const value = String(opt.value || opt.snippet || opt.label || '').trim()
+          return label ? { label, value: value || label } : null
+        })
+        .filter(Boolean),
+    }))
+
+  return {
+    ok: true,
+    op: 'clarifyWishWithAI',
+    model: llmRes.model,
+    provider: llmRes.provider,
+    detected_context: String(data.detected_context || data.detectedContext || (wsCtx.cwd ? `已探测工作区：${wsCtx.cwd}` : '通用软件工程上下文')).trim(),
+    cwd: wsCtx.cwd || '',
+    questions,
+  }
+}
+
+async function decomposeWishWithAI(ctx, store, opts = {}) {
+  const promptText = String(opts.prompt || '').trim()
+  const settingsRoot = resolveRedteamSettingsRoot(store && store.root)
+  const settings = readUnifiedSettings(settingsRoot, process.env)
+  const rootAgent = await resolveLiveRootAgent(ctx, opts.sessionId)
+  const wsCtx = sampleWorkspaceContext(ctx, rootAgent, opts.cwd, {
+    scanRepoContext: settings.aiPlanner.scanRepoContext,
+    sessionId: opts.sessionId,
+    store,
+  })
+
+  const system = [
+    '你是 LMTAgent 软件工程多智能体集群的首席架构师（AI Planner）。',
+    '请把用户需求拆解为可立即由多智能体并行落地的 4-Wave Bounded DAG 蓝图（按需 3-8 个任务，简单需求精简、复杂工程充实），严格遵守 File-Disjoint Sharding（同一波次及并行子任务之间的 files_owned 绝对不能有文件路径/通配符交集）。',
+    '可用执行角色（role）与波次对应关系：',
+    '- wave 1: recon（需求/代码库测绘与数据源核验）、designer（UI/UX 设计令牌与交互规范）',
+    '- wave 2: assess（架构契约冻结与无交集分片锁定）',
+    `- wave 3: exploit（全栈研发构建分片，Wave 3 并发数不超过 ${settings.maxAgents}，每个分片独占互不重叠的 files_owned）`,
+    '- wave 4: vuln-scan（代码审查与安全审计）、qa（自动化测试与构建门禁）、internal（文档与发布归档）',
+    '若提供了真实工作区目录结构，files_owned 必须尽可能贴合该仓库真实存在或合理的路径！',
+    '必须只输出严格合法的 JSON 对象，结构如下：',
+    '{',
+    '  "project_name": "简明中文/英文工程名",',
+    '  "refined_prompt": "润色后的完整结构化工程规格说明",',
+    '  "summary": "一句话总结 4-Wave 分片交付策略",',
+    '  "clarifications": ["关键边界确认要点1", "要点2"],',
+    '  "deliverables": ["核心交付物1", "交付物2"],',
+    '  "goals": [',
+    '    {',
+    '      "wave": 1,',
+    '      "role": "recon",',
+    '      "title": "Wave 1 · 任务简明标题",',
+    '      "assigned_goal": "包含上下文、范围与完成标准的自包含执行指令",',
+    '      "files_owned": ["exact/path/or/dir/**"],',
+    '      "acceptance_criteria": "可核验的验收测试或交付判据"',
+    '    }',
+    '  ]',
+    '}',
+  ].join('\n')
+
+  const promptParts = [`【用户工程需求】\n${promptText}`]
+  if (opts.template) promptParts.push(`【期望模板风格】${opts.template}`)
+  if (opts.clarificationsText) promptParts.push(`【用户澄清补充】\n${opts.clarificationsText}`)
+  if (wsCtx.summary) promptParts.push(`【工作区上下文采样】\n${wsCtx.summary}`)
+  if (settings.aiPlanner.customConstraints) {
+    promptParts.push(`【全局自定义工程约束】\n${settings.aiPlanner.customConstraints}`)
+  }
+  promptParts.push(`【集群并发配额】maxAgents=${settings.maxAgents}, maxDepth=${settings.maxDepth}, thinkingEffort=${settings.thinkingEffort}`)
+
+  const llmRes = await invokeDshLlmJson(ctx, {
+    sessionId: opts.sessionId,
+    system,
+    prompt: promptParts.join('\n\n'),
+    maxTokens: 4096,
+    signal: opts.signal,
+  })
+
+  if (!llmRes.ok) {
+    return Object.assign({ cwd: wsCtx.cwd || '' }, llmRes)
+  }
+
+  const raw = llmRes.data && typeof llmRes.data === 'object' ? llmRes.data : {}
+  const rawList = Array.isArray(raw.goals) && raw.goals.length > 0
+    ? raw.goals
+    : (Array.isArray(raw.proposed_waves) && raw.proposed_waves.length > 0
+      ? raw.proposed_waves
+      : (Array.isArray(raw.waves) ? raw.waves : []))
+
+  if (rawList.length === 0) {
+    return {
+      ok: false,
+      llm_unavailable: true,
+      model: llmRes.model,
+      provider: llmRes.provider,
+      error: `大模型（${llmRes.model}）返回的 JSON 缺少有效的 goals 任务列表。`,
+    }
+  }
+
+  const goals = rawList.map((g, idx) => normalizeWishGoalItem(g, idx))
+  const projectName = String(raw.project_name || raw.projectName || raw.title || '').trim()
+  const refinedPrompt = String(raw.refined_prompt || raw.refinedPrompt || promptText).trim()
+  const summary = String(
+    raw.summary || `已由 ${llmRes.model} 拆解为 ${goals.length} 个无冲突并发子任务。`,
+  ).trim()
+
+  return {
+    ok: true,
+    ai_generated: true,
+    model: llmRes.model,
+    provider: llmRes.provider,
+    cwd: wsCtx.cwd || '',
+    project_name: projectName,
+    refined_prompt: refinedPrompt,
+    summary,
+    clarifications: Array.isArray(raw.clarifications) ? raw.clarifications.map(String) : [],
+    deliverables: Array.isArray(raw.deliverables) ? raw.deliverables.map(String) : [],
+    goals,
+  }
+}
+
+function workerPresetForRole(role) {
+  const r = String(role || '').trim().toLowerCase()
+  const map = {
+    recon: 'redteam-worker-recon',
+    designer: 'redteam-worker-designer',
+    assess: 'redteam-worker-assess',
+    'vuln-scan': 'redteam-worker-vuln-scan',
+    exploit: 'redteam-worker-exploit',
+    qa: 'redteam-worker-qa',
+    internal: 'redteam-worker-internal',
+  }
+  return map[r] || 'redteam-worker'
+}
+
+function isPlaceholderWorkerSessionId(ctx, sid) {
+  const s = String(sid || '').trim()
+  if (!s) return true
+  if (isSyntheticSessionId(s)) return true
+  const agentsSvc = tryGet(ctx, 'agents')
+  if (agentsSvc && typeof agentsSvc.get === 'function') {
+    try { if (agentsSvc.get(s)) return false } catch { /* ignore */ }
+  }
+  const sessionsSvc = tryGet(ctx, 'sessions')
+  if (sessionsSvc && typeof sessionsSvc.get === 'function') {
+    try { if (sessionsSvc.get(s)) return false } catch { /* ignore */ }
+  }
+  if (/^sess-[0-9a-f]{6}-w\d+$/i.test(s) || /^sess-[0-9a-z]{6,12}-\d+$/i.test(s)) {
+    return true
+  }
+  return false
+}
+
+function isRealChildSessionId(ctx, sid) {
+  const s = String(sid || '').trim()
+  if (!s || isPlaceholderWorkerSessionId(ctx, s)) return false
+  return true
+}
+
+function resolveEngagementCwd(ctx, store, rootAgent, sessionId, explicitCwd = '') {
+  const raw = typeof explicitCwd === 'string' ? explicitCwd.trim() : ''
+  if (raw) return raw
+  if (rootAgent && rootAgent.session && rootAgent.session.header && rootAgent.session.header.cwd) {
+    return String(rootAgent.session.header.cwd).trim()
+  }
+  if (sessionId) {
+    const sessionsSvc = tryGet(ctx, 'sessions')
+    if (sessionsSvc && typeof sessionsSvc.get === 'function') {
+      try {
+        const s = sessionsSvc.get(sessionId)
+        if (s && s.header && s.header.cwd) return String(s.header.cwd).trim()
+      } catch { /* ignore */ }
+    }
+    if (store) {
+      const bound = getCachedSessionBindingEntry(store, sessionId)
+      if (bound && bound.cwd) return String(bound.cwd).trim()
+    }
+  }
+  return ''
+}
+
+function buildSelfContainedWorkerPrompt(task, engId, refinedPrompt = '', extraNote = '') {
+  const role = String((task && (task.worker_role || task.role)) || 'exploit').trim()
+  const wave = String((task && (task.wave || task.wave_key)) || 'wave-1').trim()
+  const taskId = task && task.id !== undefined ? String(task.id) : ''
+  const workerName = String((task && (task.worker_name || task.title)) || `${role}-worker`).trim()
+  const assignedGoal = String((task && (task.assigned_goal || task.assignedGoal || task.objective || task.goal || task.title)) || '').trim()
+  const filesOwned = parseJsonArraySafe(task && (task.files_owned ?? task.filesOwned ?? task.files_owned_json))
+  const acceptance = String((task && (task.acceptance_criteria || task.acceptanceCriteria)) || '').trim()
+
+  return [
+    `你是 LMTAgent 集群执行角色 \`${role}\`（${wave} · ${workerName}）。`,
+    `所属项目工作区（engagement_id）：\`${engId || 'default'}\`${taskId ? ` · 任务 ID（worker_task_id）：\`${taskId}\`` : ''}`,
+    '',
+    refinedPrompt ? `## 项目总体蓝图\n${String(refinedPrompt).slice(0, 1800)}\n` : '',
+    `## 本次委派目标（Assigned Goal）\n${assignedGoal || workerName}`,
+    '',
+    `## 独占文件分片（files_owned — 严禁越界修改其他分片文件）\n${filesOwned.length > 0 ? filesOwned.map((f) => `- \`${f}\``).join('\n') : '- （遵循本角色职责范围，不修改未授权文件）'}`,
+    acceptance ? `\n## 验收判据\n${acceptance}` : '',
+    extraNote ? `\n## 补充指令\n${extraNote}` : '',
+    '',
+    '## 执行与汇报纪律',
+    '1. 所有研发成果、模块/缺陷/里程碑记录须写入事实库（`redteam_*` 工具），并附真实命令回显与验证证据。',
+    `2. 完成后调用 \`redteam_workflow({ action: "submit_digest", engagement: ${JSON.stringify(engId || 'default')}, worker_task_id: ${JSON.stringify(taskId || workerName)}, worker_name: ${JSON.stringify(workerName)}, worker_role: ${JSON.stringify(role)}, wave: ${JSON.stringify(wave)}, what_was_done: "...", files_touched: [...], key_decisions: [...], verification: "..." })\` 提交压缩摘要，并在最终回复中给出完整结论与验证证据。`,
+  ].filter(Boolean).join('\n')
+}
+
+async function deliverPromptToChild(subagentsSvc, mode, rootAgent, childId, text, signal) {
+  if (!subagentsSvc || !rootAgent || !childId) {
+    throw new Error('缺少 subagents 服务、活跃 rootAgent 或目标 childId')
+  }
+  const content = [{ type: 'text', text: String(text || '') }]
+  const source = { kind: 'user' }
+  const sig = signal || AbortSignal.timeout(30000)
+  const deliveryMode = mode === 'steer' ? 'steer' : 'queue'
+
+  if (deliveryMode === 'steer' && typeof subagentsSvc.steerPrompt === 'function') {
+    return await subagentsSvc.steerPrompt(rootAgent, childId, content, source, sig)
+  }
+  if (deliveryMode === 'queue' && typeof subagentsSvc.queuePrompt === 'function') {
+    return await subagentsSvc.queuePrompt(rootAgent, childId, content, source, sig)
+  }
+  if (subagentsSvc.manager && typeof subagentsSvc.manager[deliveryMode === 'steer' ? 'steerPrompt' : 'queuePrompt'] === 'function') {
+    return await subagentsSvc.manager[deliveryMode === 'steer' ? 'steerPrompt' : 'queuePrompt'](rootAgent, childId, content, source, sig)
+  }
+  const deliverSym = Symbol.for('dsh.subagent.deliverPrompt')
+  if (typeof subagentsSvc[deliverSym] === 'function') {
+    return await subagentsSvc[deliverSym](rootAgent, childId, content, source, sig, deliveryMode)
+  }
+  if (typeof subagentsSvc.queuePrompt === 'function') {
+    return await subagentsSvc.queuePrompt(rootAgent, childId, content, source, sig)
+  }
+  if (typeof subagentsSvc.sendMessage === 'function') {
+    return await subagentsSvc.sendMessage(rootAgent, childId, content, { signal: sig })
+  }
+  throw new Error(`subagents 服务不支持 ${deliveryMode}Prompt 续接投递`)
+}
+
+async function bindWorkerSessionCompat(store, engId, task, childId, status = 'running') {
+  if (!store || !engId || !childId) return false
+  const taskId = task && task.id !== undefined && task.id !== null ? task.id : undefined
+  const workerName = task && task.worker_name ? String(task.worker_name) : undefined
+  const payload = {
+    engagement: engId,
+    engagement_id: engId,
+    engagementId: engId,
+    ...(taskId !== undefined ? { worker_task_id: taskId, id: taskId } : {}),
+    ...(workerName ? { worker_name: workerName } : {}),
+    session_id: String(childId),
+    sessionId: String(childId),
+    status,
+    approval_state: 'working',
+  }
+  let bound = false
+  if (typeof store.bindWorkerSession === 'function') {
+    try {
+      const res = await invokeStoreMethodCompat(store, 'bindWorkerSession', engId, payload)
+      if (res && res.ok !== false) bound = true
+    } catch { /* fall through */ }
+  }
+  if (!bound) {
+    try {
+      const res = dispatch(store, Object.assign({ op: 'bindWorkerSession' }, payload))
+      if (res && res.ok !== false) bound = true
+    } catch { /* fall through */ }
+  }
+  if (typeof store.db === 'function' && taskId !== undefined) {
+    try {
+      const db = store.db(engId)
+      if (db && typeof db.prepare === 'function') {
+        const info = db.prepare(
+          "UPDATE worker_tasks SET session_id = ?, status = ?, approval_state = CASE WHEN approval_state IN ('approved','pending_approval') THEN approval_state ELSE 'working' END, updated_at = ? WHERE engagement_id = ? AND CAST(id AS TEXT) = ?",
+        ).run(String(childId), status, new Date().toISOString(), String(engId), String(taskId))
+        if (info && info.changes > 0) bound = true
+      }
+    } catch { /* ignore */ }
+  }
+  return bound
+}
+
+async function resolveSafeChildAgentOptions(ctx, rootAgent, thinkingEffort, signal) {
+  const effort = normalizeThinkingEffort(thinkingEffort)
+  if (!effort || effort === 'none' || effort === 'off') return {}
+  const llm = tryGet(ctx, 'llm')
+  const route = resolveAgentModelRoute(ctx, rootAgent)
+  if (llm && typeof llm.resolveCallConfig === 'function' && route.provider && route.model) {
+    try {
+      await llm.resolveCallConfig({
+        provider: route.provider,
+        model: route.model,
+        reasoningEffort: effort,
+      }, signal)
+      return { reasoningEffort: effort }
+    } catch (err) {
+      const errCode = err && (err.code || (err.failure && err.failure.code))
+      const errMsg = err && err.message ? String(err.message) : ''
+      if (errCode === 'UNSUPPORTED_REASONING_EFFORT' || /UNSUPPORTED_REASONING_EFFORT|reasoning.?effort/i.test(errMsg)) {
+        return {}
+      }
+    }
+  }
+  return { reasoningEffort: effort }
+}
+
+async function startSubagentActivationSafe(ctx, subagentsSvc, rootAgent, task, opts = {}) {
+  const providerName = opts.provider || 'spawn'
+  const providerObj = typeof subagentsSvc.getProvider === 'function' ? subagentsSvc.getProvider(providerName) : null
+  const supportsPreset = providerName !== 'fork'
+    && (!providerObj || (providerObj.capabilities?.agentPreset !== false && !providerObj.inheritsParentContext))
+  const sig = opts.signal || AbortSignal.timeout(30000)
+  const agentOptions = await resolveSafeChildAgentOptions(ctx, rootAgent, opts.thinkingEffort, sig)
+  const reqObj = {
+    parent: rootAgent,
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    prompt: [{
+      type: 'text',
+      text: buildSelfContainedWorkerPrompt(task, opts.engId, opts.refinedPrompt, opts.extraNote),
+    }],
+    ...(supportsPreset ? { agentPreset: workerPresetForRole(task.worker_role || task.role) } : {}),
+    ...(opts.maxDepth !== undefined ? { maxDepth: opts.maxDepth } : {}),
+    ...(Object.keys(agentOptions).length > 0 ? { agentOptions } : {}),
+  }
+  const spec = {
+    provider: providerName,
+    delivery: 'parent',
+    label: String(task.title || task.worker_name || `worker-${task.id || '1'}`),
+    request: reqObj,
+    signal: sig,
+  }
+  try {
+    return await subagentsSvc.startActivation(spec)
+  } catch (err) {
+    const msg = err && err.message ? String(err.message) : ''
+    if (supportsPreset && /preset/i.test(msg)) {
+      const fallbackReq = Object.assign({}, reqObj)
+      if (fallbackReq.agentPreset !== 'redteam-worker') {
+        fallbackReq.agentPreset = 'redteam-worker'
+      } else {
+        delete fallbackReq.agentPreset
+      }
+      return await subagentsSvc.startActivation(Object.assign({}, spec, { request: fallbackReq }))
+    }
+    throw err
+  }
+}
+
+function sendRootFollowupMessage(rootAgent, text) {
+  if (!rootAgent || typeof rootAgent.followup !== 'function') {
+    return { ok: false, error: 'rootAgent 不支持 followup 唤醒' }
+  }
+  const msg = deepFreezeObj({
+    id: randomUUID(),
+    role: 'user',
+    content: [{ type: 'text', text: String(text || '') }],
+    source: { kind: 'user' },
+  })
+  rootAgent.followup(msg)
+  return { ok: true, messageId: msg.id }
+}
+
+export async function dispatchWorkflowToDshAgents(ctx, store, opts = {}) {
+  const engId = String(opts.engagementId || opts.engagement || '').trim()
+  const sessionId = String(opts.sessionId || opts.session || '').trim()
+  const settingsRoot = resolveRedteamSettingsRoot(store && store.root)
+  const settings = readUnifiedSettings(settingsRoot, process.env)
+  const policy = settings.dispatchPolicy || DEFAULT_DISPATCH_POLICY
+  const clusterCfg = {
+    maxAgents: settings.maxAgents,
+    thinkingEffort: settings.thinkingEffort,
+    maxDepth: settings.maxDepth,
+  }
+
+  const subagentsSvc = tryGet(ctx, 'subagents')
+  const rootAgent = await resolveLiveRootAgent(ctx, sessionId)
+  const resolvedCwd = resolveEngagementCwd(ctx, store, rootAgent, sessionId, opts.cwd)
+
+  const tasks = Array.isArray(opts.workerTasks) ? opts.workerTasks : []
+  const spawned = []
+  const errors = []
+  const warnings = []
+
+  const canStartSubagents = Boolean(
+    policy.dispatchMode === 'hybrid_auto'
+    && rootAgent
+    && subagentsSvc
+    && typeof subagentsSvc.startActivation === 'function',
+  )
+
+  if (canStartSubagents) {
+    const wave1Targets = tasks
+      .filter((t) => {
+        if (!t || typeof t !== 'object') return false
+        if (parseWaveNumber(t.wave ?? t.wave_key, 3) !== 1) return false
+        const st = String(t.status || '').toLowerCase()
+        if (['completed', 'done', 'finished', 'approved', 'cancelled', 'archived'].includes(st)) return false
+        if (st === 'running' && isRealChildSessionId(ctx, t.session_id)) return false
+        return true
+      })
+      .slice(0, Math.max(1, clusterCfg.maxAgents))
+
+    const settled = await Promise.allSettled(
+      wave1Targets.map(async (task) => {
+        const started = await startSubagentActivationSafe(ctx, subagentsSvc, rootAgent, task, {
+          provider: policy.subagentProvider || 'spawn',
+          cwd: resolvedCwd,
+          engId,
+          refinedPrompt: opts.refinedPrompt || '',
+          maxDepth: clusterCfg.maxDepth,
+          thinkingEffort: clusterCfg.thinkingEffort,
+          signal: opts.signal,
+        })
+        if (started && started.childId) {
+          await bindWorkerSessionCompat(store, engId, task, started.childId, 'running')
+          return {
+            worker_task_id: task.id,
+            worker_name: task.worker_name || task.title,
+            role: task.worker_role || task.role,
+            title: task.title || task.worker_name,
+            childId: started.childId,
+            files_owned: parseJsonArraySafe(task.files_owned ?? task.files_owned_json),
+          }
+        }
+        throw new Error('startActivation 未返回有效的 childId')
+      }),
+    )
+
+    for (let i = 0; i < settled.length; i += 1) {
+      const r = settled[i]
+      const task = wave1Targets[i]
+      if (r.status === 'fulfilled') {
+        spawned.push(r.value)
+      } else {
+        const msg = r.reason && r.reason.message ? r.reason.message : String(r.reason)
+        errors.push({
+          worker_task_id: task && task.id,
+          worker_name: task && (task.worker_name || task.title),
+          error: msg,
+        })
+      }
+    }
+    if (errors.length > 0) {
+      warnings.push(`部分 Wave 1 子代理拉起失败（${errors.length}/${wave1Targets.length}）：${errors.map((e) => `${e.worker_name}: ${e.error}`).join('; ')}`)
+    }
+  } else {
+    if (policy.dispatchMode === 'hybrid_auto' && (!subagentsSvc || typeof subagentsSvc.startActivation !== 'function')) {
+      warnings.push('宿主 subagents 服务不可用，已降级为仅唤醒主代理 Captain 统筹派发。')
+    }
+    if (!rootAgent) {
+      warnings.push('未解析到活跃的宿主根代理会话（rootAgent），任务已写入事实库，请在打开会话后手动唤醒或拉起。')
+    }
+  }
+
+  let captainNotified = false
+  if (rootAgent && typeof rootAgent.followup === 'function') {
+    const wave2Plus = tasks.filter((t) => parseWaveNumber(t && (t.wave ?? t.wave_key), 3) > 1)
+    let syncText = ''
+    if (spawned.length > 0) {
+      syncText = [
+        `【LMTAgent 控制台 · 方案 A 混合协同状态同步】`,
+        `- 项目工作区（engagement_id）：\`${engId}\``,
+        opts.userPrompt ? `- 用户需求：${String(opts.userPrompt).slice(0, 600)}` : '',
+        '',
+        '以下 **Wave 1 子代理已由控制台通过 `subagents.startActivation` 真实拉起并正在后台运行（严禁 Captain 重复派发 Wave 1）**：',
+        ...spawned.map((s) => `- [Wave 1 · ${s.role}] \`${s.worker_name}\` → 真实子会话 childId: \`${s.childId}\`${s.files_owned.length ? ` · 分片: ${s.files_owned.join(', ')}` : ''}`),
+        '',
+        wave2Plus.length > 0
+          ? `后续待编排波次（Wave 2–4，共 ${wave2Plus.length} 项）：\n` + wave2Plus.map((t) => `- [${t.wave || 'wave-?'} · ${t.worker_role || t.role}] ${t.title || t.worker_name} (task_id=${t.id})`).join('\n')
+          : '',
+        '',
+        '请主控 Captain 耐心等待上述 Wave 1 子代理通过 `delivery: "parent"` 完成汇报（或 `send_message` 回传），核验事实库摘要后通过 `redteam_workflow` 执行审批并接管 Wave 2–4 的协同调度！',
+      ].filter(Boolean).join('\n')
+    } else {
+      syncText = [
+        `【LMTAgent 控制台 · 主代理全权调度通知】`,
+        `- 项目工作区（engagement_id）：\`${engId}\``,
+        opts.refinedPrompt ? `- 蓝图规格说明：\n${String(opts.refinedPrompt).slice(0, 1500)}` : '',
+        '',
+        `已写入 ${tasks.length} 项 4-Wave 分片任务到事实库（\`worker_tasks\`）：`,
+        ...tasks.map((t) => `- [${t.wave || 'wave-?'} · ${t.worker_role || t.role}] ${t.title || t.worker_name} (task_id=${t.id}) · 目标: ${String(t.assigned_goal || '').slice(0, 160)}`),
+        '',
+        '请主控 Captain 按照 4-Wave Bounded DAG 与 `redteam_agent_slot` 并发闸门开始派发与闭环编排。',
+      ].filter(Boolean).join('\n')
+    }
+    try {
+      const fRes = sendRootFollowupMessage(rootAgent, syncText)
+      captainNotified = Boolean(fRes.ok)
+      if (!fRes.ok && fRes.error) warnings.push(fRes.error)
+    } catch (err) {
+      warnings.push(`唤醒主代理 Captain 失败：${err && err.message ? err.message : String(err)}`)
+    }
+  }
+
+  const effectiveMode = spawned.length > 0
+    ? 'hybrid_auto'
+    : (policy.dispatchMode === 'captain_only' ? 'captain_only' : (canStartSubagents ? 'hybrid_auto' : 'captain_only'))
+
+  return {
+    mode: effectiveMode,
+    provider: policy.subagentProvider || 'spawn',
+    spawned,
+    ...(errors.length > 0 ? { errors } : {}),
+    captainNotified,
+    rootAgentId: rootAgent ? rootAgent.id : null,
+    ...(warnings.length > 0 ? { warning: warnings.join('；') } : {}),
+  }
+}
+
 async function handleAgentsOp(ctx, request) {
   const AGENT_OPS = [
     'agentsStatus', 'hostSessions', 'setAgentsMax', 'setClusterConfig', 'setPgUrl', 'probePg',
-    'pgWriteProbe', 'workflowDag', 'workflowDocWall', 'workflowAction', 'workflowRun',
+    'pgWriteProbe', 'getSettings', 'saveSettings',
+    'workflowDag', 'workflowDocWall', 'workflowAction', 'workflowRun',
     'dagCheckpoint', 'feishuNotify', 'pushFeishuNotify', 'feishuConfig', 'feishuConfigSave',
     'saveFeishuConfig', 'saveFeishuWebhook', 'feishuTestPush',
     'agentSessionDetail', 'activateAgentSession',
+    'clarifyWishWithAI', 'handoffToCaptain', 'dispatchWorkerTask',
     'planApproveWorker', 'submitWorkerDigest', 'decomposeUserPrompt',
     'refineAndDecomposeWish', 'updateWorkerGoal', 'addCustomWorkerTask', 'retryWorkerTask',
     'shardLocks', 'listShardLocks',
@@ -5125,6 +6075,8 @@ async function handleAgentsOp(ctx, request) {
     || (sessionScopedDefined ? sessionBoundEngagement : ((store ? getCachedActiveEngagementId(store) : null) || 'default'))
 
   const DELEGATED_WORKFLOW_ACTIONS = [
+    'getSettings', 'saveSettings',
+    'clarifyWishWithAI', 'handoffToCaptain', 'dispatchWorkerTask',
     'planApproveWorker', 'submitWorkerDigest', 'decomposeUserPrompt',
     'refineAndDecomposeWish', 'updateWorkerGoal', 'addCustomWorkerTask', 'retryWorkerTask',
     'shardLocks', 'listShardLocks', 'feishuConfig', 'feishuConfigSave', 'saveFeishuConfig', 'saveFeishuWebhook',
@@ -5133,239 +6085,355 @@ async function handleAgentsOp(ctx, request) {
     ? request.action
     : request.op
 
-  if (effectiveOp === 'planApproveWorker') {
-    const rawPayload = Object.assign(
-      {},
-      request.payload && typeof request.payload === 'object' ? request.payload : {},
-      request,
-    )
-    const currentEng = rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
-    /* 严禁默认回退 'sub-recon' 或以裸角色名（如 'exploit'）作为全局审批键！ */
-    const candidateIds = [
-      rawPayload.worker_id,
-      rawPayload.workerId,
-      rawPayload.worker_task_id,
-      rawPayload.workerTaskId,
-      rawPayload.session_id,
-      rawPayload.sessionId,
-      rawPayload.agentId,
-      rawPayload.id,
-      rawPayload.worker_name,
-      rawPayload.workerName,
-    ]
-      .map((v) => (v !== undefined && v !== null ? String(v).trim() : ''))
-      .filter((v) => v && !isBareRoleName(v))
-
-    let workerKey = candidateIds[0] || ''
-    if (!workerKey) {
-      return {
-        ok: false,
-        engagement: currentEng,
-        error: 'missing or bare-role worker_id for planApproveWorker',
+  const mergeAgentPayload = () => Object.assign(
+    {},
+    request.payload && typeof request.payload === 'object' ? request.payload : {},
+    request,
+  )
+  const resolveActionEng = (raw = request) => (
+    raw.engagement || raw.engagement_id || raw.engagementId
+    || (store ? getCachedActiveEngagementId(store) : null)
+    || activeEngagement
+  )
+  const withEngIds = (engId, extra = {}) => Object.assign({}, extra, {
+    engagement: engId,
+    engagement_id: engId,
+    engagementId: engId,
+  })
+  const readPgProbe = (engId) => (
+    store && typeof store.pgWriteProbe === 'function'
+      ? store.pgWriteProbe(engId)
+      : getPgWriteProbe(engId)
+  )
+  const synthNetworkFields = (synth, { includeEvents = true } = {}) => ({
+    agentNetwork: synth.agentNetwork,
+    agent_network: synth.agentNetwork,
+    nodes: synth.nodes,
+    swimlanes: synth.swimlanes,
+    ...(includeEvents ? {
+      collabEvents: synth.collabEvents,
+      collab_events: synth.collabEvents,
+    } : {}),
+    collabTasks: synth.collabTasks,
+    collab_tasks: synth.collabTasks,
+  })
+  const rebuildCollab = async (engId, { invalidateEngs = false, bumpOp = '', bumpMeta, hostEng } = {}) => {
+    reqFlow.dagByEng.delete(engId)
+    if (invalidateEngs) invalidateEngagementCaches(store)
+    if (bumpOp) bumpEventSeq(bumpOp, bumpMeta || { engagement: engId })
+    const hostSessions = await discoverHostSessions(ctx, store, {
+      sessionId: request.session,
+      ...(hostEng !== undefined ? { engagementId: hostEng } : {}),
+      autoBind: true,
+      reqFlow,
+    })
+    const synth = synthesizeAgentCollaboration(store, engId, hostSessions, resolvedRootSession, reqFlow)
+    return { hostSessions, synth }
+  }
+  const invokeOrDispatchCompat = async (method, engId, payload) => {
+    let res = null
+    try {
+      res = await invokeStoreMethodCompat(store, method, engId, payload)
+    } catch { res = null }
+    if (res === undefined && store) {
+      try { res = dispatch(store, payload) } catch { res = null }
+    }
+    return res
+  }
+  const runWorkerMutation = async (method, opName, engId, payload, { workflowAction } = {}) => {
+    if (store && typeof store[method] === 'function') {
+      try {
+        return await invokeStoreMethodCompat(store, method, engId, payload)
+      } catch (err) {
+        return { ok: false, error: err && err.message ? err.message : String(err) }
       }
     }
-    const approvalState = String(
-      rawPayload.approval_state
-      || rawPayload.approvalState
-      || (rawPayload.decision === 'revision_required' || rawPayload.decision === 'reject' ? 'revision_required' : 'approved')
-    ).trim()
-    const uiPriority = approvalState === 'approved' ? 'P2' : 'P0'
-    const priorityWeight = uiPriority === 'P2' ? 50 : 100
-    const priorityLabel = uiPriority === 'P2' ? 'P2 已审归档' : 'P0 焦点审批'
-    const nextGoal = String(
-      rawPayload.next_goal
-      || rawPayload.nextGoal
-      || '进入下一波次契约联调与回归验证'
-    ).trim()
-
-    const storePayload = Object.assign({}, rawPayload, {
-      op: 'planApproveWorker',
-      engagement: currentEng,
-      engagement_id: currentEng,
-      engagementId: currentEng,
-      ...(workerKey ? {
-        worker_id: workerKey,
-        workerId: workerKey,
-        session_id: rawPayload.session_id || rawPayload.sessionId || workerKey,
-        worker_name: rawPayload.worker_name || rawPayload.workerName || workerKey,
-      } : {}),
-      approval_state: approvalState,
-      approvalState,
-      ui_priority: uiPriority,
-      uiPriority,
-      next_goal: nextGoal,
-      nextGoal,
-    })
-
-    let storeResult = null
-    try {
-      storeResult = await invokeStoreMethodCompat(store, 'approveWorkerAndDispatchNext', currentEng, storePayload)
-    } catch { storeResult = null }
-    if (storeResult === undefined && store) {
-      try { storeResult = dispatch(store, storePayload) } catch { storeResult = null }
+    if (workflowAction && store && typeof store.workflowAction === 'function') {
+      try {
+        return await invokeStoreMethodCompat(store, 'workflowAction', engId, Object.assign({}, payload, { action: workflowAction }))
+      } catch {
+        return { ok: true }
+      }
     }
-
-    const approvedDbWorker = storeResult && typeof storeResult === 'object' ? storeResult.approved_worker : null
-    if (!workerKey && approvedDbWorker) {
-      workerKey = String(
-        approvedDbWorker.session_id || approvedDbWorker.id || approvedDbWorker.worker_name || '',
-      ).trim()
+    if (store) {
+      return dispatch(store, Object.assign({ op: opName }, payload))
     }
-    if (!workerKey) {
-      return { ok: false, error: 'missing worker_id or session_id for planApproveWorker' }
+    return null
+  }
+  const buildClusterConfigFields = (cfgArg, maxOverride) => {
+    const max = maxOverride !== undefined ? maxOverride : maxAgentsOf(cfgArg, process.env)
+    const thinkingEffort = thinkingEffortOf(cfgArg, process.env)
+    const maxDepth = maxDepthOf(cfgArg, process.env)
+    return {
+      max,
+      maxAgents: max,
+      thinking: thinkingEffort,
+      thinkingEffort,
+      thinking_effort: thinkingEffort,
+      maxDepth,
+      max_depth: maxDepth,
     }
-
-    const overrideEntry = {
-      engagementId: currentEng,
-      workerId: workerKey,
-      approvalState,
-      uiPriority,
-      priorityWeight,
-      priorityLabel,
-      nextGoal,
-      explicitApproved: approvalState === 'approved',
-      approvedAt: new Date().toISOString(),
-    }
-
-    const scopedKeys = [
-      workerKey,
-      ...candidateIds,
-      approvedDbWorker && approvedDbWorker.id !== undefined ? String(approvedDbWorker.id) : '',
-      approvedDbWorker && approvedDbWorker.id !== undefined ? `wt-${approvedDbWorker.id}` : '',
-      approvedDbWorker && approvedDbWorker.session_id ? String(approvedDbWorker.session_id) : '',
-      approvedDbWorker && approvedDbWorker.worker_name ? String(approvedDbWorker.worker_name) : '',
-    ]
-    for (const k of scopedKeys) {
-      setScopedWorkerOverride(currentEng, k, overrideEntry)
-    }
-
-    reqFlow.dagByEng.delete(currentEng)
-    bumpEventSeq('planApproveWorker', { engagement: currentEng, workerId: workerKey })
-
-    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true, reqFlow })
-    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
-    const pgProbe = store && typeof store.pgWriteProbe === 'function'
-      ? store.pgWriteProbe(currentEng)
-      : getPgWriteProbe(currentEng)
-
-    return Object.assign(
-      {},
-      storeResult && typeof storeResult === 'object' ? storeResult : {},
-      {
-        ok: true,
-        op: 'planApproveWorker',
-        engagement: currentEng,
-        active_engagement: currentEng,
-        worker_id: workerKey,
-        workerId: workerKey,
-        approvalState,
-        approval_state: approvalState,
-        uiPriority,
-        ui_priority: uiPriority,
-        priorityWeight,
-        priority_weight: priorityWeight,
-        priorityLabel,
-        priority_label: priorityLabel,
-        nextGoal,
-        next_goal: nextGoal,
-        host_sessions: hostSessions,
-        hostSessions,
-        agentNetwork: synth.agentNetwork,
-        agent_network: synth.agentNetwork,
-        nodes: synth.nodes,
-        swimlanes: synth.swimlanes,
-        collabEvents: synth.collabEvents,
-        collab_events: synth.collabEvents,
-        collabTasks: synth.collabTasks,
-        collab_tasks: synth.collabTasks,
-        pg_probe: pgProbe,
-        pgWriteProbe: pgProbe,
-      },
-    )
   }
 
-  if (effectiveOp === 'submitWorkerDigest') {
-    const rawPayload = Object.assign(
-      {},
-      request.payload && typeof request.payload === 'object' ? request.payload : {},
-      request,
-    )
-    const currentEng = rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
-    const meta = computeWorkerLmtexMeta(rawPayload, Number(rawPayload.idx) || 0, { store, engagementId: currentEng })
-    const storePayload = Object.assign({}, rawPayload, {
-      op: 'submitWorkerDigest',
-      engagement: currentEng,
-      engagement_id: currentEng,
-      engagementId: currentEng,
-      ui_priority: meta.uiPriority,
-      uiPriority: meta.uiPriority,
-      priority_weight: meta.priorityWeight,
-      priorityWeight: meta.priorityWeight,
-      worker_tags: meta.workerTags,
-      workerTags: meta.workerTags,
-      compressed_digest: meta.compressedDigest,
-      compressedDigest: meta.compressedDigest,
-      approval_state: meta.approvalState,
-      approvalState: meta.approvalState,
-      next_goal: meta.nextGoal,
-      nextGoal: meta.nextGoal,
-    })
+  const settingsRoot = resolveRedteamSettingsRoot(root, process.env)
 
-    let storeResult = null
-    try {
-      storeResult = await invokeStoreMethodCompat(store, 'submitWorkerDigest', currentEng, storePayload)
-    } catch { storeResult = null }
-    if (storeResult === undefined && store) {
-      try { storeResult = dispatch(store, storePayload) } catch { storeResult = null }
+  const resolveDshDispatchHandles = async (rawPayload = {}) => {
+    const settings = readUnifiedSettings(settingsRoot, process.env)
+    const sessionRef = String(rawPayload.session || request.session || resolvedRootSession || '').trim()
+    const rootAgent = sessionRef ? await resolveLiveRootAgent(ctx, sessionRef) : null
+    const subagentsSvc = tryGet(ctx, 'subagents')
+    const cwd = resolveEngagementCwd(ctx, store, rootAgent, sessionRef, rawPayload.cwd)
+    return { settings, sessionRef, rootAgent, subagentsSvc, cwd }
+  }
+
+  const buildFullSettingsResponse = async (opName = 'getSettings') => {
+    const unified = readUnifiedSettings(settingsRoot, process.env)
+    const rawFile = readSettingsCached(settingsRoot)
+    const rawDbEngine = store && typeof store.dbEngineInfo === 'function'
+      ? store.dbEngineInfo()
+      : resolvePgConfig(settingsRoot)
+    const rawPgCandidate = (rawFile && rawFile.pgUrl) || ''
+    const pgUrlMasked = maskPgUrlSafe(rawPgCandidate)
+      || (rawDbEngine && (rawDbEngine.pgUrlMasked || rawDbEngine.maskedUrl))
+      || maskPgUrlSafe((rawDbEngine && rawDbEngine.url) || '')
+    const dbEngine = Object.assign(
+      {},
+      rawDbEngine && typeof rawDbEngine === 'object' ? rawDbEngine : {},
+      { pgUrlMasked },
+    )
+    const currentEng = resolveSessionAwareEngagement()
+    let feishuConfig = null
+    if (currentEng && store) {
+      const wfDag = getWorkflowDagDedup(store, currentEng, reqFlow)
+      if (wfDag && typeof wfDag === 'object') {
+        feishuConfig = wfDag.feishu_config ?? wfDag.feishu ?? null
+      }
+    }
+    const modelCatalog = await fetchLlmModelCatalog(ctx)
+    const sessionRef = String(request.session || resolvedRootSession || '').trim()
+    const liveRootAgent = sessionRef ? await resolveLiveRootAgent(ctx, sessionRef) : null
+    const route = resolveAgentModelRoute(ctx, liveRootAgent)
+    const activeSessionRoute = {
+      provider: route.provider || '',
+      model: route.model || '',
+      reasoningEffort: route.reasoningEffort || '',
+      source: route.source || 'none',
+    }
+    return {
+      ok: true,
+      op: opName,
+      engagement: currentEng || null,
+      active_engagement: currentEng || null,
+      max: unified.maxAgents,
+      maxAgents: unified.maxAgents,
+      max_agents: unified.maxAgents,
+      thinking: unified.thinkingEffort,
+      thinkingEffort: unified.thinkingEffort,
+      thinking_effort: unified.thinkingEffort,
+      maxDepth: unified.maxDepth,
+      max_depth: unified.maxDepth,
+      aiPlanner: unified.aiPlanner,
+      ai_planner: unified.aiPlanner,
+      dispatchPolicy: unified.dispatchPolicy,
+      dispatch_policy: unified.dispatchPolicy,
+      uiPreferences: unified.uiPreferences,
+      ui_preferences: unified.uiPreferences,
+      settings: unified,
+      db_engine: dbEngine,
+      pgUrlMasked,
+      feishu_config: feishuConfig,
+      model_catalog: modelCatalog,
+      active_session_route: activeSessionRoute,
+      limit: MAX_AGENTS_LIMIT,
+      max_depth_limit: MAX_DEPTH_LIMIT,
+      valid_thinking_efforts: VALID_THINKING_EFFORTS,
+    }
+  }
+
+  if (effectiveOp === 'getSettings') {
+    return await buildFullSettingsResponse('getSettings')
+  }
+
+  if (effectiveOp === 'saveSettings') {
+    const mergedRaw = mergeAgentPayload()
+    const src = Object.assign(
+      {},
+      mergedRaw,
+      mergedRaw.config && typeof mergedRaw.config === 'object' ? mergedRaw.config : {},
+      mergedRaw.patch && typeof mergedRaw.patch === 'object' ? mergedRaw.patch : {},
+      mergedRaw.settings && typeof mergedRaw.settings === 'object' ? mergedRaw.settings : {},
+    )
+
+    const hasPgUrl = Object.prototype.hasOwnProperty.call(src, 'pgUrl')
+      || Object.prototype.hasOwnProperty.call(src, 'pg_url')
+    if (hasPgUrl) {
+      const curRaw = readSettingsCached(settingsRoot)
+      const curCfg = resolvePgConfig(settingsRoot)
+      const curPg = String((curRaw && curRaw.pgUrl) || (curCfg && curCfg.url) || '').trim()
+      const curMasked = maskPgUrlSafe(curPg)
+      const curDotMasked = curPg ? curPg.replace(/:\/\/([^:@/]+):([^@/]+)@/, '://$1:••••••@') : ''
+      const rawNextPg = src.pgUrl !== undefined ? src.pgUrl : src.pg_url
+      const nextPgTrimmed = rawNextPg === null || rawNextPg === undefined ? '' : String(rawNextPg).trim()
+      const isUnchangedMasked = Boolean(nextPgTrimmed)
+        && ((curMasked && nextPgTrimmed === curMasked)
+          || (curDotMasked && nextPgTrimmed === curDotMasked)
+          || nextPgTrimmed.includes('••••••'))
+      if (!isUnchangedMasked) {
+        try {
+          savePgUrl(settingsRoot, nextPgTrimmed)
+          if (root && root !== settingsRoot) invalidateSettingsCache(root)
+          try { if (store && typeof store.close === 'function') store.close() } catch { /* ignore */ }
+        } catch (err) {
+          return {
+            ok: false,
+            op: 'saveSettings',
+            error: err && err.message ? err.message : String(err),
+          }
+        }
+      }
     }
 
-    reqFlow.dagByEng.delete(currentEng)
-    bumpEventSeq('submitWorkerDigest', { engagement: currentEng })
+    const patch = {}
+    if (src.maxAgents !== undefined || src.max !== undefined || src.max_agents !== undefined) {
+      patch.maxAgents = clampMaxAgents(src.maxAgents ?? src.max ?? src.max_agents)
+    }
+    const rawThinking = src.thinkingEffort ?? src.thinking_effort ?? src.thinking ?? src.effort
+    if (rawThinking !== undefined) {
+      patch.thinkingEffort = normalizeThinkingEffort(rawThinking)
+    }
+    if (src.maxDepth !== undefined || src.max_depth !== undefined || src.depth !== undefined) {
+      patch.maxDepth = clampMaxDepth(src.maxDepth ?? src.max_depth ?? src.depth)
+    }
+    if ((src.aiPlanner && typeof src.aiPlanner === 'object') || (src.ai_planner && typeof src.ai_planner === 'object')) {
+      patch.aiPlanner = src.aiPlanner || src.ai_planner
+    }
+    if ((src.dispatchPolicy && typeof src.dispatchPolicy === 'object') || (src.dispatch_policy && typeof src.dispatch_policy === 'object')) {
+      patch.dispatchPolicy = src.dispatchPolicy || src.dispatch_policy
+    }
+    if ((src.uiPreferences && typeof src.uiPreferences === 'object') || (src.ui_preferences && typeof src.ui_preferences === 'object')) {
+      patch.uiPreferences = src.uiPreferences || src.ui_preferences
+    }
 
-    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, autoBind: true, reqFlow })
-    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
-    const pgProbe = store && typeof store.pgWriteProbe === 'function'
-      ? store.pgWriteProbe(currentEng)
-      : getPgWriteProbe(currentEng)
+    writeUnifiedSettings(settingsRoot, patch, process.env)
+    invalidateSettingsCache(settingsRoot)
+    if (root && root !== settingsRoot) invalidateSettingsCache(root)
 
-    return Object.assign(
-      {},
-      storeResult && typeof storeResult === 'object' ? storeResult : {},
-      {
-        ok: true,
-        op: 'submitWorkerDigest',
-        engagement: currentEng,
-        active_engagement: currentEng,
-        uiPriority: meta.uiPriority,
-        ui_priority: meta.uiPriority,
-        priorityWeight: meta.priorityWeight,
-        priority_weight: meta.priorityWeight,
-        workerTags: meta.workerTags,
-        worker_tags: meta.workerTags,
-        compressedDigest: meta.compressedDigest,
-        compressed_digest: meta.compressedDigest,
-        approvalState: meta.approvalState,
-        approval_state: meta.approvalState,
-        nextGoal: meta.nextGoal,
-        next_goal: meta.nextGoal,
-        host_sessions: hostSessions,
-        hostSessions,
-        agentNetwork: synth.agentNetwork,
-        agent_network: synth.agentNetwork,
-        nodes: synth.nodes,
-        swimlanes: synth.swimlanes,
-        collabEvents: synth.collabEvents,
-        collab_events: synth.collabEvents,
-        collabTasks: synth.collabTasks,
-        collab_tasks: synth.collabTasks,
-        pg_probe: pgProbe,
-        pgWriteProbe: pgProbe,
+    const feishuIn = (src.feishu_config && typeof src.feishu_config === 'object')
+      ? src.feishu_config
+      : ((src.feishuConfig && typeof src.feishuConfig === 'object')
+        ? src.feishuConfig
+        : (src.feishu && typeof src.feishu === 'object' ? src.feishu : null))
+    const targetEng = resolveSessionAwareEngagement(src.engagement || src.engagement_id || src.engagementId)
+    if (feishuIn && targetEng && store) {
+      const feishuWebhook = String(
+        feishuIn.webhook_url ?? feishuIn.webhookUrl ?? feishuIn.webhook ?? feishuIn.url ?? '',
+      ).trim()
+      const feishuPayload = Object.assign({}, feishuIn, {
+        engagement: targetEng,
+        engagement_id: targetEng,
+        webhook_url: feishuWebhook,
+        webhookUrl: feishuWebhook,
+      })
+      if (typeof store.saveFeishuConfig === 'function') {
+        try { await invokeStoreMethodCompat(store, 'saveFeishuConfig', targetEng, feishuPayload) } catch { /* ignore */ }
+      } else if (typeof store.workflowAction === 'function') {
+        try { await invokeStoreMethodCompat(store, 'workflowAction', targetEng, Object.assign({}, feishuPayload, { action: 'feishuConfig' })) } catch { /* ignore */ }
+      }
+      reqFlow.dagByEng.delete(targetEng)
+    }
+
+    bumpEventSeq('saveSettings')
+    const snapshot = await buildFullSettingsResponse('saveSettings')
+    return Object.assign(snapshot, {
+      saved: true,
+      note: '统一工作台与集群设置已保存并立即生效。',
+    })
+  }
+
+  if (effectiveOp === 'clarifyWishWithAI') {
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveSessionAwareEngagement(rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId)
+    const promptText = String(
+      rawPayload.prompt || rawPayload.user_prompt || rawPayload.userPrompt || rawPayload.wish || rawPayload.goal || rawPayload.text || '',
+    ).trim()
+    if (!promptText) {
+      return {
+        ok: false,
+        op: 'clarifyWishWithAI',
+        engagement: currentEng || null,
+        error: '请输入您的工程目标或需求描述，再发起 AI 智能澄清。',
+      }
+    }
+    const clarifyRes = await clarifyWishWithAI(ctx, store, {
+      prompt: promptText,
+      sessionId: String(rawPayload.session || request.session || resolvedRootSession || '').trim(),
+      cwd: String(rawPayload.cwd || '').trim(),
+      allowStaticFallback: Boolean(rawPayload.allow_static_fallback ?? rawPayload.allowStaticFallback),
+    })
+    return Object.assign({ engagement: currentEng || null }, clarifyRes)
+  }
+
+  if (effectiveOp === 'handoffToCaptain') {
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveSessionAwareEngagement(rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId)
+    const sessionTarget = String(rawPayload.session || request.session || resolvedRootSession || '').trim()
+    const promptText = String(
+      rawPayload.prompt || rawPayload.user_prompt || rawPayload.userPrompt || rawPayload.wish || rawPayload.goal || rawPayload.text || '',
+    ).trim()
+    if (!promptText) {
+      return {
+        ok: false,
+        op: 'handoffToCaptain',
+        engagement: currentEng || null,
+        error: '交由主代理讨论的需求内容不能为空。',
+      }
+    }
+    const rootAgent = await resolveLiveRootAgent(ctx, sessionTarget)
+    if (!rootAgent || typeof rootAgent.followup !== 'function') {
+      return {
+        ok: false,
+        op: 'handoffToCaptain',
+        engagement: currentEng || null,
+        error: '未找到可唤醒的活跃 DSH 主代理会话（rootAgent），请确认当前聊天标签页已连接活跃会话。',
+      }
+    }
+    const rawClar = rawPayload.clarifications_text ?? rawPayload.clarificationsText
+    const clarLines = Array.isArray(rawPayload.clarifications)
+      ? rawPayload.clarifications.map((x) => String(x || '').trim()).filter(Boolean).join('\n')
+      : ''
+    const clarText = [typeof rawClar === 'string' ? rawClar.trim() : '', clarLines].filter(Boolean).join('\n')
+    const handoffText = [
+      '【LMTAgent 工作台 · 交由主代理 Captain 讨论与拆解】',
+      currentEng ? `- 项目工作区（engagement_id）：\`${currentEng}\`` : '',
+      '',
+      '以下为用户原始工程需求，请主控 Captain 直接在对话中与用户讨论确认边界，并按需完成 4-Wave 任务拆解与派发：',
+      promptText,
+      clarText ? `\n补充澄清信息：\n${clarText}` : '',
+    ].filter(Boolean).join('\n')
+    const fRes = sendRootFollowupMessage(rootAgent, handoffText)
+    if (!fRes.ok) {
+      return {
+        ok: false,
+        op: 'handoffToCaptain',
+        engagement: currentEng || null,
+        error: fRes.error || '发送 followup 消息唤醒主代理失败。',
+      }
+    }
+    bumpEventSeq('handoffToCaptain', { engagement: currentEng || null, sessionId: rootAgent.id })
+    return {
+      ok: true,
+      op: 'handoffToCaptain',
+      engagement: currentEng || null,
+      sessionId: rootAgent.id,
+      messageId: fRes.messageId,
+      dispatched: {
+        mode: 'captain_handoff',
+        spawned: [],
+        captainNotified: true,
+        rootAgentId: rootAgent.id,
       },
-    )
+      note: '已将需求发送至 DSH 主代理（Captain）会话并唤醒讨论。',
+    }
   }
 
   const resolveWorkerTaskFromDag = (engId, payloadObj) => {
@@ -5405,92 +6473,526 @@ async function handleAgentsOp(ctx, request) {
     return null
   }
 
-  if (effectiveOp === 'refineAndDecomposeWish' || effectiveOp === 'decomposeUserPrompt') {
-    const rawPayload = Object.assign(
+  if (effectiveOp === 'planApproveWorker') {
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveActionEng(rawPayload)
+    /* 严禁默认回退 'sub-recon' 或以裸角色名（如 'exploit'）作为全局审批键！ */
+    const candidateIds = [
+      rawPayload.worker_id,
+      rawPayload.workerId,
+      rawPayload.worker_task_id,
+      rawPayload.workerTaskId,
+      rawPayload.session_id,
+      rawPayload.sessionId,
+      rawPayload.agentId,
+      rawPayload.id,
+      rawPayload.worker_name,
+      rawPayload.workerName,
+    ]
+      .map((v) => (v !== undefined && v !== null ? String(v).trim() : ''))
+      .filter((v) => v && !isBareRoleName(v))
+
+    let workerKey = candidateIds[0] || ''
+    if (!workerKey) {
+      return {
+        ok: false,
+        engagement: currentEng,
+        error: 'missing or bare-role worker_id for planApproveWorker',
+      }
+    }
+    const approvalState = String(
+      rawPayload.approval_state
+      || rawPayload.approvalState
+      || (rawPayload.decision === 'revision_required' || rawPayload.decision === 'reject' ? 'revision_required' : 'approved')
+    ).trim()
+    const uiPriority = approvalState === 'approved' ? 'P2' : 'P0'
+    const priorityWeight = uiPriority === 'P2' ? 50 : 100
+    const priorityLabel = uiPriority === 'P2' ? 'P2 已审归档' : 'P0 焦点审批'
+    const nextGoal = String(
+      rawPayload.next_goal
+      || rawPayload.nextGoal
+      || '进入下一波次契约联调与回归验证'
+    ).trim()
+
+    const storePayload = Object.assign({}, rawPayload, withEngIds(currentEng, {
+      op: 'planApproveWorker',
+      ...(workerKey ? {
+        worker_id: workerKey,
+        workerId: workerKey,
+        session_id: rawPayload.session_id || rawPayload.sessionId || workerKey,
+        worker_name: rawPayload.worker_name || rawPayload.workerName || workerKey,
+      } : {}),
+      approval_state: approvalState,
+      approvalState,
+      ui_priority: uiPriority,
+      uiPriority,
+      next_goal: nextGoal,
+      nextGoal,
+    }))
+
+    const storeResult = await invokeOrDispatchCompat('approveWorkerAndDispatchNext', currentEng, storePayload)
+
+    const approvedDbWorker = storeResult && typeof storeResult === 'object' ? storeResult.approved_worker : null
+    if (!workerKey && approvedDbWorker) {
+      workerKey = String(
+        approvedDbWorker.session_id || approvedDbWorker.id || approvedDbWorker.worker_name || '',
+      ).trim()
+    }
+    if (!workerKey) {
+      return { ok: false, error: 'missing worker_id or session_id for planApproveWorker' }
+    }
+
+    const overrideEntry = {
+      engagementId: currentEng,
+      workerId: workerKey,
+      approvalState,
+      uiPriority,
+      priorityWeight,
+      priorityLabel,
+      nextGoal,
+      explicitApproved: approvalState === 'approved',
+      approvedAt: new Date().toISOString(),
+    }
+
+    const scopedKeys = [
+      workerKey,
+      ...candidateIds,
+      approvedDbWorker && approvedDbWorker.id !== undefined ? String(approvedDbWorker.id) : '',
+      approvedDbWorker && approvedDbWorker.id !== undefined ? `wt-${approvedDbWorker.id}` : '',
+      approvedDbWorker && approvedDbWorker.session_id ? String(approvedDbWorker.session_id) : '',
+      approvedDbWorker && approvedDbWorker.worker_name ? String(approvedDbWorker.worker_name) : '',
+    ]
+    for (const k of scopedKeys) {
+      setScopedWorkerOverride(currentEng, k, overrideEntry)
+    }
+
+    const { settings, rootAgent, subagentsSvc } = await resolveDshDispatchHandles(rawPayload)
+    const dispatchWarnings = []
+    let wokeChildId = null
+    let captainNotified = false
+    const matchedDagTask = approvedDbWorker || resolveWorkerTaskFromDag(currentEng, rawPayload)
+    const candidateChildId = String(
+      (matchedDagTask && matchedDagTask.session_id)
+      || rawPayload.childId
+      || rawPayload.session_id
+      || rawPayload.sessionId
+      || '',
+    ).trim()
+    const hasRealChild = isRealChildSessionId(ctx, candidateChildId)
+
+    if (settings.dispatchPolicy.autoWakeOnApprove) {
+      if (hasRealChild && rootAgent && subagentsSvc) {
+        const workerLabel = (matchedDagTask && (matchedDagTask.title || matchedDagTask.worker_name)) || workerKey
+        const feedback = String(rawPayload.feedback || rawPayload.reason || rawPayload.note || '').trim()
+        const approvalFollowupPrompt = approvalState === 'approved'
+          ? [
+            `【LMTAgent 审批通过通知】你的子任务 \`${workerLabel}\`（engagement=${currentEng}）已由主控/工作台审批通过（approved）。`,
+            nextGoal ? `下一步指示：${nextGoal}` : '',
+            '如仍有收尾补充或跨波次交接检查请快速完成并汇报；否则可确认收工交付。',
+          ].filter(Boolean).join('\n')
+          : [
+            `【LMTAgent 审批退回修订通知】你的子任务 \`${workerLabel}\`（engagement=${currentEng}）被标记为需修订（${approvalState}）。`,
+            feedback ? `修订意见：${feedback}` : '',
+            nextGoal ? `最新目标/修正指令：${nextGoal}` : '',
+            '请立即根据修订意见调整实现，完成后重新提交 `redteam_workflow` submit_digest 并回报结果。',
+          ].filter(Boolean).join('\n')
+        try {
+          await deliverPromptToChild(subagentsSvc, 'queue', rootAgent, candidateChildId, approvalFollowupPrompt)
+          wokeChildId = candidateChildId
+        } catch (err) {
+          dispatchWarnings.push(`唤醒子代理 ${candidateChildId} 失败：${err && err.message ? err.message : String(err)}`)
+        }
+      } else if (hasRealChild && (!rootAgent || !subagentsSvc)) {
+        dispatchWarnings.push(!rootAgent ? '未解析到活跃 rootAgent，仅完成事实库审批未唤醒智能体' : '宿主 subagents 服务不可用，仅完成事实库审批未唤醒智能体')
+      }
+
+      if (rootAgent && typeof rootAgent.followup === 'function') {
+        const nextDispatched = storeResult && Array.isArray(storeResult.dispatched_next) ? storeResult.dispatched_next : []
+        const captainApprovalNote = [
+          `【LMTAgent 审批同步】任务 \`${workerKey}\`（engagement=${currentEng}）审批结果：${approvalState}（${priorityLabel}）。`,
+          nextGoal ? `- 下一步指示：${nextGoal}` : '',
+          wokeChildId ? `- 已同步唤醒子代理 childId: \`${wokeChildId}\`` : '',
+          nextDispatched.length > 0
+            ? `- 已解锁下游任务：${nextDispatched.map((d) => `${d.worker_name || d.title || d.id}(${d.wave || ''})`).join('、')}，请按 4-Wave 策略接续调度。`
+            : '',
+        ].filter(Boolean).join('\n')
+        try {
+          const fRes = sendRootFollowupMessage(rootAgent, captainApprovalNote)
+          captainNotified = Boolean(fRes.ok)
+          if (!fRes.ok && fRes.error) dispatchWarnings.push(fRes.error)
+        } catch (err) {
+          dispatchWarnings.push(`通知主代理 Captain 失败：${err && err.message ? err.message : String(err)}`)
+        }
+      }
+    }
+
+    const dispatchedInfo = {
+      mode: settings.dispatchPolicy.autoWakeOnApprove ? 'auto_wake' : 'manual',
+      spawned: [],
+      wokeChildId,
+      captainNotified,
+      ...(dispatchWarnings.length > 0 ? { warning: dispatchWarnings.join('；') } : {}),
+    }
+
+    const { hostSessions, synth } = await rebuildCollab(currentEng, {
+      bumpOp: 'planApproveWorker',
+      bumpMeta: { engagement: currentEng, workerId: workerKey },
+    })
+    const pgProbe = readPgProbe(currentEng)
+
+    return Object.assign(
       {},
-      request.payload && typeof request.payload === 'object' ? request.payload : {},
-      request,
+      storeResult && typeof storeResult === 'object' ? storeResult : {},
+      {
+        ok: true,
+        op: 'planApproveWorker',
+        engagement: currentEng,
+        active_engagement: currentEng,
+        worker_id: workerKey,
+        workerId: workerKey,
+        approvalState,
+        approval_state: approvalState,
+        uiPriority,
+        ui_priority: uiPriority,
+        priorityWeight,
+        priority_weight: priorityWeight,
+        priorityLabel,
+        priority_label: priorityLabel,
+        nextGoal,
+        next_goal: nextGoal,
+        dispatched: dispatchedInfo,
+        host_sessions: hostSessions,
+        hostSessions,
+        pg_probe: pgProbe,
+        pgWriteProbe: pgProbe,
+      },
+      synthNetworkFields(synth),
     )
-    const currentEng = rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
+  }
+
+  if (effectiveOp === 'submitWorkerDigest') {
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveActionEng(rawPayload)
+    const meta = computeWorkerLmtexMeta(rawPayload, Number(rawPayload.idx) || 0, { store, engagementId: currentEng })
+    const storePayload = Object.assign({}, rawPayload, withEngIds(currentEng, {
+      op: 'submitWorkerDigest',
+      ui_priority: meta.uiPriority,
+      uiPriority: meta.uiPriority,
+      priority_weight: meta.priorityWeight,
+      priorityWeight: meta.priorityWeight,
+      worker_tags: meta.workerTags,
+      workerTags: meta.workerTags,
+      compressed_digest: meta.compressedDigest,
+      compressedDigest: meta.compressedDigest,
+      approval_state: meta.approvalState,
+      approvalState: meta.approvalState,
+      next_goal: meta.nextGoal,
+      nextGoal: meta.nextGoal,
+    }))
+
+    const storeResult = await invokeOrDispatchCompat('submitWorkerDigest', currentEng, storePayload)
+
+    const { hostSessions, synth } = await rebuildCollab(currentEng, { bumpOp: 'submitWorkerDigest' })
+    const pgProbe = readPgProbe(currentEng)
+
+    return Object.assign(
+      {},
+      storeResult && typeof storeResult === 'object' ? storeResult : {},
+      {
+        ok: true,
+        op: 'submitWorkerDigest',
+        engagement: currentEng,
+        active_engagement: currentEng,
+        uiPriority: meta.uiPriority,
+        ui_priority: meta.uiPriority,
+        priorityWeight: meta.priorityWeight,
+        priority_weight: meta.priorityWeight,
+        workerTags: meta.workerTags,
+        worker_tags: meta.workerTags,
+        compressedDigest: meta.compressedDigest,
+        compressed_digest: meta.compressedDigest,
+        approvalState: meta.approvalState,
+        approval_state: meta.approvalState,
+        nextGoal: meta.nextGoal,
+        next_goal: meta.nextGoal,
+        host_sessions: hostSessions,
+        hostSessions,
+        pg_probe: pgProbe,
+        pgWriteProbe: pgProbe,
+      },
+      synthNetworkFields(synth),
+    )
+  }
+
+  if (effectiveOp === 'dispatchWorkerTask') {
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveActionEng(rawPayload)
+    const matchedTask = resolveWorkerTaskFromDag(currentEng, rawPayload)
+    if (!matchedTask) {
+      return {
+        ok: false,
+        op: 'dispatchWorkerTask',
+        engagement: currentEng,
+        error: '未找到匹配的 worker_task 任务节点，无法拉起执行。',
+      }
+    }
+    const { settings, rootAgent, subagentsSvc, cwd } = await resolveDshDispatchHandles(rawPayload)
+    if (!rootAgent || !subagentsSvc || typeof subagentsSvc.startActivation !== 'function') {
+      const warnMsg = !rootAgent
+        ? '未解析到活跃的 DSH 主代理会话（rootAgent），无法拉起子代理。'
+        : '宿主 subagents 服务不可用（缺少 startActivation），无法拉起子代理。'
+      return {
+        ok: false,
+        op: 'dispatchWorkerTask',
+        engagement: currentEng,
+        worker_task_id: matchedTask.id,
+        error: warnMsg,
+        dispatched: {
+          mode: settings.dispatchPolicy.dispatchMode,
+          provider: settings.dispatchPolicy.subagentProvider,
+          spawned: [],
+          captainNotified: false,
+          warning: warnMsg,
+        },
+      }
+    }
+
+    const dag = getWorkflowDagDedup(store, currentEng, reqFlow)
+    const refinedPrompt = String(
+      rawPayload.refined_prompt
+      || rawPayload.refinedPrompt
+      || (dag && dag.engagement && dag.engagement.goal)
+      || '',
+    ).trim()
+    const extraNote = String(rawPayload.note || rawPayload.extra_note || rawPayload.extraNote || '').trim()
+
+    let started = null
+    try {
+      started = await startSubagentActivationSafe(ctx, subagentsSvc, rootAgent, matchedTask, {
+        provider: settings.dispatchPolicy.subagentProvider || 'spawn',
+        cwd,
+        engId: currentEng,
+        refinedPrompt,
+        maxDepth: settings.maxDepth,
+        thinkingEffort: settings.thinkingEffort,
+        extraNote,
+      })
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err)
+      return {
+        ok: false,
+        op: 'dispatchWorkerTask',
+        engagement: currentEng,
+        worker_task_id: matchedTask.id,
+        error: `拉起子代理失败：${msg}`,
+        dispatched: {
+          mode: settings.dispatchPolicy.dispatchMode,
+          provider: settings.dispatchPolicy.subagentProvider,
+          spawned: [],
+          captainNotified: false,
+          warning: msg,
+        },
+      }
+    }
+
+    if (!started || !started.childId) {
+      return {
+        ok: false,
+        op: 'dispatchWorkerTask',
+        engagement: currentEng,
+        worker_task_id: matchedTask.id,
+        error: 'subagents.startActivation 未返回有效的 childId。',
+      }
+    }
+
+    await bindWorkerSessionCompat(store, currentEng, matchedTask, started.childId, 'running')
+    let captainNotified = false
+    if (typeof rootAgent.followup === 'function') {
+      const syncMsg = [
+        `【LMTAgent 工作台 · 手动拉起节点同步】`,
+        `- 项目工作区（engagement_id）：\`${currentEng}\``,
+        `- 节点 [${matchedTask.wave || 'wave-?'} · ${matchedTask.worker_role || matchedTask.role}] \`${matchedTask.title || matchedTask.worker_name}\` (task_id=${matchedTask.id}) 已由工作台真实拉起，childId: \`${started.childId}\`。`,
+        '请主控 Captain 记录该真实 childId 并避免重复派发，待其通过 `delivery: "parent"` 回传后接续审批与调度。',
+      ].join('\n')
+      try {
+        const fRes = sendRootFollowupMessage(rootAgent, syncMsg)
+        captainNotified = Boolean(fRes.ok)
+      } catch { /* ignore */ }
+    }
+
+    const { hostSessions, synth } = await rebuildCollab(currentEng, {
+      invalidateEngs: true,
+      bumpOp: 'dispatchWorkerTask',
+      bumpMeta: { engagement: currentEng, workerTaskId: matchedTask.id, childId: started.childId },
+      hostEng: currentEng,
+    })
+
+    return Object.assign(
+      {
+        ok: true,
+        op: 'dispatchWorkerTask',
+        engagement: currentEng,
+        active_engagement: currentEng,
+        worker_task_id: matchedTask.id,
+        worker_id: started.childId,
+        session_id: started.childId,
+        childId: started.childId,
+        dispatched: {
+          mode: settings.dispatchPolicy.dispatchMode,
+          provider: settings.dispatchPolicy.subagentProvider || 'spawn',
+          spawned: [{
+            worker_task_id: matchedTask.id,
+            worker_name: matchedTask.worker_name || matchedTask.title,
+            role: matchedTask.worker_role || matchedTask.role,
+            title: matchedTask.title || matchedTask.worker_name,
+            childId: started.childId,
+          }],
+          captainNotified,
+          rootAgentId: rootAgent.id,
+        },
+        host_sessions: hostSessions,
+        hostSessions,
+        note: `已真实拉起执行节点 ${matchedTask.title || matchedTask.worker_name}（childId: ${started.childId}）。`,
+      },
+      synthNetworkFields(synth),
+    )
+  }
+
+  if (effectiveOp === 'refineAndDecomposeWish' || effectiveOp === 'decomposeUserPrompt') {
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveActionEng(rawPayload)
     const promptText = String(
       rawPayload.prompt || rawPayload.user_prompt || rawPayload.userPrompt || rawPayload.wish || rawPayload.goal || rawPayload.text
       || '执行多波次并发架构交付与验证',
     ).trim()
     const templateName = String(rawPayload.template || rawPayload.template_id || '').trim()
     const previewOnly = Boolean(rawPayload.preview_only ?? rawPayload.previewOnly)
-    const localSpec = buildRefinedWishSpec(promptText, templateName, rawPayload)
+    const allowStaticFallback = Boolean(rawPayload.allow_static_fallback ?? rawPayload.allowStaticFallback)
+      && !isRealDshHost(ctx)
+    const sessionRef = String(rawPayload.session || request.session || resolvedRootSession || '').trim()
+    const cwdOverride = String(rawPayload.cwd || '').trim()
 
-    /* 预览模式（preview_only: true）：仅生成人性化需求澄清与可编辑波次提案，绝不写入数据库！ */
+    const rawAnswers = rawPayload.answers && typeof rawPayload.answers === 'object' ? rawPayload.answers : null
+    const answersLines = rawAnswers
+      ? Object.entries(rawAnswers)
+        .map(([k, v]) => `- ${k}: ${Array.isArray(v) ? v.join('；') : String(v || '')}`)
+        .filter((s) => !s.endsWith(': '))
+      : []
+    const clarificationsText = [
+      typeof (rawPayload.clarifications_text ?? rawPayload.clarificationsText) === 'string'
+        ? String(rawPayload.clarifications_text ?? rawPayload.clarificationsText).trim()
+        : '',
+      ...(Array.isArray(rawPayload.clarifications) ? rawPayload.clarifications.map((x) => String(x || '').trim()).filter(Boolean) : []),
+      ...answersLines,
+    ].filter(Boolean).join('\n')
+
+    /* 预览模式（preview_only: true）：必须调用真实 DSH LLM 拆解；绝不静默回退静态假模板（除非非真实宿主显式传 allow_static_fallback: true） */
     if (previewOnly) {
-      let storePreview = null
-      const previewPayload = Object.assign({}, rawPayload, {
-        engagement_id: currentEng,
+      const aiRes = await decomposeWishWithAI(ctx, store, {
         prompt: promptText,
-        user_prompt: promptText,
         template: templateName,
-        preview_only: true,
+        clarificationsText,
+        sessionId: sessionRef,
+        cwd: cwdOverride,
       })
-      if (store && typeof store.refineAndDecomposeWish === 'function') {
-        try {
-          storePreview = await invokeStoreMethodCompat(store, 'refineAndDecomposeWish', currentEng, previewPayload)
-        } catch { storePreview = null }
-      } else if (store && typeof store.refineUserWish === 'function') {
-        try {
-          storePreview = await invokeStoreMethodCompat(store, 'refineUserWish', currentEng, previewPayload)
-        } catch { storePreview = null }
+
+      if (aiRes.ok) {
+        const previewGoals = aiRes.goals.map((g, idx) => normalizeWishGoalItem(g, idx))
+        const projectNameText = aiRes.project_name || extractWishTitle(promptText)
+        const refinedPromptText = aiRes.refined_prompt || promptText
+        const summaryText = aiRes.summary || `已由 ${aiRes.model} 拆解为 ${previewGoals.length} 个无冲突并发子任务。`
+        const mergedSpec = {
+          title: projectNameText,
+          project_name: projectNameText,
+          projectName: projectNameText,
+          template: templateName || 'custom',
+          raw_prompt: promptText,
+          refined_prompt: refinedPromptText,
+          refinedPrompt: refinedPromptText,
+          summary: summaryText,
+          clarifications: aiRes.clarifications || [],
+          deliverables: aiRes.deliverables || [],
+          proposed_waves: previewGoals,
+          goals: previewGoals,
+          model: aiRes.model,
+          provider: aiRes.provider,
+          ai_generated: true,
+        }
+        return {
+          ok: true,
+          op: effectiveOp,
+          preview_only: true,
+          ai_generated: true,
+          model: aiRes.model,
+          provider: aiRes.provider,
+          cwd: aiRes.cwd || '',
+          engagement: currentEng,
+          active_engagement: currentEng,
+          prompt: promptText,
+          project_name: projectNameText,
+          projectName: projectNameText,
+          refined_prompt: refinedPromptText,
+          refinedPrompt: refinedPromptText,
+          summary: summaryText,
+          template: templateName || 'custom',
+          goals: previewGoals,
+          stages: previewGoals,
+          subgoals: previewGoals,
+          proposed_waves: previewGoals,
+          blueprint: {
+            project_name: projectNameText,
+            refined_prompt: refinedPromptText,
+            summary: summaryText,
+            goals: previewGoals,
+          },
+          refined_spec: mergedSpec,
+          refinedSpec: mergedSpec,
+        }
       }
-      const storeSpecCandidate = storePreview && typeof storePreview === 'object'
-        ? ((storePreview.refined_spec && typeof storePreview.refined_spec === 'object')
-          ? storePreview.refined_spec
-          : (Array.isArray(storePreview.proposed_waves) || Array.isArray(storePreview.goals) || storePreview.title || storePreview.summary ? storePreview : null))
-        : null
-      const rawPreviewGoals = (storePreview && Array.isArray(storePreview.goals) && storePreview.goals.length > 0)
-        ? storePreview.goals
-        : ((storeSpecCandidate && Array.isArray(storeSpecCandidate.proposed_waves) && storeSpecCandidate.proposed_waves.length > 0)
-          ? storeSpecCandidate.proposed_waves
-          : localSpec.proposed_waves)
-      const previewGoals = rawPreviewGoals.map((g, idx) => normalizeWishGoalItem(g, idx))
-      const projectNameText = String(
-        (storePreview && (storePreview.project_name || storePreview.projectName))
-        || (storeSpecCandidate && (storeSpecCandidate.project_name || storeSpecCandidate.title))
-        || localSpec.project_name
-        || localSpec.title,
-      ).trim()
-      const refinedPromptText = String(
-        (storePreview && (storePreview.refined_prompt || storePreview.refinedPrompt))
-        || (storeSpecCandidate && (storeSpecCandidate.refined_prompt || storeSpecCandidate.refinedPrompt))
-        || localSpec.refined_prompt,
-      ).trim()
-      const mergedSpec = Object.assign({}, localSpec, storeSpecCandidate || {}, {
-        title: projectNameText,
-        project_name: projectNameText,
-        projectName: projectNameText,
-        refined_prompt: refinedPromptText,
-        refinedPrompt: refinedPromptText,
+
+      if (!allowStaticFallback) {
+        return {
+          ok: false,
+          op: effectiveOp,
+          preview_only: true,
+          engagement: currentEng,
+          active_engagement: currentEng,
+          llm_unavailable: true,
+          ...(aiRes.model ? { model: aiRes.model } : {}),
+          ...(aiRes.provider ? { provider: aiRes.provider } : {}),
+          error: aiRes.error || 'DSH LLM 服务不可用，无法进行 AI 需求拆解。',
+        }
+      }
+
+      const localSpec = buildRefinedWishSpec(promptText, templateName, rawPayload)
+      const previewGoals = localSpec.proposed_waves.map((g, idx) => normalizeWishGoalItem(g, idx))
+      const mergedSpec = Object.assign({}, localSpec, {
+        fallback_used: true,
         proposed_waves: previewGoals,
         goals: previewGoals,
       })
       return {
         ok: true,
+        fallback_used: true,
         op: effectiveOp,
         preview_only: true,
         engagement: currentEng,
         active_engagement: currentEng,
         prompt: promptText,
-        project_name: projectNameText,
-        projectName: projectNameText,
-        refined_prompt: refinedPromptText,
-        refinedPrompt: refinedPromptText,
+        project_name: localSpec.project_name,
+        projectName: localSpec.project_name,
+        refined_prompt: localSpec.refined_prompt,
+        refinedPrompt: localSpec.refined_prompt,
+        summary: localSpec.summary,
         template: templateName || localSpec.template,
         goals: previewGoals,
         stages: previewGoals,
         subgoals: previewGoals,
         proposed_waves: previewGoals,
         blueprint: {
-          project_name: projectNameText,
-          refined_prompt: refinedPromptText,
+          project_name: localSpec.project_name,
+          refined_prompt: localSpec.refined_prompt,
+          summary: localSpec.summary,
           goals: previewGoals,
         },
         refined_spec: mergedSpec,
@@ -5507,8 +7009,38 @@ async function handleAgentsOp(ctx, request) {
           : (Array.isArray(rawPayload.stages) && rawPayload.stages.length > 0
             ? rawPayload.stages
             : (Array.isArray(rawPayload.subgoals) && rawPayload.subgoals.length > 0 ? rawPayload.subgoals : null))))
+
+    let aiRes = null
+    if (!callerExplicitGoals) {
+      aiRes = await decomposeWishWithAI(ctx, store, {
+        prompt: promptText,
+        template: templateName,
+        clarificationsText,
+        sessionId: sessionRef,
+        cwd: cwdOverride,
+      })
+      if (!aiRes.ok && !allowStaticFallback) {
+        return {
+          ok: false,
+          op: effectiveOp,
+          preview_only: false,
+          engagement: currentEng,
+          active_engagement: currentEng,
+          llm_unavailable: true,
+          ...(aiRes.model ? { model: aiRes.model } : {}),
+          ...(aiRes.provider ? { provider: aiRes.provider } : {}),
+          error: aiRes.error || 'DSH LLM 服务不可用，未能生成 AI 拆解任务。',
+        }
+      }
+    }
+
+    const fallbackSpec = (!callerExplicitGoals && (!aiRes || !aiRes.ok) && allowStaticFallback)
+      ? buildRefinedWishSpec(promptText, templateName, rawPayload)
+      : null
     const sourceGoalsForStore = callerExplicitGoals
-      || (effectiveOp === 'refineAndDecomposeWish' ? localSpec.proposed_waves : null)
+      || (aiRes && aiRes.ok ? aiRes.goals : null)
+      || (fallbackSpec ? fallbackSpec.proposed_waves : null)
+
     const normalizedStoreGoals = sourceGoalsForStore
       ? sourceGoalsForStore.map((g, idx) => {
         const item = normalizeWishGoalItem(g, idx)
@@ -5524,25 +7056,63 @@ async function handleAgentsOp(ctx, request) {
           description: item.goal,
           assigned_goal: item.goal,
           files_owned: item.files_owned,
+          acceptance_criteria: item.acceptance_criteria,
           ui_priority: item.ui_priority,
         })
       })
       : undefined
 
-    const storePayload = Object.assign({}, rawPayload, {
+    const resolvedProjectName = String(
+      rawPayload.project_name
+      || rawPayload.projectName
+      || (aiRes && aiRes.project_name)
+      || (fallbackSpec && fallbackSpec.project_name)
+      || extractWishTitle(promptText),
+    ).trim()
+    const resolvedRefinedPrompt = String(
+      rawPayload.refined_prompt
+      || rawPayload.refinedPrompt
+      || (aiRes && aiRes.refined_prompt)
+      || (fallbackSpec && fallbackSpec.refined_prompt)
+      || promptText,
+    ).trim()
+    const resolvedSummary = String(
+      rawPayload.summary
+      || (aiRes && aiRes.summary)
+      || (fallbackSpec && fallbackSpec.summary)
+      || `已确认 ${normalizedStoreGoals ? normalizedStoreGoals.length : 0} 项多波次分片任务并准备派发执行。`,
+    ).trim()
+
+    const activeSpec = {
+      title: resolvedProjectName,
+      project_name: resolvedProjectName,
+      projectName: resolvedProjectName,
+      template: templateName || (fallbackSpec && fallbackSpec.template) || 'custom',
+      raw_prompt: promptText,
+      refined_prompt: resolvedRefinedPrompt,
+      refinedPrompt: resolvedRefinedPrompt,
+      summary: resolvedSummary,
+      clarifications: (aiRes && aiRes.clarifications) || (fallbackSpec && fallbackSpec.clarifications) || [],
+      deliverables: (aiRes && aiRes.deliverables) || (fallbackSpec && fallbackSpec.deliverables) || [],
+      proposed_waves: normalizedStoreGoals || [],
+      goals: normalizedStoreGoals || [],
+      ...(aiRes && aiRes.ok ? { model: aiRes.model, provider: aiRes.provider, ai_generated: true } : {}),
+      ...(fallbackSpec ? { fallback_used: true } : {}),
+    }
+
+    const storePayload = Object.assign({}, rawPayload, withEngIds(currentEng, {
       op: effectiveOp,
-      engagement: currentEng,
-      engagement_id: currentEng,
-      engagementId: currentEng,
       prompt: promptText,
       user_prompt: promptText,
-      refined_prompt: String(rawPayload.refined_prompt || rawPayload.refinedPrompt || localSpec.refined_prompt || promptText),
+      refined_prompt: resolvedRefinedPrompt,
       template: templateName,
       preview_only: false,
-      refined_spec: localSpec,
-      proposed_waves: localSpec.proposed_waves,
-      waves: rawPayload.proposed_waves || rawPayload.waves || localSpec.proposed_waves,
-    })
+      require_ai: true,
+      ...(aiRes && aiRes.ok ? { ai_generated: true, model: aiRes.model, provider: aiRes.provider } : {}),
+      refined_spec: activeSpec,
+      proposed_waves: activeSpec.proposed_waves,
+      waves: rawPayload.proposed_waves || rawPayload.waves || activeSpec.proposed_waves,
+    }))
     if (normalizedStoreGoals) {
       storePayload.goals = normalizedStoreGoals
     }
@@ -5553,40 +7123,46 @@ async function handleAgentsOp(ctx, request) {
         storeResult = await invokeStoreMethodCompat(store, 'refineAndDecomposeWish', currentEng, storePayload)
       } catch { storeResult = null }
     }
-    if (!storeResult && store && typeof store.decomposeUserPrompt === 'function') {
-      try {
-        storeResult = await invokeStoreMethodCompat(store, 'decomposeUserPrompt', currentEng, storePayload)
-      } catch { storeResult = null }
-    }
     if (!storeResult && store) {
-      try { storeResult = dispatch(store, Object.assign({}, storePayload, { op: 'decomposeUserPrompt' })) } catch { storeResult = null }
+      storeResult = await invokeOrDispatchCompat('decomposeUserPrompt', currentEng, Object.assign({}, storePayload, { op: 'decomposeUserPrompt' }))
+    }
+    if (storeResult && storeResult.ok === false) {
+      return Object.assign({ op: effectiveOp, engagement: currentEng }, storeResult)
     }
 
     reqFlow.dagByEng.delete(currentEng)
-    invalidateEngagementCaches(store)
-    bumpEventSeq(effectiveOp, { engagement: currentEng })
+    const preDispatchDag = getWorkflowDagDedup(store, currentEng, reqFlow)
+    const workerTasksForDispatch = (storeResult && Array.isArray(storeResult.worker_tasks) && storeResult.worker_tasks.length > 0)
+      ? storeResult.worker_tasks
+      : ((preDispatchDag && Array.isArray(preDispatchDag.worker_tasks)) ? preDispatchDag.worker_tasks : [])
 
-    const hostSessions = await discoverHostSessions(ctx, store, {
-      sessionId: request.session,
+    const dispatched = await dispatchWorkflowToDshAgents(ctx, store, {
       engagementId: currentEng,
-      autoBind: true,
-      reqFlow,
+      sessionId: sessionRef,
+      refinedPrompt: resolvedRefinedPrompt,
+      userPrompt: promptText,
+      workerTasks: workerTasksForDispatch,
+      goals: normalizedStoreGoals || [],
+      cwd: cwdOverride || (aiRes && aiRes.cwd) || '',
     })
-    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
+
+    const { hostSessions, synth } = await rebuildCollab(currentEng, {
+      invalidateEngs: true,
+      bumpOp: effectiveOp,
+      hostEng: currentEng,
+    })
     const freshDag = getWorkflowDagDedup(store, currentEng, reqFlow)
-    const pgProbe = store && typeof store.pgWriteProbe === 'function'
-      ? store.pgWriteProbe(currentEng)
-      : getPgWriteProbe(currentEng)
+    const pgProbe = readPgProbe(currentEng)
 
     const finalSpec = (storeResult && storeResult.refined_spec && typeof storeResult.refined_spec === 'object')
-      ? Object.assign({}, localSpec, storeResult.refined_spec)
-      : localSpec
-    const goalsOut = (storeResult && Array.isArray(storeResult.goals) && storeResult.goals.length > 0)
-      ? storeResult.goals
-      : ((freshDag && Array.isArray(freshDag.plan_goals)) ? freshDag.plan_goals : [])
-    const workerTasksOut = (storeResult && Array.isArray(storeResult.worker_tasks) && storeResult.worker_tasks.length > 0)
-      ? storeResult.worker_tasks
-      : ((freshDag && Array.isArray(freshDag.worker_tasks)) ? freshDag.worker_tasks : [])
+      ? Object.assign({}, activeSpec, storeResult.refined_spec)
+      : activeSpec
+    const goalsOut = (freshDag && Array.isArray(freshDag.plan_goals) && freshDag.plan_goals.length > 0)
+      ? freshDag.plan_goals
+      : ((storeResult && Array.isArray(storeResult.goals)) ? storeResult.goals : [])
+    const workerTasksOut = (freshDag && Array.isArray(freshDag.worker_tasks) && freshDag.worker_tasks.length > 0)
+      ? freshDag.worker_tasks
+      : workerTasksForDispatch
 
     return Object.assign(
       {
@@ -5609,49 +7185,37 @@ async function handleAgentsOp(ctx, request) {
         ok: true,
         op: effectiveOp,
         preview_only: false,
+        ai_generated: Boolean((aiRes && aiRes.ok) || rawPayload.ai_generated || callerExplicitGoals),
+        ...(aiRes && aiRes.model ? { model: aiRes.model, provider: aiRes.provider } : {}),
+        ...(fallbackSpec ? { fallback_used: true } : {}),
         prompt: promptText,
-        refined_prompt: finalSpec.refined_prompt || localSpec.refined_prompt,
+        refined_prompt: finalSpec.refined_prompt || resolvedRefinedPrompt,
         project_name: finalSpec.project_name || finalSpec.title,
+        summary: finalSpec.summary || resolvedSummary,
         refined_spec: finalSpec,
         refinedSpec: finalSpec,
         goals: goalsOut,
         plan_goals: goalsOut,
         worker_tasks: workerTasksOut,
-        proposed_waves: finalSpec.proposed_waves || localSpec.proposed_waves,
+        proposed_waves: finalSpec.proposed_waves || activeSpec.proposed_waves,
+        dispatched,
         engagement: currentEng,
         active_engagement: currentEng,
         host_sessions: hostSessions,
         hostSessions,
-        agentNetwork: synth.agentNetwork,
-        agent_network: synth.agentNetwork,
-        nodes: synth.nodes,
-        swimlanes: synth.swimlanes,
-        collabEvents: synth.collabEvents,
-        collab_events: synth.collabEvents,
-        collabTasks: synth.collabTasks,
-        collab_tasks: synth.collabTasks,
         pg_probe: pgProbe,
         pgWriteProbe: pgProbe,
       },
+      synthNetworkFields(synth),
     )
   }
 
   if (effectiveOp === 'updateWorkerGoal') {
-    const rawPayload = Object.assign(
-      {},
-      request.payload && typeof request.payload === 'object' ? request.payload : {},
-      request,
-    )
-    const currentEng = rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveActionEng(rawPayload)
     const matchedTask = resolveWorkerTaskFromDag(currentEng, rawPayload)
     const resolvedGoalText = rawPayload.assigned_goal ?? rawPayload.assignedGoal ?? rawPayload.goal ?? rawPayload.objective
-    const payloadWithEng = Object.assign({}, rawPayload, {
-      engagement: currentEng,
-      engagement_id: currentEng,
-      engagementId: currentEng,
-    })
+    const payloadWithEng = withEngIds(currentEng, rawPayload)
     if (matchedTask && matchedTask.id !== undefined && matchedTask.id !== null) {
       payloadWithEng.worker_task_id = matchedTask.id
       payloadWithEng.id = matchedTask.id
@@ -5660,156 +7224,189 @@ async function handleAgentsOp(ctx, request) {
       payloadWithEng.assigned_goal = resolvedGoalText
       payloadWithEng.goal = resolvedGoalText
     }
-    let storeResult = null
-    if (store && typeof store.updateWorkerGoal === 'function') {
-      try {
-        storeResult = await invokeStoreMethodCompat(store, 'updateWorkerGoal', currentEng, payloadWithEng)
-      } catch (err) {
-        return { ok: false, error: err && err.message ? err.message : String(err) }
-      }
-    } else if (store && typeof store.db === 'function') {
-      try {
-        const db = store.db(currentEng)
-        const targetId = String(payloadWithEng.worker_task_id ?? rawPayload.worker_id ?? rawPayload.id ?? rawPayload.session_id ?? '').trim()
-        const strippedTarget = targetId.startsWith('wt-') ? targetId.slice(3) : targetId
-        const row = targetId
-          ? (db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ? OR CAST(id AS TEXT) = ? OR session_id = ? OR worker_name = ? LIMIT 1')
-            .get(targetId, strippedTarget, targetId, targetId))
-          : null
-        if (!row) return { ok: false, error: `worker_task not found: ${targetId}` }
-        const nextGoalVal = resolvedGoalText ?? row.assigned_goal
-        const nextName = rawPayload.worker_name ?? rawPayload.title ?? row.worker_name
-        const nextPrio = ['P0', 'P1', 'P2', 'P3'].includes(rawPayload.ui_priority || rawPayload.uiPriority)
-          ? (rawPayload.ui_priority || rawPayload.uiPriority)
-          : row.ui_priority
-        const now = new Date().toISOString()
-        db.prepare('UPDATE worker_tasks SET assigned_goal = ?, worker_name = ?, ui_priority = ?, updated_at = ? WHERE id = ?')
-          .run(String(nextGoalVal || ''), String(nextName || ''), nextPrio, now, row.id)
-        if (rawPayload.files_owned !== undefined || rawPayload.filesOwned !== undefined) {
-          const filesJson = JSON.stringify(parseJsonArraySafe(rawPayload.files_owned ?? rawPayload.filesOwned))
-          try {
-            db.prepare('UPDATE worker_tasks SET files_owned_json = ? WHERE id = ?').run(filesJson, row.id)
-          } catch { /* column optional on legacy schema */ }
-        }
-        const updated = db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(row.id)
-        storeResult = { ok: true, worker_task: updated }
-      } catch (err) {
-        return { ok: false, error: err && err.message ? err.message : String(err) }
-      }
+    const storeResult = await runWorkerMutation('updateWorkerGoal', 'updateWorkerGoal', currentEng, payloadWithEng)
+    if (storeResult && storeResult.ok === false && typeof storeResult.error === 'string') {
+      return storeResult
     }
 
-    reqFlow.dagByEng.delete(currentEng)
-    bumpEventSeq('updateWorkerGoal', { engagement: currentEng })
-    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: currentEng, autoBind: true, reqFlow })
-    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
-    return Object.assign({}, storeResult && typeof storeResult === 'object' ? storeResult : {}, {
-      ok: storeResult && storeResult.ok === false ? false : true,
-      op: 'updateWorkerGoal',
-      engagement: currentEng,
-      nodes: synth.nodes,
-      swimlanes: synth.swimlanes,
-      collabTasks: synth.collabTasks,
-      collab_tasks: synth.collabTasks,
-      agentNetwork: synth.agentNetwork,
-    })
+    const targetTask = (storeResult && storeResult.worker_task && typeof storeResult.worker_task === 'object')
+      ? storeResult.worker_task
+      : (resolveWorkerTaskFromDag(currentEng, payloadWithEng) || matchedTask)
+    const childId = String((targetTask && targetTask.session_id) || rawPayload.session_id || rawPayload.sessionId || '').trim()
+    const { rootAgent, subagentsSvc } = await resolveDshDispatchHandles(rawPayload)
+    const warnings = []
+    let wokeChildId = null
+    let captainNotified = false
+    let dispatchMode = 'noop'
+
+    const agentsSvc = tryGet(ctx, 'agents')
+    let liveChild = null
+    if (agentsSvc && typeof agentsSvc.get === 'function' && childId) {
+      try { liveChild = agentsSvc.get(childId) } catch { liveChild = null }
+    }
+    const childStateStr = liveChild ? String(liveChild.state || liveChild.status || '').toLowerCase() : ''
+    const isRunning = liveChild
+      ? (['running', 'busy', 'working', 'streaming'].includes(childStateStr) || Boolean(liveChild.busy))
+      : String((targetTask && targetTask.status) || '').toLowerCase() === 'running'
+    const deliverMode = isRunning ? 'steer' : 'queue'
+
+    const goalTextStr = String(resolvedGoalText ?? (targetTask && targetTask.assigned_goal) ?? '').trim()
+    const updateMsg = [
+      '【LMTAgent · 子任务目标变更通知】',
+      `- 任务节点：${(targetTask && (targetTask.title || targetTask.worker_name)) || payloadWithEng.worker_task_id || ''}`,
+      goalTextStr ? `- 最新执行目标（assigned_goal）：${goalTextStr}` : '',
+      rawPayload.files_owned ? `- 最新文件分片（files_owned）：${JSON.stringify(rawPayload.files_owned)}` : '',
+      '请立刻按最新目标调整执行方案，并在完成后提交 `redteam_workflow` submit_digest。',
+    ].filter(Boolean).join('\n')
+
+    if (isRealChildSessionId(ctx, childId) && rootAgent && subagentsSvc) {
+      try {
+        await deliverPromptToChild(subagentsSvc, deliverMode, rootAgent, childId, updateMsg)
+        wokeChildId = childId
+        dispatchMode = deliverMode
+      } catch (err) {
+        warnings.push(`向子代理 ${childId} 投递目标变更（${deliverMode}）失败：${err && err.message ? err.message : String(err)}`)
+      }
+    } else if (isRealChildSessionId(ctx, childId)) {
+      warnings.push(!rootAgent ? '未解析到活跃 rootAgent，仅更新事实库目标' : '宿主 subagents 服务不可用，仅更新事实库目标')
+    } else {
+      warnings.push('该节点尚未绑定真实 DSH 子会话 childId，仅更新事实库目标')
+    }
+
+    if (rootAgent && typeof rootAgent.followup === 'function') {
+      const captainNote = [
+        `【LMTAgent 目标变更同步】工作区 \`${currentEng}\` 节点 \`${(targetTask && (targetTask.title || targetTask.worker_name)) || payloadWithEng.worker_task_id || ''}\` 目标已更新。`,
+        goalTextStr ? `- 新目标：${goalTextStr.slice(0, 300)}` : '',
+        wokeChildId ? `- 已通过 \`${dispatchMode}Prompt\` 实时同步给 childId: \`${wokeChildId}\`` : '',
+      ].filter(Boolean).join('\n')
+      try {
+        const fRes = sendRootFollowupMessage(rootAgent, captainNote)
+        captainNotified = Boolean(fRes.ok)
+      } catch { /* ignore */ }
+    }
+
+    const { synth } = await rebuildCollab(currentEng, { bumpOp: 'updateWorkerGoal', hostEng: currentEng })
+    return Object.assign(
+      {},
+      storeResult && typeof storeResult === 'object' ? storeResult : {},
+      {
+        ok: storeResult && storeResult.ok === false ? false : true,
+        op: 'updateWorkerGoal',
+        engagement: currentEng,
+        dispatched: {
+          mode: dispatchMode,
+          spawned: [],
+          wokeChildId,
+          captainNotified,
+          ...(warnings.length > 0 ? { warning: warnings.join('；') } : {}),
+        },
+      },
+      synthNetworkFields(synth, { includeEvents: false }),
+    )
   }
 
   if (effectiveOp === 'addCustomWorkerTask') {
-    const rawPayload = Object.assign(
-      {},
-      request.payload && typeof request.payload === 'object' ? request.payload : {},
-      request,
-    )
-    const currentEng = rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
-    const payloadWithEng = Object.assign({}, rawPayload, {
-      engagement: currentEng,
-      engagement_id: currentEng,
-      engagementId: currentEng,
-    })
-    let storeResult = null
-    if (store && typeof store.addCustomWorkerTask === 'function') {
-      try {
-        storeResult = await invokeStoreMethodCompat(store, 'addCustomWorkerTask', currentEng, payloadWithEng)
-      } catch (err) {
-        return { ok: false, error: err && err.message ? err.message : String(err) }
-      }
-    } else if (store && typeof store.db === 'function') {
-      try {
-        if (typeof store.workflowDag === 'function') store.workflowDag(currentEng)
-        const db = store.db(currentEng)
-        const now = new Date().toISOString()
-        const role = inferAgentRole(rawPayload.title || rawPayload.worker_name || '', false, rawPayload.worker_role || rawPayload.role || 'exploit')
-        const waveNum = parseWaveNumber(rawPayload.wave, AGENT_ROLE_META[role]?.wave || 3)
-        const waveStr = `wave-${waveNum}`
-        const wName = String(rawPayload.worker_name || rawPayload.title || `${role}-${Date.now().toString(36)}`).trim()
-        const goalText = String(rawPayload.assigned_goal || rawPayload.goal || rawPayload.objective || wName).trim()
-        const prio = ['P0', 'P1', 'P2', 'P3'].includes(rawPayload.ui_priority || rawPayload.uiPriority)
-          ? (rawPayload.ui_priority || rawPayload.uiPriority)
-          : 'P1'
-        const weight = PRIORITY_META[prio] ? PRIORITY_META[prio].priorityWeight : 80
-        const sessId = String(rawPayload.session_id || `wt-custom-${Date.now().toString(36)}`)
-        const cols = db.prepare('PRAGMA table_info(worker_tasks)').all()
-        const idCol = cols.find((c) => c.name === 'id')
-        const intPk = Boolean(idCol && /INT/i.test(String(idCol.type || '')))
-        const bindId = intPk ? null : sessId
-        const resIns = db.prepare(`
-          INSERT INTO worker_tasks (
-            id, engagement_id, goal_id, session_id, worker_name, worker_role,
-            wave, ui_priority, priority_weight, tags_json, assigned_goal,
-            status, approval_state, next_goal, tool_calls, turns, created_at, updated_at
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        `).run(
-          bindId, currentEng, rawPayload.goal_id ?? null, sessId, wName, role,
-          waveStr, prio, weight, JSON.stringify([`#${waveStr}`, `#${role}`]), goalText,
-          String(rawPayload.status || 'pending'), 'in_progress', '', 0, 0, now, now,
-        )
-        const rowId = bindId !== null ? bindId : Number(resIns.lastInsertRowid)
-        if (rawPayload.files_owned !== undefined || rawPayload.filesOwned !== undefined) {
-          const filesJson = JSON.stringify(parseJsonArraySafe(rawPayload.files_owned ?? rawPayload.filesOwned))
-          try { db.prepare('UPDATE worker_tasks SET files_owned_json = ? WHERE id = ?').run(filesJson, rowId) } catch { /* ignore */ }
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveActionEng(rawPayload)
+    const payloadWithEng = withEngIds(currentEng, rawPayload)
+    const storeResult = await runWorkerMutation('addCustomWorkerTask', 'addCustomWorkerTask', currentEng, payloadWithEng)
+    if (storeResult && storeResult.ok === false && typeof storeResult.error === 'string') {
+      return storeResult
+    }
+    const createdTask = (storeResult && storeResult.worker_task && typeof storeResult.worker_task === 'object')
+      ? Object.assign({}, storeResult.worker_task)
+      : resolveWorkerTaskFromDag(currentEng, {
+        id: storeResult && (storeResult.worker_task_id ?? storeResult.id),
+        worker_name: rawPayload.worker_name || rawPayload.workerName,
+      })
+
+    const { settings, rootAgent, subagentsSvc, cwd } = await resolveDshDispatchHandles(rawPayload)
+    const shouldAutoDispatch = rawPayload.autoStart !== false && rawPayload.auto_dispatch !== false
+    const spawned = []
+    const warnings = []
+    let captainNotified = false
+
+    if (createdTask && shouldAutoDispatch && (settings.dispatchPolicy.dispatchMode !== 'captain_only' || rawPayload.autoStart === true)) {
+      if (rootAgent && subagentsSvc && typeof subagentsSvc.startActivation === 'function') {
+        const dag = getWorkflowDagDedup(store, currentEng, reqFlow)
+        const refinedPrompt = String((dag && dag.engagement && dag.engagement.goal) || '').trim()
+        try {
+          const started = await startSubagentActivationSafe(ctx, subagentsSvc, rootAgent, createdTask, {
+            provider: settings.dispatchPolicy.subagentProvider || 'spawn',
+            cwd,
+            engId: currentEng,
+            refinedPrompt,
+            maxDepth: settings.maxDepth,
+            thinkingEffort: settings.thinkingEffort,
+          })
+          if (started && started.childId) {
+            await bindWorkerSessionCompat(store, currentEng, createdTask, started.childId, 'running')
+            createdTask.session_id = started.childId
+            createdTask.status = 'running'
+            spawned.push({
+              worker_task_id: createdTask.id,
+              worker_name: createdTask.worker_name || createdTask.title,
+              role: createdTask.worker_role || rawPayload.worker_role || rawPayload.role || 'exploit',
+              childId: started.childId,
+            })
+          } else {
+            warnings.push('startActivation 未返回有效的 childId')
+          }
+        } catch (err) {
+          warnings.push(`拉起自定义子任务失败：${err && err.message ? err.message : String(err)}`)
         }
-        const inserted = db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(rowId)
-        storeResult = { ok: true, worker_task: inserted }
-      } catch (err) {
-        return { ok: false, error: err && err.message ? err.message : String(err) }
+      } else {
+        warnings.push(!rootAgent ? '未解析到活跃 rootAgent，自定义任务已落库等待拉起' : '宿主 subagents 服务不可用，自定义任务已落库等待拉起')
       }
     }
 
-    reqFlow.dagByEng.delete(currentEng)
-    bumpEventSeq('addCustomWorkerTask', { engagement: currentEng })
-    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: currentEng, autoBind: true, reqFlow })
-    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
-    const createdTask = storeResult && storeResult.worker_task && typeof storeResult.worker_task === 'object'
-      ? storeResult.worker_task
-      : null
+    if (rootAgent && typeof rootAgent.followup === 'function') {
+      const taskLabel = createdTask
+        ? `[${createdTask.wave || 'wave-?'} · ${createdTask.worker_role || 'exploit'}] ${createdTask.title || createdTask.worker_name} (task_id=${createdTask.id})`
+        : (rawPayload.title || rawPayload.worker_name || 'custom-worker')
+      const captainNote = spawned.length > 0
+        ? `【LMTAgent 新增分片同步】工作区 \`${currentEng}\` 新增自定义任务 ${taskLabel}，已由工作台真实拉起 childId: \`${spawned[0].childId}\`（请勿重复派发）。`
+        : `【LMTAgent 新增分片同步】工作区 \`${currentEng}\` 新增自定义任务 ${taskLabel}，请主控 Captain 按波次约束安排调度。`
+      try {
+        const fRes = sendRootFollowupMessage(rootAgent, captainNote)
+        captainNotified = Boolean(fRes.ok)
+      } catch { /* ignore */ }
+    }
+
+    const { synth } = await rebuildCollab(currentEng, {
+      invalidateEngs: spawned.length > 0,
+      bumpOp: 'addCustomWorkerTask',
+      hostEng: currentEng,
+    })
     const createdNodeId = createdTask
       ? (createdTask.session_id || `wt-${createdTask.id}`)
       : (storeResult && (storeResult.worker_id || storeResult.id)) || undefined
-    return Object.assign({}, storeResult && typeof storeResult === 'object' ? storeResult : {}, {
-      ok: storeResult && storeResult.ok === false ? false : true,
-      op: 'addCustomWorkerTask',
-      engagement: currentEng,
-      worker_id: createdNodeId,
-      worker_task_id: createdTask ? createdTask.id : (storeResult && storeResult.worker_task_id),
-      nodes: synth.nodes,
-      swimlanes: synth.swimlanes,
-      collabTasks: synth.collabTasks,
-      collab_tasks: synth.collabTasks,
-      agentNetwork: synth.agentNetwork,
-    })
+    return Object.assign(
+      {},
+      storeResult && typeof storeResult === 'object' ? storeResult : {},
+      {
+        ok: storeResult && storeResult.ok === false ? false : true,
+        op: 'addCustomWorkerTask',
+        engagement: currentEng,
+        worker_id: createdNodeId,
+        worker_task_id: createdTask ? createdTask.id : (storeResult && storeResult.worker_task_id),
+        ...(createdTask ? { worker_task: createdTask } : {}),
+        ...(spawned[0] ? { childId: spawned[0].childId, session_id: spawned[0].childId } : {}),
+        dispatched: {
+          mode: spawned.length > 0 ? 'hybrid_auto' : settings.dispatchPolicy.dispatchMode,
+          provider: settings.dispatchPolicy.subagentProvider || 'spawn',
+          spawned,
+          captainNotified,
+          ...(warnings.length > 0 ? { warning: warnings.join('；') } : {}),
+        },
+      },
+      synthNetworkFields(synth, { includeEvents: false }),
+    )
   }
 
   if (effectiveOp === 'retryWorkerTask') {
-    const rawPayload = Object.assign(
-      {},
-      request.payload && typeof request.payload === 'object' ? request.payload : {},
-      request,
-    )
-    const currentEng = rawPayload.engagement || rawPayload.engagement_id || rawPayload.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
+    const rawPayload = mergeAgentPayload()
+    const currentEng = resolveActionEng(rawPayload)
     const matchedTask = resolveWorkerTaskFromDag(currentEng, rawPayload)
     const targetWorkerKey = String(
       rawPayload.worker_task_id ?? rawPayload.worker_id ?? rawPayload.workerId ?? rawPayload.session_id ?? rawPayload.id ?? '',
@@ -5823,58 +7420,139 @@ async function handleAgentsOp(ctx, request) {
       deleteScopedWorkerOverride(currentEng, `wt-${matchedTask.id}`)
       if (matchedTask.session_id) deleteScopedWorkerOverride(currentEng, String(matchedTask.session_id))
     }
-    const payloadWithEng = Object.assign({}, rawPayload, {
-      engagement: currentEng,
-      engagement_id: currentEng,
-      engagementId: currentEng,
-    })
+    const payloadWithEng = withEngIds(currentEng, rawPayload)
     if (matchedTask && matchedTask.id !== undefined && matchedTask.id !== null) {
       payloadWithEng.worker_task_id = matchedTask.id
       payloadWithEng.id = matchedTask.id
     }
-    let storeResult = null
-    if (store && typeof store.retryWorkerTask === 'function') {
-      try {
-        storeResult = await invokeStoreMethodCompat(store, 'retryWorkerTask', currentEng, payloadWithEng)
-      } catch (err) {
-        return { ok: false, error: err && err.message ? err.message : String(err) }
-      }
-    } else if (store && typeof store.db === 'function' && (payloadWithEng.worker_task_id || targetWorkerKey)) {
-      try {
-        const db = store.db(currentEng)
-        const lookupKey = String(payloadWithEng.worker_task_id ?? targetWorkerKey)
-        const strippedKey = lookupKey.startsWith('wt-') ? lookupKey.slice(3) : lookupKey
-        const row = db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ? OR CAST(id AS TEXT) = ? OR session_id = ? OR worker_name = ? LIMIT 1')
-          .get(lookupKey, strippedKey, targetWorkerKey || lookupKey, targetWorkerKey || lookupKey)
-        if (row) {
-          const now = new Date().toISOString()
-          db.prepare("UPDATE worker_tasks SET status = 'running', approval_state = 'in_progress', ui_priority = 'P0', updated_at = ? WHERE id = ?")
-            .run(now, row.id)
-          try { db.prepare("UPDATE worker_tasks SET error_detail = '' WHERE id = ?").run(row.id) } catch { /* ignore */ }
-          storeResult = { ok: true, worker_task: db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(row.id) }
-        }
-      } catch { /* fallback to workflowAction below */ }
-    }
-    if (!storeResult && store && typeof store.workflowAction === 'function') {
-      try {
-        storeResult = store.workflowAction(currentEng, Object.assign({}, payloadWithEng, { action: 'retryNode' }))
-      } catch { storeResult = { ok: true } }
+    const storeResult = await runWorkerMutation('retryWorkerTask', 'retryWorkerTask', currentEng, payloadWithEng, { workflowAction: 'retryNode' })
+    if (storeResult && storeResult.ok === false && typeof storeResult.error === 'string') {
+      return storeResult
     }
 
-    reqFlow.dagByEng.delete(currentEng)
-    bumpEventSeq('retryWorkerTask', { engagement: currentEng, workerId: targetWorkerKey })
-    const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: currentEng, autoBind: true, reqFlow })
-    const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
-    return Object.assign({}, storeResult && typeof storeResult === 'object' ? storeResult : {}, {
-      ok: storeResult && storeResult.ok === false ? false : true,
-      op: 'retryWorkerTask',
-      engagement: currentEng,
-      nodes: synth.nodes,
-      swimlanes: synth.swimlanes,
-      collabTasks: synth.collabTasks,
-      collab_tasks: synth.collabTasks,
-      agentNetwork: synth.agentNetwork,
+    const afterTask = (storeResult && storeResult.worker_task && typeof storeResult.worker_task === 'object')
+      ? Object.assign({}, storeResult.worker_task)
+      : (resolveWorkerTaskFromDag(currentEng, payloadWithEng) || matchedTask)
+    const existingChildId = String(
+      (matchedTask && matchedTask.session_id)
+      || (afterTask && afterTask.session_id)
+      || rawPayload.session_id
+      || rawPayload.sessionId
+      || '',
+    ).trim()
+
+    const { settings, rootAgent, subagentsSvc, cwd } = await resolveDshDispatchHandles(rawPayload)
+    const spawned = []
+    const warnings = []
+    let wokeChildId = null
+    let captainNotified = false
+    let dispatchMode = 'noop'
+
+    const retryReason = String(
+      rawPayload.reason || rawPayload.feedback || rawPayload.note || '请基于当前项目事实库状态继续修复并完成验证交付。',
+    ).trim()
+    const taskLabel = (afterTask && (afterTask.title || afterTask.worker_name)) || targetWorkerKey
+    const retryMsg = [
+      '【LMTAgent · 子任务重试 / 续跑通知】',
+      `- 任务节点：${taskLabel}`,
+      `- 重试原因 / 指示：${retryReason}`,
+      '请立刻恢复执行并在完成后调用 `redteam_workflow` submit_digest 提交完整结论与验证证据。',
+    ].join('\n')
+
+    if (rootAgent && subagentsSvc) {
+      if (isRealChildSessionId(ctx, existingChildId)) {
+        try {
+          await deliverPromptToChild(subagentsSvc, 'queue', rootAgent, existingChildId, retryMsg)
+          wokeChildId = existingChildId
+          dispatchMode = 'queue'
+        } catch (err) {
+          warnings.push(`续接原 childId=${existingChildId} 失败（${err && err.message ? err.message : String(err)}），尝试重新拉起新会话`)
+        }
+      }
+      if (!wokeChildId && typeof subagentsSvc.startActivation === 'function') {
+        const dag = getWorkflowDagDedup(store, currentEng, reqFlow)
+        const refinedPrompt = String((dag && dag.engagement && dag.engagement.goal) || '').trim()
+        const taskForSpawn = afterTask || {
+          id: targetWorkerKey,
+          worker_name: targetWorkerKey,
+          worker_role: rawPayload.worker_role || rawPayload.role || 'exploit',
+          wave: rawPayload.wave || 'wave-3',
+          title: taskLabel,
+          assigned_goal: retryReason,
+        }
+        try {
+          const started = await startSubagentActivationSafe(ctx, subagentsSvc, rootAgent, taskForSpawn, {
+            provider: settings.dispatchPolicy.subagentProvider || 'spawn',
+            cwd,
+            engId: currentEng,
+            refinedPrompt,
+            maxDepth: settings.maxDepth,
+            thinkingEffort: settings.thinkingEffort,
+            extraNote: retryReason,
+          })
+          if (started && started.childId) {
+            await bindWorkerSessionCompat(store, currentEng, taskForSpawn, started.childId, 'running')
+            if (afterTask) {
+              afterTask.session_id = started.childId
+              afterTask.status = 'running'
+            }
+            dispatchMode = 'spawn'
+            spawned.push({
+              worker_task_id: taskForSpawn.id,
+              worker_name: taskForSpawn.worker_name || taskForSpawn.title,
+              role: taskForSpawn.worker_role || taskForSpawn.role,
+              childId: started.childId,
+            })
+          } else {
+            warnings.push('startActivation 未返回有效的 childId')
+          }
+        } catch (err) {
+          warnings.push(`重拉子代理失败：${err && err.message ? err.message : String(err)}`)
+        }
+      }
+    } else {
+      warnings.push(!rootAgent ? '未解析到活跃 rootAgent，仅重置事实库任务状态' : '宿主 subagents 服务不可用，仅重置事实库任务状态')
+    }
+
+    if (rootAgent && typeof rootAgent.followup === 'function') {
+      const captainNote = spawned.length > 0
+        ? `【LMTAgent 任务重试同步】工作区 \`${currentEng}\` 节点 \`${taskLabel}\` 已重新拉起新子会话 childId: \`${spawned[0].childId}\`（请勿重复派发）。`
+        : (wokeChildId
+          ? `【LMTAgent 任务重试同步】工作区 \`${currentEng}\` 节点 \`${taskLabel}\` 已通过 \`queuePrompt\` 唤醒原会话 childId: \`${wokeChildId}\`。`
+          : `【LMTAgent 任务重试同步】工作区 \`${currentEng}\` 节点 \`${taskLabel}\` 已在事实库重置为待重试状态。`)
+      try {
+        const fRes = sendRootFollowupMessage(rootAgent, captainNote)
+        captainNotified = Boolean(fRes.ok)
+      } catch { /* ignore */ }
+    }
+
+    const { synth } = await rebuildCollab(currentEng, {
+      invalidateEngs: spawned.length > 0,
+      bumpOp: 'retryWorkerTask',
+      bumpMeta: { engagement: currentEng, workerId: targetWorkerKey },
+      hostEng: currentEng,
     })
+    return Object.assign(
+      {},
+      storeResult && typeof storeResult === 'object' ? storeResult : {},
+      {
+        ok: storeResult && storeResult.ok === false ? false : true,
+        op: 'retryWorkerTask',
+        engagement: currentEng,
+        ...(spawned[0]
+          ? { childId: spawned[0].childId, session_id: spawned[0].childId }
+          : (wokeChildId ? { childId: wokeChildId, session_id: wokeChildId } : {})),
+        dispatched: {
+          mode: dispatchMode,
+          provider: settings.dispatchPolicy.subagentProvider || 'spawn',
+          spawned,
+          wokeChildId,
+          captainNotified,
+          ...(warnings.length > 0 ? { warning: warnings.join('；') } : {}),
+        },
+      },
+      synthNetworkFields(synth, { includeEvents: false }),
+    )
   }
 
   if (effectiveOp === 'shardLocks' || effectiveOp === 'listShardLocks') {
@@ -5956,8 +7634,6 @@ async function handleAgentsOp(ctx, request) {
         const engName = (matchedEng && matchedEng.name) || currentEng
         if (typeof store.setSessionBinding === 'function') {
           store.setSessionBinding(rootSessionId, currentEng, engName)
-        } else if (typeof store.bindSessionEngagement === 'function') {
-          store.bindSessionEngagement(rootSessionId, currentEng, engName)
         } else {
           dispatch(store, {
             op: 'bindSessionEngagement',
@@ -5990,19 +7666,10 @@ async function handleAgentsOp(ctx, request) {
     const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: explicitEng || undefined, autoBind: true, reqFlow })
     const currentEng = resolveSessionAwareEngagement(explicitEng)
     const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
-    return {
-      ok: true,
-      items: hostSessions,
-      active_engagement: currentEng,
-      agentNetwork: synth.agentNetwork,
-      agent_network: synth.agentNetwork,
-      nodes: synth.nodes,
-      swimlanes: synth.swimlanes,
-      collabEvents: synth.collabEvents,
-      collab_events: synth.collabEvents,
-      collabTasks: synth.collabTasks,
-      collab_tasks: synth.collabTasks,
-    }
+    return Object.assign(
+      { ok: true, items: hostSessions, active_engagement: currentEng },
+      synthNetworkFields(synth),
+    )
   }
 
   if (request.op === 'pgWriteProbe') {
@@ -6021,9 +7688,7 @@ async function handleAgentsOp(ctx, request) {
         total_rows: 0,
       }
     }
-    const probe = store && typeof store.pgWriteProbe === 'function'
-      ? store.pgWriteProbe(currentEng)
-      : getPgWriteProbe(currentEng)
+    const probe = readPgProbe(currentEng)
     return Object.assign(
       {
         ok: true,
@@ -6070,58 +7735,46 @@ async function handleAgentsOp(ctx, request) {
     const rawDagData = getWorkflowDagDedup(store, currentEng, reqFlow)
     if (rawDagData) {
       const dagData = Object.assign({}, rawDagData)
-      if (Array.isArray(dagData.nodes)) {
-        dagData.nodes = dagData.nodes.map((n, idx) => {
-          const copy = Object.assign({}, n)
-          computeWorkerLmtexMeta(copy, idx, { store, engagementId: currentEng })
-          return copy
-        })
-      }
-      if (Array.isArray(dagData.all_nodes)) {
-        dagData.all_nodes = dagData.all_nodes.map((n, idx) => {
-          const copy = Object.assign({}, n)
-          computeWorkerLmtexMeta(copy, idx, { store, engagementId: currentEng })
-          return copy
-        })
+      for (const listKey of ['nodes', 'all_nodes']) {
+        if (Array.isArray(dagData[listKey])) {
+          dagData[listKey] = dagData[listKey].map((n, idx) => {
+            const copy = Object.assign({}, n)
+            computeWorkerLmtexMeta(copy, idx, { store, engagementId: currentEng })
+            return copy
+          })
+        }
       }
       if (dagData.telemetry && typeof dagData.telemetry === 'object') {
         dagData.telemetry = Object.assign({}, dagData.telemetry)
         sanitizeDagTelemetryCacheHit(dagData, synth.nodes)
       }
-      return Object.assign({ ok: true }, dagData, {
-        nodes: synth.childNodes.length > 0 && (!Array.isArray(dagData.active_nodes) || dagData.active_nodes.length === 0)
-          ? synth.nodes
-          : dagData.nodes,
-        dag_role_nodes: dagData.nodes,
+      return Object.assign(
+        { ok: true },
+        dagData,
+        synthNetworkFields(synth),
+        {
+          nodes: synth.childNodes.length > 0 && (!Array.isArray(dagData.active_nodes) || dagData.active_nodes.length === 0)
+            ? synth.nodes
+            : dagData.nodes,
+          dag_role_nodes: dagData.nodes,
+          host_sessions: hostSessions,
+        },
+      )
+    }
+    return Object.assign(
+      {
+        ok: true,
+        standby: true,
+        engagement: currentEng,
+        runId: null,
+        status: 'standby',
+        edges: [],
+        activeRoles: [],
+        docWall: [],
         host_sessions: hostSessions,
-        agentNetwork: synth.agentNetwork,
-        agent_network: synth.agentNetwork,
-        swimlanes: synth.swimlanes,
-        collabEvents: synth.collabEvents,
-        collab_events: synth.collabEvents,
-        collabTasks: synth.collabTasks,
-        collab_tasks: synth.collabTasks,
-      })
-    }
-    return {
-      ok: true,
-      standby: true,
-      engagement: currentEng,
-      runId: null,
-      status: 'standby',
-      nodes: synth.nodes,
-      edges: [],
-      activeRoles: [],
-      docWall: [],
-      host_sessions: hostSessions,
-      agentNetwork: synth.agentNetwork,
-      agent_network: synth.agentNetwork,
-      swimlanes: synth.swimlanes,
-      collabEvents: synth.collabEvents,
-      collab_events: synth.collabEvents,
-      collabTasks: synth.collabTasks,
-      collab_tasks: synth.collabTasks,
-    }
+      },
+      synthNetworkFields(synth),
+    )
   }
 
   if (
@@ -6130,25 +7783,15 @@ async function handleAgentsOp(ctx, request) {
     || effectiveOp === 'saveFeishuConfig'
     || effectiveOp === 'saveFeishuWebhook'
   ) {
-    const currentEng = request.engagement || request.engagement_id || request.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
-    const mergedRaw = Object.assign(
-      {},
-      request.payload && typeof request.payload === 'object' ? request.payload : {},
-      request,
-    )
+    const mergedRaw = mergeAgentPayload()
+    const currentEng = resolveActionEng(mergedRaw)
     const rawUrl = String(mergedRaw.webhook_url ?? mergedRaw.webhookUrl ?? mergedRaw.webhook ?? mergedRaw.url ?? '').trim()
-    const feishuPayload = Object.assign(
-      {},
-      mergedRaw,
-      {
-        engagement: currentEng,
-        engagement_id: currentEng,
-        webhook_url: rawUrl,
-        webhookUrl: rawUrl,
-      },
-    )
+    const feishuPayload = Object.assign({}, mergedRaw, {
+      engagement: currentEng,
+      engagement_id: currentEng,
+      webhook_url: rawUrl,
+      webhookUrl: rawUrl,
+    })
     let feishuRes = null
     if (store && typeof store.saveFeishuConfig === 'function') {
       try {
@@ -6158,14 +7801,11 @@ async function handleAgentsOp(ctx, request) {
       }
     }
     if (!feishuRes && store && typeof store.workflowAction === 'function') {
-      try {
-        feishuRes = store.workflowAction(currentEng, Object.assign({}, feishuPayload, { action: 'feishuConfig' }))
-      } catch {
+      for (const action of ['feishuConfig', 'saveFeishuWebhook']) {
         try {
-          feishuRes = store.workflowAction(currentEng, Object.assign({}, feishuPayload, { action: 'saveFeishuWebhook' }))
-        } catch {
-          feishuRes = null
-        }
+          feishuRes = store.workflowAction(currentEng, Object.assign({}, feishuPayload, { action }))
+          if (feishuRes) break
+        } catch { feishuRes = null }
       }
     }
     bumpEventSeq('feishuConfig', { engagement: currentEng })
@@ -6192,19 +7832,13 @@ async function handleAgentsOp(ctx, request) {
     || (request.op === 'workflowAction' && ['pushFeishuNotify', 'feishuNotify', 'feishuTestPush', 'pushFeishu'].includes(request.action))
 
   if (isFeishuPushOp) {
-    const currentEng = request.engagement || request.engagement_id || request.engagementId
-      || (store ? getCachedActiveEngagementId(store) : null)
-      || activeEngagement
-    const pushPayload = Object.assign(
-      { action: 'pushFeishuNotify' },
-      request.payload && typeof request.payload === 'object' ? request.payload : {},
-      request,
-      {
-        engagement: currentEng,
-        engagement_id: currentEng,
-        is_test: request.op === 'feishuTestPush' || request.action === 'feishuTestPush' || Boolean(request.is_test ?? request.test),
-      },
-    )
+    const mergedRaw = mergeAgentPayload()
+    const currentEng = resolveActionEng(mergedRaw)
+    const pushPayload = Object.assign({ action: 'pushFeishuNotify' }, mergedRaw, {
+      engagement: currentEng,
+      engagement_id: currentEng,
+      is_test: request.op === 'feishuTestPush' || request.action === 'feishuTestPush' || Boolean(request.is_test ?? request.test),
+    })
     if (store && typeof store.pushFeishuNotify === 'function') {
       try {
         const pushRes = await invokeStoreMethodCompat(store, 'pushFeishuNotify', currentEng, pushPayload)
@@ -6252,24 +7886,14 @@ async function handleAgentsOp(ctx, request) {
       writeSettings(root, patch)
       bumpEventSeq('setClusterConfig')
     }
-    const max = maxAgentsOf(root, process.env)
-    const thinkingEffort = thinkingEffortOf(root, process.env)
-    const maxDepth = maxDepthOf(root, process.env)
-    return {
-      ok: true,
-      max,
-      maxAgents: max,
-      thinking: thinkingEffort,
-      thinkingEffort,
-      thinking_effort: thinkingEffort,
-      maxDepth,
-      max_depth: maxDepth,
+    const cfgFields = buildClusterConfigFields(resolveCachedSettingsArg(root))
+    return Object.assign({ ok: true }, cfgFields, {
       source: 'settings',
       limit: MAX_AGENTS_LIMIT,
       max_depth_limit: MAX_DEPTH_LIMIT,
       valid_thinking_efforts: VALID_THINKING_EFFORTS,
-      note: `集群并发策略已更新：最大并发 ${max} · 默认思考强度 ${thinkingEffort} · 递归深度上限 ${maxDepth}（立即生效）。`,
-    }
+      note: `集群并发策略已更新：最大并发 ${cfgFields.max} · 默认思考强度 ${cfgFields.thinkingEffort} · 递归深度上限 ${cfgFields.maxDepth}（立即生效）。`,
+    })
   }
 
   if (request.op === 'setAgentsMax') {
@@ -6282,16 +7906,12 @@ async function handleAgentsOp(ctx, request) {
       saveMaxDepth(root, request.maxDepth ?? request.max_depth)
     }
     bumpEventSeq('setAgentsMax')
-    const thinkingEffort = thinkingEffortOf(root, process.env)
-    const maxDepth = maxDepthOf(root, process.env)
-    return {
-      ok: true, max: next, maxAgents: next,
-      thinking: thinkingEffort,
-      thinkingEffort, thinking_effort: thinkingEffort,
-      maxDepth, max_depth: maxDepth,
-      source: 'settings', limit: MAX_AGENTS_LIMIT,
+    const cfgFields = buildClusterConfigFields(resolveCachedSettingsArg(root), next)
+    return Object.assign({ ok: true }, cfgFields, {
+      source: 'settings',
+      limit: MAX_AGENTS_LIMIT,
       note: '已保存为 ' + next + ' 个并发执行智能体，**立即生效**（派活时按新值放行，不用重启 dsh web）。',
-    }
+    })
   }
   if (request.op === 'setPgUrl') {
     const saved = savePgUrl(root, request.url)
@@ -6311,116 +7931,74 @@ async function handleAgentsOp(ctx, request) {
 
   /* op === 'agentsStatus'：即使 ctx.get('subagents') 不可用也绝不返回 ok: false；
      当传入的 request.session 未绑定任何工作区时，严格返回零泄漏的洁净状态！ */
-  const max = maxAgentsOf(root, process.env)
-  const thinkingEffort = thinkingEffortOf(root, process.env)
-  const maxDepth = maxDepthOf(root, process.env)
+  const cfgArg = resolveCachedSettingsArg(root)
+  const cfgFields = buildClusterConfigFields(cfgArg)
+  const maxSource = maxAgentsSourceOf(cfgArg, process.env)
   const explicitEng = request.engagement || request.engagement_id || request.engagementId || ''
   const hostSessions = await discoverHostSessions(ctx, store, { sessionId: request.session, engagementId: explicitEng || undefined, autoBind: true, reqFlow })
   const currentEng = resolveSessionAwareEngagement(explicitEng)
   const dbEngine = store && typeof store.dbEngineInfo === 'function' ? store.dbEngineInfo() : resolvePgConfig(root)
+  const synth = synthesizeAgentCollaboration(store, currentEng || null, hostSessions, resolvedRootSession, reqFlow)
 
-  if (!currentEng) {
-    const synth = synthesizeAgentCollaboration(store, null, hostSessions, resolvedRootSession, reqFlow)
-    const ownChildren = synth.childNodes
-    const ownRunning = ownChildren.filter((c) => c.activity === 'running')
-    return {
+  let effectiveChildren = synth.childNodes
+  if (currentEng && effectiveChildren.length === 0) {
+    effectiveChildren = []
+    for (const hs of hostSessions) {
+      if (!hs || hs.engagementId !== currentEng) continue
+      for (const c of Array.isArray(hs.children) ? hs.children : []) {
+        effectiveChildren.push(c)
+      }
+    }
+  }
+  const running = effectiveChildren.filter((c) => c.activity === 'running')
+  const pgProbe = currentEng
+    ? readPgProbe(currentEng)
+    : {
       ok: true,
       unbound: true,
-      max,
-      maxAgents: max,
-      used: ownRunning.length,
-      free: Math.max(max - ownRunning.length, 0),
-      running: ownRunning.slice(0, 20),
-      children: ownChildren,
-      total_children: ownChildren.length,
+      engagement: null,
+      engagement_id: null,
+      ready: false,
+      row_counts: { plan_goals: 0, worker_tasks: 0, worker_digests: 0, shard_locks: 0 },
+      total_rows: 0,
+    }
+
+  return Object.assign(
+    {
+      ok: true,
+      ...(!currentEng ? { unbound: true } : {}),
+      max: cfgFields.max,
+      maxAgents: cfgFields.max,
+      used: running.length,
+      free: Math.max(cfgFields.max - running.length, 0),
+      running: running.slice(0, 20),
+      children: effectiveChildren,
+      total_children: effectiveChildren.length,
       host_sessions: hostSessions,
       hostSessions,
-      active_engagement: null,
-      agentNetwork: synth.agentNetwork,
-      agent_network: synth.agentNetwork,
-      nodes: synth.nodes,
-      swimlanes: synth.swimlanes,
-      collabEvents: synth.collabEvents,
-      collab_events: synth.collabEvents,
-      collabTasks: synth.collabTasks,
-      collab_tasks: synth.collabTasks,
-      source: maxAgentsSourceOf(root, process.env),
+      active_engagement: currentEng || null,
+    },
+    synthNetworkFields(synth),
+    {
+      source: maxSource,
       limit: MAX_AGENTS_LIMIT,
       default_max: DEFAULT_MAX_AGENTS,
-      thinking: thinkingEffort,
-      thinking_effort: thinkingEffort,
-      thinkingEffort,
+      thinking: cfgFields.thinkingEffort,
+      thinking_effort: cfgFields.thinkingEffort,
+      thinkingEffort: cfgFields.thinkingEffort,
       default_thinking_effort: DEFAULT_THINKING_EFFORT,
       valid_thinking_efforts: VALID_THINKING_EFFORTS,
-      max_depth: maxDepth,
-      maxDepth,
+      max_depth: cfgFields.maxDepth,
+      maxDepth: cfgFields.maxDepth,
       default_max_depth: DEFAULT_MAX_DEPTH,
       max_depth_limit: MAX_DEPTH_LIMIT,
       db_engine: dbEngine,
-      pg_probe: {
-        ok: true,
-        unbound: true,
-        engagement: null,
-        engagement_id: null,
-        ready: false,
-        row_counts: { plan_goals: 0, worker_tasks: 0, worker_digests: 0, shard_locks: 0 },
-        total_rows: 0,
-      },
-      note: '当前会话尚未绑定工程工作区；初始化后将启用 4-Wave Bounded DAG 并发调度。',
-    }
-  }
-
-  const pgProbe = store && typeof store.pgWriteProbe === 'function'
-    ? store.pgWriteProbe(currentEng)
-    : getPgWriteProbe(currentEng)
-
-  const synth = synthesizeAgentCollaboration(store, currentEng, hostSessions, resolvedRootSession, reqFlow)
-  const currentEngChildren = []
-  for (const hs of hostSessions) {
-    if (!hs || hs.engagementId !== currentEng) continue
-    for (const c of Array.isArray(hs.children) ? hs.children : []) {
-      currentEngChildren.push(c)
-    }
-  }
-  const effectiveChildren = synth.childNodes.length > 0 ? synth.childNodes : currentEngChildren
-  const running = effectiveChildren.filter((c) => c.activity === 'running')
-
-  return {
-    ok: true,
-    max,
-    maxAgents: max,
-    used: running.length,
-    free: Math.max(max - running.length, 0),
-    running: running.slice(0, 20),
-    children: effectiveChildren,
-    total_children: effectiveChildren.length,
-    host_sessions: hostSessions,
-    hostSessions,
-    active_engagement: currentEng,
-    agentNetwork: synth.agentNetwork,
-    agent_network: synth.agentNetwork,
-    nodes: synth.nodes,
-    swimlanes: synth.swimlanes,
-    collabEvents: synth.collabEvents,
-    collab_events: synth.collabEvents,
-    collabTasks: synth.collabTasks,
-    collab_tasks: synth.collabTasks,
-    source: maxAgentsSourceOf(root, process.env),
-    limit: MAX_AGENTS_LIMIT,
-    default_max: DEFAULT_MAX_AGENTS,
-    thinking: thinkingEffort,
-    thinking_effort: thinkingEffort,
-    thinkingEffort,
-    default_thinking_effort: DEFAULT_THINKING_EFFORT,
-    valid_thinking_efforts: VALID_THINKING_EFFORTS,
-    max_depth: maxDepth,
-    maxDepth,
-    default_max_depth: DEFAULT_MAX_DEPTH,
-    max_depth_limit: MAX_DEPTH_LIMIT,
-    db_engine: dbEngine,
-    pg_probe: pgProbe,
-    note: '同一会话（工程工作区）同时最多 ' + max + ' 个执行智能体；按 4-Wave Bounded DAG 并发调度。',
-  }
+      pg_probe: pgProbe,
+      note: currentEng
+        ? '同一会话（工程工作区）同时最多 ' + cfgFields.max + ' 个执行智能体；按 4-Wave Bounded DAG 并发调度。'
+        : '当前会话尚未绑定工程工作区；初始化后将启用 4-Wave Bounded DAG 并发调度。',
+    },
+  )
 }
 
 /**
@@ -6577,22 +8155,6 @@ const READ_ONLY_STORE_OPS = new Set([
   'listShardLocks',
   'shardLocks',
   'refineUserWish',
-  'listEngagements',
-  'listTargets',
-  'getTarget',
-  'listServices',
-  'listVulns',
-  'listCreds',
-  'listSessions',
-  'listSteps',
-  'listNotes',
-  'listFiles',
-  'readFile',
-  'listShots',
-  'listTunnels',
-  'listWebshells',
-  'listScoreHits',
-  'searchKb',
   'probeSessions',
 ])
 
@@ -6604,13 +8166,26 @@ function isLoopbackHostHeader(hostHeader) {
     || /^\[::1\](?::\d+)?$/.test(h)
 }
 
+function isSameOriginUrl(urlStr, host) {
+  if (typeof urlStr !== 'string' || !urlStr || typeof host !== 'string' || !host) return false
+  try {
+    const parsedHost = new URL(urlStr).host
+    return Boolean(parsedHost && parsedHost === host)
+  } catch {
+    return false
+  }
+}
+
+function isLoopbackRemote(req) {
+  const remote = req && req.socket && req.socket.remoteAddress ? String(req.socket.remoteAddress) : ''
+  return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
+}
+
 function isAllowedSseRequest(req) {
   const origin = req.headers && req.headers.origin
   const host = req.headers && req.headers.host
   if (typeof origin === 'string' && origin !== '') {
-    let originHost = null
-    try { originHost = new URL(origin).host } catch { originHost = null }
-    return Boolean(originHost && originHost === host)
+    return isSameOriginUrl(origin, host)
   }
   const secFetchSite = req.headers && req.headers['sec-fetch-site']
   if (typeof secFetchSite === 'string' && secFetchSite !== '') {
@@ -6619,14 +8194,8 @@ function isAllowedSseRequest(req) {
     return false
   }
   const referer = req.headers && req.headers.referer
-  if (typeof referer === 'string' && referer !== '' && typeof host === 'string' && host !== '') {
-    try {
-      if (new URL(referer).host === host) return true
-    } catch { /* ignore */ }
-  }
-  const remote = req.socket && req.socket.remoteAddress ? String(req.socket.remoteAddress) : ''
-  const loopbackRemote = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
-  return loopbackRemote || isLoopbackHostHeader(host)
+  if (isSameOriginUrl(referer, host)) return true
+  return isLoopbackRemote(req) || isLoopbackHostHeader(host)
 }
 
 function sendJsonWithSeq(res, status, body) {
@@ -6746,19 +8315,13 @@ export function apply(ctx) {
       const origin = req.headers.origin
       const host = req.headers.host
       if (typeof origin === 'string' && origin !== '') {
-        let originHost = null
-        try { originHost = new URL(origin).host } catch { originHost = null }
-        if (originHost === null || originHost !== host) {
+        if (!isSameOriginUrl(origin, host)) {
           sendJson(res, 403, { ok: false, error: 'cross-origin request rejected' })
           return
         }
-      } else {
-        const remote = req.socket && req.socket.remoteAddress ? String(req.socket.remoteAddress) : ''
-        const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
-        if (!loopback) {
-          sendJson(res, 403, { ok: false, error: 'request without Origin is only accepted from loopback' })
-          return
-        }
+      } else if (!isLoopbackRemote(req)) {
+        sendJson(res, 403, { ok: false, error: 'request without Origin is only accepted from loopback' })
+        return
       }
       try {
         const raw = await readBody(req)

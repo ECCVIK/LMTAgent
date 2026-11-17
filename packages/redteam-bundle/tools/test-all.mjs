@@ -10,7 +10,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { readdirSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -31,7 +31,7 @@ for (const pkg of ORDER) {
 let failed = 0
 const summary = []
 for (const { pkg, path } of files) {
-  const label = pkg.replace('redteam-', '') + '/' + path.split('/').pop()
+  const label = pkg.replace('redteam-', '') + '/' + basename(path)
   let out = ''
   let code = 0
   try {

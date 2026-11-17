@@ -1064,11 +1064,19 @@ export class PgCompatibleHandle {
   prepare(sql) {
     if (this.mode === 'postgresql') {
       const self = this
+      const cache = (this._pgStmtCache ??= new Map())
+      let entry = cache.get(sql)
+      if (!entry) {
+        if (cache.size >= 512) cache.delete(cache.keys().next().value)
+        entry = { readTr: null, writeTr: null }
+        cache.set(sql, entry)
+      }
+      const execSync = (tr, params) => self._callWorkerSync(tr.sql, params)
       return {
         run(...params) {
-          const tr = translateSqlToPg(sql, { returningId: true })
+          const tr = entry.writeTr || (entry.writeTr = translateSqlToPg(sql, { returningId: true }))
           if (tr.isPragma) return { changes: 0, lastInsertRowid: 0 }
-          const res = self._callWorkerSync(tr.sql, params)
+          const res = execSync(tr, params)
           const first = res.rows && res.rows[0]
           const lastId = first && first.id !== undefined ? Number(first.id) : 0
           return {
@@ -1077,13 +1085,13 @@ export class PgCompatibleHandle {
           }
         },
         get(...params) {
-          const tr = translateSqlToPg(sql)
-          const res = self._callWorkerSync(tr.sql, params)
+          const tr = entry.readTr || (entry.readTr = translateSqlToPg(sql))
+          const res = execSync(tr, params)
           return res.rows && res.rows.length > 0 ? res.rows[0] : undefined
         },
         all(...params) {
-          const tr = translateSqlToPg(sql)
-          const res = self._callWorkerSync(tr.sql, params)
+          const tr = entry.readTr || (entry.readTr = translateSqlToPg(sql))
+          const res = execSync(tr, params)
           return res.rows || []
         },
       }
@@ -1268,12 +1276,8 @@ export class PgWriteActivityProbe {
       raw_tokens_total: 0,
       compressed_tokens_total: 0,
       digest_samples: 0,
-      record_raw_tokens_total: 0,
-      record_compressed_tokens_total: 0,
       approved_workers: 0,
       pending_approvals: 0,
-      record_approved_workers: 0,
-      record_pending_approvals: 0,
       tables,
       recent_events: [],
       write_timestamps: [],
@@ -1373,22 +1377,6 @@ export class PgWriteActivityProbe {
     entry.last_latency_ms = latencyMs
     entry.last_summary = summary
     entry.updated_at = now
-
-    const evRawTokens = Math.max(0, Number(event.rawTokens ?? event.raw_tokens) || 0)
-    const evCompTokens = Math.max(0, Number(event.compressedTokens ?? event.compressed_tokens) || 0)
-    if (evRawTokens > 0 || evCompTokens > 0) {
-      state.record_raw_tokens_total += evRawTokens
-      state.record_compressed_tokens_total += Math.min(evRawTokens || evCompTokens, evCompTokens)
-    }
-    const evDecision = String(event.approval_decision ?? event.approvalDecision ?? event.approval_state ?? event.approvalState ?? '').trim().toLowerCase()
-    if (event.approved === true || evDecision === 'approved') {
-      state.record_approved_workers += 1
-      if (op === 'UPDATE' && state.record_pending_approvals > 0) {
-        state.record_pending_approvals -= 1
-      }
-    } else if (event.approved === false || evDecision === 'pending' || evDecision === 'pending_approval') {
-      state.record_pending_approvals += 1
-    }
 
     state.total_writes += incWrites
     state.latency_sum_ms += latencyMs
@@ -1519,9 +1507,6 @@ export class PgWriteActivityProbe {
     } else if (compSrc.raw_tokens_total > 0) {
       rawTotal = compSrc.raw_tokens_total
       compressedTotal = compSrc.compressed_tokens_total
-    } else if (compSrc.record_raw_tokens_total > 0) {
-      rawTotal = compSrc.record_raw_tokens_total
-      compressedTotal = compSrc.record_compressed_tokens_total
     } else if (digestRows > 0) {
       rawTotal = digestRows * 2400
       compressedTotal = digestRows * 360
@@ -1546,8 +1531,6 @@ export class PgWriteActivityProbe {
       approvedWorkers = Math.max(0, Math.round(Number(stats.approved_workers ?? stats.approvedWorkers) || 0))
     } else if (compSrc.digest_samples > 0 || compSrc.approved_workers > 0 || compSrc.pending_approvals > 0) {
       approvedWorkers = compSrc.approved_workers
-    } else if (compSrc.record_approved_workers > 0 || compSrc.record_pending_approvals > 0) {
-      approvedWorkers = compSrc.record_approved_workers
     }
 
     let pendingApprovals = 0
@@ -1555,8 +1538,6 @@ export class PgWriteActivityProbe {
       pendingApprovals = Math.max(0, Math.round(Number(stats.pending_approvals ?? stats.pendingApprovals) || 0))
     } else if (compSrc.digest_samples > 0 || compSrc.approved_workers > 0 || compSrc.pending_approvals > 0) {
       pendingApprovals = compSrc.pending_approvals
-    } else if (compSrc.record_approved_workers > 0 || compSrc.record_pending_approvals > 0) {
-      pendingApprovals = compSrc.record_pending_approvals
     }
 
     const nowMs = Date.now()
@@ -1600,7 +1581,6 @@ export class PgWriteActivityProbe {
       tables,
       by_table: byTable,
       recent_events: recentEvents,
-      recentWrites: recentEvents,
       events: recentEvents,
     }
   }

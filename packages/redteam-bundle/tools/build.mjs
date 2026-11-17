@@ -25,7 +25,7 @@ const packagesDir = join(pkgRoot, '..')
 const repoRoot = join(packagesDir, '..')
 const libDir = join(pkgRoot, 'lib')
 
-const read = (rel) => readFileSync(join(packagesDir, rel), 'utf8')
+const read = (rel) => readFileSync(join(packagesDir, rel), 'utf8').replace(/\r\n/g, '\n')
 /** `--check`：只比对生成结果与仓库现状，不写盘（CI / 回归测试用）。 */
 const CHECK = process.argv.includes('--check')
 const drift = []
@@ -44,14 +44,15 @@ for (const relAssembler of ['redteam-ui/tools/assemble-styles.mjs', 'redteam-ui/
 }
 const write = (rel, text) => {
   const target = join(pkgRoot, rel)
+  const normalized = text.replace(/\r\n/g, '\n')
   if (CHECK) {
     let current
-    try { current = readFileSync(target, 'utf8') } catch { current = undefined }
-    if (current !== text) drift.push(rel)
+    try { current = readFileSync(target, 'utf8').replace(/\r\n/g, '\n') } catch { current = undefined }
+    if (current !== normalized) drift.push(rel)
     return rel
   }
   mkdirSync(dirname(target), { recursive: true })
-  writeFileSync(target, text, 'utf8')
+  writeFileSync(target, normalized, 'utf8')
   return rel
 }
 
@@ -72,9 +73,6 @@ for (const name of ['ip-utils', 'schema', 'validate', 'score-rules', 'report-rep
 const skillAvailability = read('redteam-store/lib/skill-availability.js')
 write('lib/skill-availability.js', skillAvailability)
 write('lib/skill-fixes.js', read('redteam-store/lib/skill-fixes.js'))
-if (existsSync(join(packagesDir, 'redteam-tools/lib/concurrency.js'))) {
-  write('lib/concurrency.js', read('redteam-tools/lib/concurrency.js'))
-}
 const storeIndex = read('redteam-store/lib/index.js')
   .replace("from './core.js'", "from './store-core.js'")
 write('lib/store.js', storeIndex)
@@ -87,7 +85,6 @@ const uiIndex = read('redteam-ui/lib/index.js')
   .replace("from '../../redteam-store/lib/pg-engine.js'", "from './pg-engine.js'")
   .replace("from '../../redteam-store/lib/skill-fixes.js'", "from './skill-fixes.js'")
   .replace("from '../../redteam-store/lib/prompts.js'", "from './prompts.js'")
-  .replace("from '../../redteam-tools/lib/concurrency.js'", "from './concurrency.js'")
 write('lib/ui.js', uiIndex)
 
 /* 3) 浏览器半侧：拷过来，并把注册 id 改成**本包的包名**。
@@ -102,7 +99,7 @@ const clientSrc = read('redteam-ui/lib/client.js')
    所以源码里 client.js 只留一行 `const CSS = '__RT_STYLES__'`，由这里内联 ——
    源码可读（CSS 单独一个文件、编辑器能高亮），产物仍是单文件自包含。 */
 const stylesSrc = read('redteam-ui/lib/styles.js')
-const styleMatch = /export const CSS = String\.raw`([\s\S]*?)`\n?$/.exec(stylesSrc)
+const styleMatch = /export const CSS = String\.raw`([\s\S]*?)`\r?\n?$/.exec(stylesSrc)
 if (styleMatch === null) throw new Error('styles.js 里找不到 export const CSS = String.raw`...`')
 const cssText = styleMatch[1]
 if (!clientSrc.includes("'__RT_STYLES__'")) throw new Error('client.js 里找不到 __RT_STYLES__ 占位符')
@@ -130,7 +127,6 @@ const tools = read('redteam-tools/lib/index.js')
   .replace("from '../../redteam-store/lib/pg-engine.js'", "from './pg-engine.js'")
   .replace("from '../../redteam-store/lib/skill-fixes.js'", "from './skill-fixes.js'")
   .replace("from '../../redteam-store/lib/prompts.js'", "from './prompts.js'")
-  .replace("from '../../redteam-tools/lib/concurrency.js'", "from './concurrency.js'")
 write('lib/tools.js', tools)
 
 /* 5) 预设：源码是仓库根的 `preset/agent.cordis.yml`（指挥者）与
@@ -217,7 +213,7 @@ const presetMeta = read('../preset/preset.yml')
 const presetMetaPath = join(pkgRoot, 'presets/redteam/preset.yml')
 if (CHECK) {
   let current
-  try { current = readFileSync(presetMetaPath, 'utf8') } catch { current = undefined }
+  try { current = readFileSync(presetMetaPath, 'utf8').replace(/\r\n/g, '\n') } catch { current = undefined }
   if (current !== presetMeta) drift.push('presets/redteam/preset.yml')
 } else {
   mkdirSync(dirname(presetMetaPath), { recursive: true })
@@ -235,13 +231,43 @@ if (CHECK) {
      带诊断），也不要写死一个会静默失效的绝对路径 —— v0.9.0 的事故就是这么来的。 */
 const SKILLS_EXPR = "ctx.get('redteamMode')?.paths?.skills ?? process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-redteam-mode/package.json')), 'skills')"
 
+/** 剥离生成区 YAML 中的纯注释行与空行，保留 block scalar（如 `prefix: |`）内的 Markdown 正文。 */
+function stripYamlCommentsOutsideBlockScalars(yamlText) {
+  const lines = yamlText.split('\n')
+  const out = []
+  let blockIndent = null
+  for (const line of lines) {
+    if (blockIndent !== null) {
+      if (line.trim() === '') {
+        out.push('')
+        continue
+      }
+      const indent = line.match(/^[ \t]*/)[0].length
+      if (indent > blockIndent) {
+        out.push(line)
+        continue
+      }
+      blockIndent = null
+    }
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) continue
+    out.push(line)
+    if (/^[a-zA-Z0-9_-]+:\s*[|>][+-]?\s*(#.*)?$/.test(trimmed)) {
+      blockIndent = line.match(/^[ \t]*/)[0].length
+    }
+  }
+  return out.join('\n')
+}
+
 /** 生成一条 `@deepseek-ai/dsh-agent-preset` 声明行。 */
 function declarePreset({ entryId, id, metaRel, metaText, order, plugins }) {
   const meta = metaText !== undefined ? metaText : read(metaRel)
   const metaName = /^name:[ \t]*(.*)$/m.exec(meta)
   const metaDescription = /^description:[ \t]*(.*)$/m.exec(meta)
   if (metaName === null || metaDescription === null) throw new Error((metaRel || entryId) + ' 缺少 name 或 description')
-  const declaredPlugins = plugins.replace(SKILLS_LINE, '      - !!js ' + SKILLS_EXPR)
+  const declaredPlugins = stripYamlCommentsOutsideBlockScalars(
+    plugins.replace(SKILLS_LINE, '      - !!js ' + SKILLS_EXPR),
+  )
   if (declaredPlugins === plugins) throw new Error(entryId + ' 声明行里技能目录占位符替换失败')
   return `- insert:
     - id: ${entryId}
@@ -281,7 +307,7 @@ const declBody = declarePreset({
   plugins: role.text,
 })).join('')
 const patchPath = join(pkgRoot, 'cordis.patch.yml')
-const patchText = readFileSync(patchPath, 'utf8')
+const patchText = readFileSync(patchPath, 'utf8').replace(/\r\n/g, '\n')
 const startAt = patchText.indexOf(DECL_START)
 const endAt = patchText.indexOf(DECL_END)
 if (startAt < 0 || endAt < 0 || endAt < startAt) {
@@ -313,10 +339,10 @@ if (CHECK) {
 }
 let skills = 0
 for (const f of skillNames) {
-  const text = readFileSync(join(skillsSrc, f), 'utf8')
+  const text = readFileSync(join(skillsSrc, f), 'utf8').replace(/\r\n/g, '\n')
   if (CHECK) {
     let current
-    try { current = readFileSync(join(skillsDst, f), 'utf8') } catch { current = undefined }
+    try { current = readFileSync(join(skillsDst, f), 'utf8').replace(/\r\n/g, '\n') } catch { current = undefined }
     if (current !== text) drift.push('skills/' + f)
   } else {
     writeFileSync(join(skillsDst, f), text, 'utf8')
@@ -360,7 +386,7 @@ const generated = [
   'lib/store-core.js', 'lib/ip-utils.js', 'lib/schema.js', 'lib/validate.js', 'lib/score-rules.js',
   'lib/report-replay.js', 'lib/pg-engine.js',
   'lib/skill-availability.js', 'lib/skill-fixes.js', 'lib/settings.js', 'lib/store.js', 'lib/ui.js', 'lib/tools.js', 'lib/client.js',
-  'lib/prompts.js', 'lib/concurrency.js',
+  'lib/prompts.js',
 ].filter((rel) => existsSync(join(pkgRoot, rel)))
 const offenders = []
 for (const rel of generated) {

@@ -72,10 +72,255 @@
 
     /**
      * 集群 -> 智能体与并发（st.tab === 'agents'）：
-     *   · 顶部紧凑自适应并发槽与租约控制栏（并发槽 active/max、3/6/8/12 快捷档、步进器、maxDepth、thinking、租约锁状态）
-     *   · 主体直出实时 p5 集群拓扑 + 双步节点透视抽屉 + P0–P3 阶段泳道（HarnessWorkflowDeck variant='cluster'）
-     *   · 未绑定工作区时严格保持 0/max 空闲态，绝不泄露其他工作区的在跑槽位或历史子代理记录
+     *   · 顶部并发槽快捷控制 + 前往设置页调参入口
+     *   · p5 实时协作树：阶段无缩放 DOM 测量 + 1:1 SVG 边覆盖 (.rt-tree-edges-svg)
+     *   · 下方承接 4-Wave DAG 与检视器（HarnessWorkflowDeck variant='cluster'）
+     *   · 未绑定工作区时严格保持 0/max 空闲态，零跨工作区泄露
      */
+    const p5UseLayoutEffect = React.useLayoutEffect || React.useEffect
+
+    const p5MeasureBox = (nodeEl, stageEl) => {
+      if (typeof measureBoxInStage === 'function') return measureBoxInStage(nodeEl, stageEl)
+      if (!nodeEl || !stageEl) return null
+      let left = 0
+      let top = 0
+      let cur = nodeEl
+      while (cur && cur !== stageEl) {
+        left += Number(cur.offsetLeft) || 0
+        top += Number(cur.offsetTop) || 0
+        cur = cur.offsetParent
+      }
+      if (cur !== stageEl) return null
+      const width = Number(nodeEl.offsetWidth) || 0
+      const height = Number(nodeEl.offsetHeight) || 0
+      return {
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+        width,
+        height,
+        midX: left + width / 2,
+        midY: top + height / 2,
+      }
+    }
+
+    function ClusterP5Tree(props) {
+      const eng = props.engagement || null
+      const agents = props.agents || {}
+      const [filter, setFilter] = React.useState('all')
+      const [zoom, setZoom] = React.useState(100)
+      const [edgeGeom, setEdgeGeom] = React.useState(null)
+
+      const stageRef = React.useRef(null)
+      const rootRef = React.useRef(null)
+      const childRefs = React.useRef({})
+
+      const children = React.useMemo(() => {
+        const net = (agents.agentNetwork && Array.isArray(agents.agentNetwork.children)) ? agents.agentNetwork.children : []
+        const rawList = []
+        if (Array.isArray(agents.running)) rawList.push.apply(rawList, agents.running)
+        if (Array.isArray(agents.children)) rawList.push.apply(rawList, agents.children)
+        rawList.push.apply(rawList, net)
+        const seen = new Set()
+        const out = []
+        for (const item of rawList) {
+          if (!item || typeof item !== 'object') continue
+          const id = String(item.session_id || item.sessionId || item.id || item.worker_task_id || item.worker_name || out.length)
+          if (seen.has(id)) continue
+          seen.add(id)
+          const st = String(item.status || (item.running ? 'running' : 'done')).toLowerCase()
+          const isRunning = st === 'running' || st === 'active' || st === 'in_progress' || Boolean(item.running)
+          const isError = st === 'error' || st === 'failed' || st === 'blocked'
+          const role = String(item.worker_role || item.role || 'worker').trim()
+          const title = String(item.title || item.worker_name || role || id).trim()
+          const sessionId = String(item.session_id || item.sessionId || '').trim()
+          out.push({
+            id,
+            title,
+            role,
+            wave: item.wave || '',
+            goal: String(item.assigned_goal || item.goal || item.objective || '').trim(),
+            status: isError ? 'error' : (isRunning ? 'running' : 'done'),
+            statusLabel: isError ? '异常' : (isRunning ? '运行中' : '已完成'),
+            sessionId,
+            color: isError ? '#ef4444' : (isRunning ? '#3b82f6' : '#10b981'),
+          })
+        }
+        return out
+      }, [agents])
+
+      const showChildren = filter !== 'lead' ? children : []
+      const showRoot = filter !== 'sub'
+      const runningCount = children.filter((c) => c.status === 'running').length
+      const layoutSig = String(eng || '') + '|' + filter + '|' + zoom + '|' + showChildren.map((c) => c.id + ':' + c.status).join(',')
+
+      const measureEdges = React.useCallback(() => {
+        try {
+          const stEl = stageRef.current
+          if (!stEl || !showRoot || showChildren.length === 0) {
+            setEdgeGeom(null)
+            return
+          }
+          const w = Number(stEl.offsetWidth) || 0
+          const hPx = Number(stEl.offsetHeight) || 0
+          const rootBox = p5MeasureBox(rootRef.current, stEl)
+          if (!(w > 0) || !(hPx > 0) || !rootBox) return
+          const x1 = Math.round(rootBox.midX * 10) / 10
+          const y1 = Math.round(rootBox.bottom * 10) / 10
+          const edges = []
+          for (const c of showChildren) {
+            const cBox = p5MeasureBox(childRefs.current[c.id], stEl)
+            if (!cBox) continue
+            const x2 = Math.round(cBox.midX * 10) / 10
+            const y2 = Math.round(cBox.top * 10) / 10
+            const dy = Math.max(18, Math.round((y2 - y1) * 0.52 * 10) / 10)
+            edges.push({
+              key: 'p5-' + c.id,
+              d: 'M ' + x1 + ',' + y1 + ' C ' + x1 + ',' + (y1 + dy) + ' ' + x2 + ',' + (y2 - dy) + ' ' + x2 + ',' + y2,
+              endX: x2,
+              endY: y2,
+              color: c.color,
+              cls: c.status === 'error' ? 'is-error' : (c.status === 'running' ? 'is-running' : 'is-done'),
+            })
+          }
+          setEdgeGeom({ w, h: hPx, startX: x1, startY: y1, edges })
+        } catch { /* ignore stub DOM without layout metrics */ }
+      }, [showRoot, showChildren])
+
+      p5UseLayoutEffect(() => {
+        measureEdges()
+        const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(measureEdges) : null
+        let ro = null
+        if (typeof ResizeObserver === 'function') {
+          try {
+            ro = new ResizeObserver(measureEdges)
+            if (stageRef.current) ro.observe(stageRef.current)
+            if (rootRef.current) ro.observe(rootRef.current)
+            Object.keys(childRefs.current).forEach((k) => { if (childRefs.current[k]) ro.observe(childRefs.current[k]) })
+          } catch { ro = null }
+        }
+        return () => {
+          if (raf !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf)
+          if (ro && typeof ro.disconnect === 'function') ro.disconnect()
+        }
+      }, [layoutSig, measureEdges])
+
+      if (!eng) return null
+
+      return h('div', { className: 'rt-p5-board', style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+        h('div', { className: 'rt-p5-topbar' },
+          h('span', { style: { fontWeight: 700, fontSize: 12.5 } },
+            '团队任务板 · ' + (1 + children.length) + ' 成员 · ' + runningCount + ' 运行中'),
+          h('div', { className: 'rt-p5-filters' },
+            [
+              { k: 'all', lbl: '全部' },
+              { k: 'lead', lbl: '主代理 Captain' },
+              { k: 'sub', lbl: '子代理 (' + children.length + ')' },
+            ].map((fp) => h('button', {
+              key: 'p5f-' + fp.k,
+              type: 'button',
+              className: 'rt-p3-pill' + (filter === fp.k ? ' on' : ''),
+              onClick: () => setFilter(fp.k),
+            }, fp.lbl))),
+          h('div', { className: 'rt-spacer' }),
+          h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '树状图'),
+            h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom((z) => Math.max(70, z - 10)) }, '-'),
+            h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom(100) }, zoom + '%'),
+            h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom((z) => Math.min(130, z + 10)) }, '+'))),
+        h('div', {
+          className: 'rt-p5-canvas-wrap',
+          style: {
+            border: '1px solid var(--dsw-alias-border-l1)',
+            borderRadius: 12,
+            padding: '20px 16px 24px',
+            background: 'var(--dsw-alias-bg-base)',
+            overflow: 'auto',
+          },
+        },
+          h('div', {
+            ref: stageRef,
+            className: 'rt-p5-tree-stage',
+            style: { transform: 'scale(' + (zoom / 100) + ')', gap: 36 },
+          },
+            edgeGeom && edgeGeom.edges.length > 0
+              ? h('svg', {
+                  className: 'rt-tree-edges-svg',
+                  viewBox: '0 0 ' + edgeGeom.w + ' ' + edgeGeom.h,
+                  preserveAspectRatio: 'none',
+                  'aria-hidden': 'true',
+                },
+                  h('circle', { cx: edgeGeom.startX, cy: edgeGeom.startY, r: 3.5, fill: '#3b82f6' }),
+                  edgeGeom.edges.map((ed) => h('g', { key: ed.key },
+                    h('path', {
+                      className: 'rt-tree-edge-path ' + ed.cls,
+                      d: ed.d,
+                      style: { '--rt-edge-color': ed.color },
+                    }),
+                    h('circle', { cx: ed.endX, cy: ed.endY, r: 3.2, fill: ed.color }))))
+              : null,
+            h('div', { className: 'rt-tree-node-layer', style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 36 } },
+              showRoot
+                ? h('div', { className: 'rt-p5-root-wrap' },
+                    h('div', {
+                      ref: rootRef,
+                      className: 'rt-p5-node rt-p5-root',
+                      style: {
+                        width: '100%',
+                        position: 'relative',
+                        border: '1.5px solid #3b82f6',
+                        borderRadius: 10,
+                        padding: '10px 12px',
+                        background: 'var(--dsw-alias-bg-layer-1)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                      },
+                    },
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+                        h('span', { className: 'rt-p5-pill', style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999 } }, '主代理'),
+                        h('strong', { style: { fontSize: 12.5 } }, 'Captain 主控架构师'),
+                        h('div', { className: 'rt-spacer' }),
+                        h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? '协调中' : '就绪')),
+                      h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
+                        '工作区 ' + eng + ' · 统筹 4-Wave 分片调度与摘要审批'),
+                      showChildren.length > 0 ? h('span', { className: 'rt-tree-port rt-tree-port-bottom' }) : null))
+                : null,
+              showChildren.length > 0
+                ? h('div', { className: 'rt-p5-branches-grid' },
+                    showChildren.map((c) => h('div', Object.assign({
+                      key: 'p5c-' + c.id,
+                      ref: (el) => {
+                        if (el) childRefs.current[c.id] = el
+                        else delete childRefs.current[c.id]
+                      },
+                      className: 'rt-p5-node',
+                      style: {
+                        position: 'relative',
+                        border: '1.5px solid ' + c.color,
+                        borderRadius: 10,
+                        padding: '10px 12px',
+                        background: 'var(--dsw-alias-bg-layer-1)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 5,
+                        cursor: c.sessionId ? 'pointer' : 'default',
+                      },
+                    }, c.sessionId ? clickable(() => { openAgentSessionInHostChat(c.sessionId, c.title) }, { label: '打开子代理 ' + c.title }) : {}),
+                      showRoot ? h('span', { className: 'rt-tree-port rt-tree-port-top' }) : null,
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                        h('span', { className: 'rt-p5-pill', style: { background: c.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999 } }, c.role),
+                        c.wave ? h('span', { className: 'rt-tag rt-tag-passive', style: { margin: 0 } }, c.wave) : null,
+                        h('div', { className: 'rt-spacer' }),
+                        h('span', { style: { fontSize: 10.5, fontWeight: 600, color: c.color } }, c.statusLabel)),
+                      h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, c.title),
+                      c.goal ? h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.45 } }, c.goal) : null)))
+                : filter !== 'lead'
+                    ? h('div', { className: 'rt-empty', style: { width: '100%' } }, '尚无已派发的子代理任务。')
+                    : null))))
+    }
+
     function AgentsTab(props) {
       const eng = props.engagement
       const sid = props.sessionId || null
@@ -147,22 +392,12 @@
         setCtrlMsg('正在调整并发槽上限为 ' + clamped + ' 槽…')
         api({ op: 'setAgentsMax', max: clamped }).then((r) => {
           if (r && r.ok !== false) {
-            setCtrlMsg('已生效：并发槽上限 ' + (r.max || clamped) + ' 槽 · maxDepth=' + maxDepth + ' · thinking=' + thinking)
+            setCtrlMsg('已生效：并发槽上限 ' + (r.max || clamped) + ' 槽')
             load()
           } else {
             setCtrlMsg((r && r.error) || '调整并发槽失败')
           }
         }, (e) => setCtrlMsg(String((e && e.message) || e)))
-        api({ op: 'setClusterConfig', maxAgents: clamped, maxDepth: maxDepth, thinking: thinking }).then(() => {}, () => {})
-      }
-
-      const applyRecursionConfig = (nextDepth, nextThinking) => {
-        const d = Number(nextDepth) || 3
-        const t = String(nextThinking || 'low')
-        setMaxDepth(d)
-        setThinking(t)
-        setCtrlMsg('已更新递归子代理配置：maxDepth = ' + d + ' · thinking = ' + t)
-        api({ op: 'setClusterConfig', maxAgents: max, maxDepth: d, thinking: t }).then(() => {}, () => {})
       }
 
       const presets = [
@@ -174,7 +409,7 @@
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '智能体与并发（4-Wave 实时集群拓扑）'),
+          h('span', { style: { fontWeight: 600 } }, '智能体与并发'),
           h('span', {
             className: 'rt-tag' + (activeCount >= max ? ' rt-tag-warn' : (activeCount > 0 ? ' rt-tag-live' : ' rt-tag-passive')),
           }, '并发槽 ' + activeCount + '/' + max),
@@ -186,7 +421,6 @@
           h('button', {
             type: 'button',
             className: 'rt-btn',
-            title: '查看与编辑 8 个 gstack 角色的 Markdown 提示词模板',
             onClick: () => { if (typeof props.onGo === 'function') props.onGo('prompts') },
           }, '角色与提示词 →'),
           h('button', {
@@ -211,34 +445,25 @@
                   className: 'rt-p3-pill' + (max === p.n ? ' on' : ''),
                   onClick: () => applySlotMax(p.n),
                 }, p.label))),
-              h('select', {
-                className: 'rt-input',
-                style: { height: 26, fontSize: 11.5, padding: '0 6px' },
-                'aria-label': '最大递归深度 maxDepth',
-                value: String(maxDepth),
-                onChange: (e) => applyRecursionConfig(Number(e.target.value), thinking),
-              },
-                h('option', { value: '1' }, 'maxDepth = 1'),
-                h('option', { value: '2' }, 'maxDepth = 2'),
-                h('option', { value: '3' }, 'maxDepth = 3'),
-                h('option', { value: '4' }, 'maxDepth = 4')),
-              h('select', {
-                className: 'rt-input',
-                style: { height: 26, fontSize: 11.5, padding: '0 6px' },
-                'aria-label': '默认思考强度 thinking',
-                value: thinking,
-                onChange: (e) => applyRecursionConfig(maxDepth, e.target.value),
-              },
-                h('option', { value: 'low' }, 'thinking = low (极速)'),
-                h('option', { value: 'medium' }, 'thinking = medium (均衡)'),
-                h('option', { value: 'high' }, 'thinking = high (深度)')),
+              h('span', { className: 'rt-tag rt-tag-passive' }, '深度 ' + maxDepth + ' · 思考 ' + thinking),
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                onClick: () => { if (typeof props.onGo === 'function') props.onGo('settings') },
+              }, '在设置页调整全部参数 →'),
               h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', marginLeft: 'auto' } },
                 '同一项目',
                 h('b', { style: { color: 'var(--dsw-alias-label-primary)' } }, '同时最多 ' + max + ' 个执行智能体'),
-                ' · 派发前经 ',
+                ' · 经 ',
                 h('code', { className: 'rt-code-inline' }, 'redteam_agent_slot'),
-                ' 占位核验')),
+                ' 核验')),
             ctrlMsg ? h('div', { style: { fontSize: 11, color: '#2563eb', marginTop: 6, fontWeight: 600 } }, ctrlMsg) : null),
+          h(ClusterP5Tree, {
+            engagement: eng,
+            agents: effectiveAgents,
+            onOpenCollab: () => { if (typeof props.onGo === 'function') props.onGo('collab') },
+            onOpenSettings: () => { if (typeof props.onGo === 'function') props.onGo('settings') },
+          }),
           h(HarnessWorkflowDeck, {
             engagement: eng,
             agents: effectiveAgents,
@@ -306,8 +531,8 @@
           err ? h('div', { className: 'rt-err' }, err) : null,
           h('div', { className: 'rt-card' },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 } },
-              h('h4', { style: { margin: 0 } }, '八位集群角色 · 2×4 模块化角色网格（点击卡片切换下方提示词模板）'),
-              h('span', { className: 'rt-wb-recurse-tag' }, '按工作区独立持久化 Markdown 提示词')),
+              h('h4', { style: { margin: 0 } }, '8 角色 gstack 编队'),
+              h('span', { className: 'rt-wb-recurse-tag' }, '按工作区持久化模板')),
             h('div', { className: 'rt-wb-role-grid' },
               GSTACK_ROLE_ROSTER.map((r) => {
                 const isSelected = openRole === r.role
@@ -327,22 +552,22 @@
                   h('div', { className: 'rt-wb-role-tags' },
                     r.skills.map((sk) => h('span', { key: sk, className: 'rt-wb-skill-tag' }, sk))),
                   h('div', { className: 'rt-wb-role-edit' },
-                    isSelected ? '▾ 当前正在查看/编辑 ' + r.role + '.md' : '点击查看/编辑 (' + r.role + '.md) →'))
+                    isSelected ? '当前 · ' + r.role + '.md' : '编辑 ' + r.role + '.md →'))
               }))),
           eng
             ? h('div', { className: 'rt-card' },
                 h('div', { style: { fontSize: 12, fontWeight: 600, marginBottom: 6 } },
-                  '角色提示词编辑器 · 当前工作区「' + eng + '」 · 角色 ' + openRole + '.md'),
+                  '角色提示词 · ' + eng + ' · ' + openRole + '.md'),
                 h(PromptsTab, { engagement: eng, refreshKey: refreshKey, selectedRole: openRole }))
             : h('div', { className: 'rt-card' },
                 h('h4', { style: { marginTop: 0 } }, '当前会话尚未初始化工作区'),
-                h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10, lineHeight: 1.6 } },
-                  '上方展示 8 个标准 gstack 研发角色的职责边界与挂载技能。初始化当前会话工作台后，即可按工作区独立定制并保存各角色的 Markdown 提示词。'),
+                h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10, lineHeight: 1.55 } },
+                  '初始化当前会话工作台后，可按工作区独立编辑各角色提示词。'),
                 h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: () => { if (typeof props.onGo === 'function') props.onGo('collab') },
-                }, '前往「协同与审批」初始化当前会话工作台 →'))))
+                }, '前往「协同与审批」初始化 →'))))
     }
 
     /**
@@ -350,7 +575,6 @@
      */
     function VersionBar() {
       const [info, setInfo] = React.useState(null)
-      const [, setErr] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [open, setOpen] = React.useState(false)
       const [msg, setMsg] = React.useState(null)
@@ -371,15 +595,12 @@
         api({ op: 'updateCheck' }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) {
-            if (!silent) setErr((r && r.error) || '检查更新失败')
             api({ op: 'version' }).then((v) => { if (v && v.ok !== false) setInfo(v) }, () => {})
             return
           }
-          setErr(null)
           setInfo(r)
-        }, (e) => {
+        }, () => {
           setBusy(false)
-          if (!silent) setErr(String((e && e.message) || e))
           api({ op: 'version' }).then((v) => { if (v && v.ok !== false) setInfo(v) }, () => {})
         })
       }
@@ -522,7 +743,7 @@
       if (!eng) return () => {}
       let hub = _digestHubs.get(eng)
       if (!hub) {
-        hub = { subs: new Set(), inflight: false, lastSections: null, timer: null }
+        hub = { subs: new Set(), inflight: false, lastSections: null, timer: null, unsubSse: null }
         _digestHubs.set(eng, hub)
       }
       hub.subs.add(onSections)
@@ -530,6 +751,9 @@
       _pollDigestHub(eng)
       if (hub.timer === null && typeof window !== 'undefined' && typeof window.setInterval === 'function') {
         hub.timer = window.setInterval(() => _pollDigestHub(eng), 25000)
+      }
+      if (hub.unsubSse === null) {
+        hub.unsubSse = subscribeHostEvents(eng, () => _pollDigestHub(eng), 1200)
       }
       return () => {
         const curHub = _digestHubs.get(eng)
@@ -539,6 +763,7 @@
           if (curHub.timer !== null) {
             try { window.clearInterval(curHub.timer) } catch { /* ignore */ }
           }
+          if (typeof curHub.unsubSse === 'function') curHub.unsubSse()
           _digestHubs.delete(eng)
         }
       }
@@ -588,10 +813,8 @@
 
       const st = useUI()
       const [engagements, setEngagements] = React.useState([])
-      const [, setHostSessions] = React.useState([])
       const [eng, setEng] = React.useState(null)
       const [boundEng, setBoundEng] = React.useState(null)
-      const [, setFollowing] = React.useState(false)
       const [followSource, setFollowSource] = React.useState(null)
       const [sessionState, setSessionState] = React.useState(null)
       const [snapshot, setSnapshot] = React.useState(null)
@@ -607,7 +830,6 @@
         } catch (e) { /* 隐私模式 */ }
         return 540
       })
-      const [, setCreating] = React.useState(false)
       const [refreshKey, setRefreshKey] = React.useState(0)
       const [digest, setDigest] = React.useState(null)
       const [seen, setSeen] = React.useState(null)
@@ -673,7 +895,6 @@
       const refreshList = (selectId) => {
         api({ op: 'bootstrap', session: sidRef.current || undefined }).then((b) => {
           setEngagements((b && b.engagements) || [])
-          if (b && Array.isArray(b.host_sessions)) setHostSessions(b.host_sessions)
           if (selectId) { setEng(selectId); loadSnapshot(selectId) }
         }, () => {})
       }
@@ -682,10 +903,8 @@
         const known = (list || engagements).some((x) => x.id === id)
         if (!known) return false
         manualPickRef.current = null
-        setFollowing(true)
         setFollowSource(source || 'bound')
         setEng(id)
-        rememberEngagement(id)
         loadSnapshot(id)
         return true
       }
@@ -694,7 +913,6 @@
 
       const applyResolvedBinding = (r, id, list, title) => {
         const known = list || engagements
-        if (r && Array.isArray(r.host_sessions)) setHostSessions(r.host_sessions)
         const rawCandidate = r && r.ok !== false && typeof r.bound === 'string' && r.bound ? r.bound : null
         const rawBound = rawCandidate && !isRawUuidName(rawCandidate) ? rawCandidate : null
         const dismissed = Boolean(r && (r.onboarding_dismissed || r.init_state === 'skipped'))
@@ -724,7 +942,6 @@
         if (manualHere() && eng !== null && !isRawUuidName(eng)) return
         setEng(null)
         setSnapshot(null)
-        setFollowing(true)
         setFollowSource(stObj.onboarding_dismissed ? 'skipped' : 'unbound')
         if (!stObj.onboarding_dismissed && id && autoRoutedSessionRef.current !== id) {
           autoRoutedSessionRef.current = id
@@ -750,7 +967,6 @@
             setBoundEng(null)
             setEng(null)
             setSnapshot(null)
-            setFollowing(true)
             setFollowSource('unbound')
           }
         })
@@ -773,7 +989,6 @@
           const list = r.engagements || []
           const hs = Array.isArray(r.host_sessions) ? r.host_sessions : []
           setEngagements(list)
-          setHostSessions(hs)
 
           let effectiveSid = sidRef.current || initialSid || null
           if (!scopedSession.authoritative && !effectiveSid && lsCurrentSid) {
@@ -801,7 +1016,6 @@
             : rawFallback
           if (fallback) {
             manualPickRef.current = null
-            setFollowing(false)
             setFollowSource('default')
             setEng(fallback)
             loadSnapshot(fallback)
@@ -820,18 +1034,14 @@
       const openEngagement = (nameArg) => {
         const name = String(nameArg || '').trim()
         if (!name) return Promise.resolve(null)
-        setCreating(true)
         return api({ op: 'openEngagement', name: name, session: sid || undefined }).then((r) => {
-          setCreating(false)
           if (!r || r.ok === false) { setErr((r && r.error) || '创建失败'); return null }
           const createdId = (r.engagement && r.engagement.id) || r.id || name
           if (createdId) {
             manualPickRef.current = null
             setBoundEng(createdId)
             setEng(createdId)
-            setFollowing(true)
             setFollowSource('bound')
-            rememberEngagement(createdId)
             setSessionState((prev) => Object.assign({}, prev || {}, {
               bound: createdId,
               init_state: 'initialized',
@@ -850,7 +1060,6 @@
           }
           return createdId
         }, (e) => {
-          setCreating(false)
           setErr(String((e && e.message) || e))
           return null
         })
@@ -862,9 +1071,7 @@
         manualPickRef.current = null
         setBoundEng(next)
         setEng(next)
-        setFollowing(true)
         setFollowSource('bound')
-        rememberEngagement(next)
         setSessionState((prev) => Object.assign({}, prev || {}, {
           bound: next,
           init_state: 'initialized',
@@ -889,9 +1096,7 @@
         manualPickRef.current = null
         setBoundEng(createdId)
         setEng(createdId)
-        setFollowing(true)
         setFollowSource('bound')
-        rememberEngagement(createdId)
         setSessionState((prev) => Object.assign({}, prev || {}, {
           bound: createdId,
           init_state: 'initialized',
@@ -915,7 +1120,6 @@
         api({ op: 'bootstrap', session: sid || undefined }).then((b) => {
           const list = (b && b.engagements) || []
           setEngagements(list)
-          if (b && Array.isArray(b.host_sessions)) setHostSessions(b.host_sessions)
           if (sid !== null) {
             if (eng) loadSnapshot(eng)
             else applySessionBinding(sid, list, sesTitle)
@@ -954,10 +1158,6 @@
         setSeen(loadUnread(eng))
         return subscribeDigestPoller(eng, setDigest)
       }, [eng, refreshKey])
-
-      useHostEvents(eng, () => {
-        if (eng) _pollDigestHub(eng)
-      }, 1200)
 
       const markTabSeen = React.useCallback((tab) => {
         if (!eng) return
@@ -1065,6 +1265,7 @@
         ['report', '研发交付报告'],
         ['knowledge', '工程模式库'],
         ['skills', '研发技能库'],
+        ['settings', '设置'],
       ]
       const TAB_GROUPS = [
         { key: 'collab', label: '协同与审批', tabs: ['collab'] },
@@ -1073,6 +1274,7 @@
         { key: 'results', label: '质量', tabs: ['findings', 'scores'] },
         { key: 'report', label: '报告', tabs: ['report'] },
         { key: 'resources', label: '集群', tabs: ['agents', 'prompts', 'sessions', 'artifacts', 'knowledge', 'skills'] },
+        { key: 'settings', label: '设置', tabs: ['settings'] },
       ]
       const groupOf = (tab) => TAB_GROUPS.find((g) => g.tabs.indexOf(tab) !== -1) || TAB_GROUPS[1]
       const activeGroup = groupOf(st.tab)
@@ -1094,7 +1296,19 @@
       const needsSessionInit = Boolean(sid && !eng && !isSessionDismissed)
 
       let body
-      if (err) {
+      if (st.tab === 'settings') {
+        body = typeof SettingsHubTab === 'function'
+          ? h(SettingsHubTab, {
+              engagement: eng,
+              engagements: visibleEngagements,
+              sessionId: sid,
+              refreshKey: refreshKey,
+              onRefresh: refreshAll,
+              onGo: goTab,
+              compact: false,
+            })
+          : h('div', { className: 'rt-pane' }, h('div', { className: 'rt-empty' }, '设置中心尚未加载'))
+      } else if (err) {
         body = h('div', { className: 'rt-err' }, err)
       } else if (st.tab === 'collab') {
         body = typeof CollabApprovalTab === 'function'
@@ -1153,20 +1367,20 @@
         body = h('div', { className: 'rt-pane' },
           h('div', { className: 'rt-card' },
             h('h4', { style: { marginTop: 0 } }, '当前会话尚未初始化工作区'),
-            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 12, lineHeight: 1.6 } },
-              'LMTAgent 采用严格的 1:1 会话工作区隔离：新会话默认保持干净，绝不串用其他会话的项目数据。请前往「协同与审批」为当前会话初始化独立工作台，或关联已有项目。'),
+            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 12, lineHeight: 1.55 } },
+              '按会话 1:1 隔离工作区；请前往「协同与审批」初始化或关联已有项目。'),
             h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
               h('button', {
                 type: 'button',
                 className: 'rt-btn rt-btn-primary',
                 onClick: () => goTab('collab'),
-              }, '前往「协同与审批」初始化当前会话工作台 →'),
+              }, '前往「协同与审批」初始化 →'),
               canReopenOnboarding
                 ? h('button', {
                     type: 'button',
                     className: 'rt-btn',
                     onClick: handleReopenOnboarding,
-                  }, '🧭 重新获取初始化指引')
+                  }, '重新获取初始化指引')
                 : null)))
       } else if (st.tab === 'assets' || st.tab === 'testing') {
         body = h(AssetsTab, { engagement: eng, snapshot: snapshot, refreshKey: refreshKey, onRefresh: refreshAll, onData: () => loadSnapshot(eng) })
@@ -1213,10 +1427,8 @@
                         title: '当前已手动切换工作区；点击切回当前会话绑定的「' + boundEng + '」',
                       }, clickable(() => {
                         manualPickRef.current = null
-                        setFollowing(true)
                         setFollowSource('bound')
                         setEng(boundEng)
-                        rememberEngagement(boundEng)
                         loadSnapshot(boundEng)
                       }, { label: '切回当前会话绑定工作区：' + boundEng })), '手动选择：' + boundEng)
                     : h('span', {
@@ -1228,9 +1440,9 @@
                 type: 'button',
                 className: 'rt-btn rt-btn-primary',
                 style: { padding: '2px 8px', fontSize: 11.5 },
-                title: '当前会话尚无对话记录，点击重新打开工作台初始化指引',
+                title: '重新打开工作台初始化指引',
                 onClick: handleReopenOnboarding,
-              }, '🧭 重新指引')
+              }, '重新指引')
             : null,
           h('select', {
             className: 'rt-input',
@@ -1245,10 +1457,8 @@
                 return
               }
               manualPickRef.current = sid || ''
-              setFollowing(false)
               setFollowSource(null)
               setEng(next)
-              rememberEngagement(next)
               loadSnapshot(next)
               if (sid !== null) {
                 api({
@@ -1268,15 +1478,21 @@
           h(UiModeSwitcher, { compact: true }),
           h(VersionBar, null),
           full
-            ? h('button', { className: 'rt-btn', title: '回到带侧栏的普通界面（或按 Esc）', onClick: exitFull }, '退出全屏')
+            ? h('button', { className: 'rt-btn', title: '退出全屏（Esc）', onClick: exitFull }, '退出全屏')
             : null,
-          h('button', { className: 'rt-btn', title: '刷新工作区、会话遥测与当前页面数据', onClick: refreshAll }, '刷新'),
+          h('button', { className: 'rt-btn', title: '刷新当前数据', onClick: refreshAll }, '刷新'),
+          h('button', {
+            type: 'button',
+            className: 'rt-btn' + (st.tab === 'settings' ? ' rt-btn-primary' : ''),
+            title: '打开统一设置中心',
+            onClick: () => goTab('settings'),
+          }, '设置'),
           full ? null : h('button', {
             className: 'rt-btn',
-            title: isDesktopShell() ? '在当前窗口全屏打开完整控制台（Esc 退出）' : '在新浏览器窗口打开完整控制台',
+            title: isDesktopShell() ? '当前窗口全屏查看（Esc 退出）' : '新窗口打开',
             onClick: openFull,
           }, '全面浏览'),
-          (full || embedMode) ? null : h('button', { className: 'rt-btn', title: '收起面板（对话列恢复全宽）', onClick: () => setUI({ open: false }) }, '收起')),
+          (full || embedMode) ? null : h('button', { className: 'rt-btn', title: '收起面板', onClick: () => setUI({ open: false }) }, '收起')),
         h('div', { className: 'rt-tabs rt-tabs-groups', role: 'navigation', 'aria-label': '控制台分区' },
           TAB_GROUPS.map((g) => {
             const on = activeGroup.key === g.key
@@ -1318,17 +1534,16 @@
         h('div', { className: 'rt-body' }, h(RtBoundary, { key: st.tab }, body)),
         h('div', { className: 'rt-foot' },
           h('span', { className: 'rt-wb-badge' },
-            st.uiMode === 'novice' ? 'LMTAgent · AI 协同工作台' : 'LMTAgent · 8-Role · 4-Wave DAG'),
+            st.uiMode === 'novice' ? 'LMTAgent · 协同工作台' : 'LMTAgent · 4-Wave DAG'),
           h('div', { className: 'rt-spacer' }),
-          full ? h('span', null, '按 Esc 或点右上角「退出全屏」回到带侧栏的界面') : null,
+          full ? h('span', null, 'Esc 退出全屏') : null,
           eng
             ? h('span', null, (st.uiMode === 'novice' ? '工作区 · ' : 'PG/WAL · ') + currentEngName)
             : h('span', null, isSessionDismissed ? '当前会话 · 独立空白态（未绑定工作区）' : '当前会话 · 待初始化工作区'),
           sid === null
             ? null
             : h('span', {
-                title: '当前会话 ' + sid + (sesTitle ? '（' + sesTitle + '）' : '')
-                  + '；工作区状态：' + (FOLLOW_SOURCE[followSource] || '实时同步'),
+                title: '当前会话 ' + sid + (sesTitle ? '（' + sesTitle + '）' : ''),
               }, '会话 ' + sid.slice(0, 8) + (followSource && FOLLOW_SOURCE[followSource] ? ' · ' + FOLLOW_SOURCE[followSource] : ''))))
     }
 
@@ -1406,11 +1621,23 @@
       /* 5. 设置页专区（settings.section） */
       ctx.slots.inject('settings.section', () => ctx.slots.register(
         { name: 'settings.section', id: 'lmtagent-settings', order: 50, label: 'LMTAgent 研发集群' },
-        () => h('div', { className: 'rt-card', style: { margin: 12 } },
-          h('h4', null, 'LMTAgent · 软件工程多智能体研发控制台 (ECCVIK/LMTAgent)'),
-          h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 8 } },
-            '8 角色 gstack 协同研发 · 4-Wave Bounded DAG · 1:1 会话工作区隔离'),
-          h('button', { className: 'rt-btn rt-btn-primary', onClick: () => setUI({ open: true }) }, '打开 LMTAgent 研发控制台')),
+        () => h('div', { style: { margin: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
+            h('div', null,
+              h('div', { style: { fontWeight: 700, fontSize: 13 } }, 'LMTAgent 统一设置中心'),
+              h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
+                'AI 规划、并发派发、存储、飞书与界面偏好')),
+            h('button', {
+              type: 'button',
+              className: 'rt-btn rt-btn-primary',
+              onClick: () => setUI({ open: true, tab: 'settings' }),
+            }, '打开完整控制台')),
+          typeof SettingsHubTab === 'function'
+            ? h(SettingsHubTab, {
+                compact: true,
+                onGo: (tab) => setUI({ open: true, tab: tab || 'settings' }),
+              })
+            : null),
       ))
 
       /* 6. 若宿主启用了 betterSidebar 服务，同步注册左侧导航项 */

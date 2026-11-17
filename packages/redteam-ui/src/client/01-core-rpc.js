@@ -27,7 +27,6 @@
 
     /* Host 递增变更序号（配合可选 sinceSeq 与 SSE /redteam/events 增量感知） */
     let _lastHostSeq = 0
-    const getLastHostSeq = () => _lastHostSeq
 
     /**
      * 统一 RPC 桥接 `POST /redteam/api`：
@@ -160,47 +159,57 @@
     }
 
     /**
-     * 监听宿主 `/redteam/events` SSE 推送（带节流合并，避免高频写表触发渲染风暴）。
-     * 在没有 EventSource 的环境（如 Node 测试桩）下自动安全降级为空操作。
+     * 订阅宿主 `/redteam/events` SSE 推送（带节流合并，避免高频写表触发渲染风暴）。
+     * 传入 `engagement === false` 可显式禁用（如由父组件托管刷新的子画布）；在无 EventSource 环境下自动安全降级。
+     */
+    const subscribeHostEvents = (engagement, onRefresh, throttleMs) => {
+      if (engagement === false) return () => {}
+      const hasES = (typeof EventSource === 'function')
+        || (typeof window !== 'undefined' && window && typeof window.EventSource === 'function')
+      if (!hasES) return () => {}
+      const minGap = Number(throttleMs) > 0 ? Number(throttleMs) : 600
+      let lastFire = 0
+      let trailingTimer = null
+      const listener = (payload) => {
+        if (payload && (payload.type === 'heartbeat' || payload.type === 'ping')) return
+        const targetEng = payload && (payload.engagement_id || payload.engagement)
+        if (targetEng && engagement && targetEng !== engagement) return
+        const now = Date.now()
+        const elapsed = now - lastFire
+        if (elapsed >= minGap) {
+          lastFire = now
+          if (typeof onRefresh === 'function') onRefresh(payload)
+        } else if (!trailingTimer && typeof setTimeout === 'function') {
+          trailingTimer = setTimeout(() => {
+            trailingTimer = null
+            lastFire = Date.now()
+            if (typeof onRefresh === 'function') onRefresh(payload)
+          }, Math.max(120, minGap - elapsed))
+        }
+      }
+      _sseListeners.add(listener)
+      _ensureSseConnected()
+      return () => {
+        if (trailingTimer && typeof clearTimeout === 'function') clearTimeout(trailingTimer)
+        _sseListeners.delete(listener)
+        _teardownSseIfIdle()
+      }
+    }
+
+    /**
+     * React Hook 封装：按工作区订阅宿主 `/redteam/events` SSE 推送。
      */
     function useHostEvents(engagement, onRefresh, throttleMs) {
       const cbRef = React.useRef(onRefresh)
       cbRef.current = onRefresh
-      const engRef = React.useRef(engagement)
-      engRef.current = engagement
       const minGap = Number(throttleMs) > 0 ? Number(throttleMs) : 600
 
-      React.useEffect(() => {
-        const hasES = (typeof EventSource === 'function')
-          || (typeof window !== 'undefined' && window && typeof window.EventSource === 'function')
-        if (!hasES) return undefined
-        let lastFire = 0
-        let trailingTimer = null
-        const listener = (payload) => {
-          if (payload && (payload.type === 'heartbeat' || payload.type === 'ping')) return
-          const targetEng = payload && (payload.engagement_id || payload.engagement)
-          if (targetEng && engRef.current && targetEng !== engRef.current) return
-          const now = Date.now()
-          const elapsed = now - lastFire
-          if (elapsed >= minGap) {
-            lastFire = now
-            if (typeof cbRef.current === 'function') cbRef.current(payload)
-          } else if (!trailingTimer && typeof setTimeout === 'function') {
-            trailingTimer = setTimeout(() => {
-              trailingTimer = null
-              lastFire = Date.now()
-              if (typeof cbRef.current === 'function') cbRef.current(payload)
-            }, Math.max(120, minGap - elapsed))
-          }
-        }
-        _sseListeners.add(listener)
-        _ensureSseConnected()
-        return () => {
-          if (trailingTimer && typeof clearTimeout === 'function') clearTimeout(trailingTimer)
-          _sseListeners.delete(listener)
-          _teardownSseIfIdle()
-        }
-      }, [engagement, minGap])
+      React.useEffect(
+        () => subscribeHostEvents(engagement, (payload) => {
+          if (typeof cbRef.current === 'function') cbRef.current(payload)
+        }, minGap),
+        [engagement, minGap]
+      )
     }
 
     /* ── 证据截图：有界 LRU 缓存（上限 64 条，切换工作区时清理）+ 点击放大 ── */
@@ -359,14 +368,6 @@
         return () => { sessionSubs.delete(f) }
       }, [])
       return { id: sessionId, title: sessionTitle }
-    }
-
-    const LAST_ENG_KEY = 'rt-last-engagement'
-    const lastEngagement = () => {
-      try { return window.localStorage.getItem(LAST_ENG_KEY) || null } catch (e) { return null }
-    }
-    const rememberEngagement = (id) => {
-      try { if (id) window.localStorage.setItem(LAST_ENG_KEY, id) } catch (e) { /* 隐私模式：不记也能用 */ }
     }
 
     const FOLLOW_SOURCE = {
@@ -544,6 +545,99 @@
     function TestTag(props) {
       const st = props.s || 'untested'
       return h('span', { className: 'rt-test rt-test-' + st }, TEST_LABEL[st] || st)
+    }
+
+    const PENDING_APPROVAL_STATES = new Set([
+      'pending_approval',
+      'waiting_approval',
+      'revision_required',
+      'blocked',
+    ])
+
+    const ConclItem = (key, label, value, active, onClick) => h('span', Object.assign({
+      key: key,
+      className: 'rt-concl-i' + (active ? ' on' : ''),
+      style: onClick ? undefined : { cursor: 'default' },
+      title: onClick ? '点击筛选 / 再点取消' : undefined,
+    }, onClick ? clickable(onClick, { label: '按「' + label + '」筛选（' + (value || 0) + '）', expanded: active }) : {}),
+      h('b', null, String(value || 0)), h('span', null, label))
+
+    const isRealHostSessionId = (sid, hostSessionList) => {
+      const s = String(sid || '').trim()
+      if (!s || s === 'root' || s === 'root-main' || s === 'default') return false
+      if (/^(?:sub-|agent-|dom-|task-|wish-|custom-|goal-)/i.test(s)) return false
+      if (/^session-(?:plan|recon|designer|assess|exploit|qa|vuln-scan|internal)$/i.test(s)) return false
+      if (Array.isArray(hostSessionList) && hostSessionList.length > 0) {
+        for (let i = 0; i < hostSessionList.length; i += 1) {
+          const hs = hostSessionList[i]
+          if (!hs) continue
+          if (hs.id === s || hs.sessionId === s) return true
+          if (Array.isArray(hs.children) && hs.children.some((ch) => ch && (ch.id === s || ch.sessionId === s))) {
+            return true
+          }
+        }
+      }
+      return /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}/i.test(s) || (!s.startsWith('w') && s.length >= 12)
+    }
+
+    /**
+     * 共享宿主侧边栏对话跳转辅助函数（供「协同与审批」与「集群」工作流检视器共用）。
+     */
+    const openAgentSessionInHostChat = (agent, opts) => {
+      const options = opts || {}
+      const hostSessions = options.hostSessions
+      const candidateSid = (agent && (agent.sessionId || agent.session_id || agent.id)) || ''
+      const primarySid = options.sessionId !== undefined ? options.sessionId : sessionId
+      const fallbackRealSid = isRealHostSessionId(primarySid, hostSessions)
+        ? primarySid
+        : (isRealHostSessionId(options.fallbackSessionId, hostSessions) ? options.fallbackSessionId : '')
+      const targetSid = isRealHostSessionId(candidateSid, hostSessions) ? candidateSid : fallbackRealSid
+      const targetTitle = (agent && (agent.title || agent.name)) || options.sessionTitle || sessionTitle || targetSid || '当前会话'
+
+      if (targetSid) {
+        setSessionId(targetSid, targetTitle)
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            window.localStorage.setItem('dsh.sessions.current', targetSid)
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      api({
+        op: 'activateAgentSession',
+        sessionId: targetSid || candidateSid || undefined,
+        agentId: agent && (agent.id || agent.worker_id),
+        engagement: options.engagement || undefined,
+      }).catch(() => {})
+
+      try {
+        if (targetSid && typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
+          const candidates = document.querySelectorAll(
+            '[data-session-id],[data-id],a[href*="session"],[role="treeitem"],[role="option"],li'
+          )
+          const normTitle = String(targetTitle || '').trim().toLowerCase()
+          for (let i = 0; i < candidates.length; i += 1) {
+            const el = candidates[i]
+            if (!el || typeof el.click !== 'function') continue
+            if (typeof el.closest === 'function' && el.closest('.rt-dock, .rt-full, .rt-embed')) continue
+            const dsId = (typeof el.getAttribute === 'function')
+              ? (el.getAttribute('data-session-id') || el.getAttribute('data-id') || el.getAttribute('href') || '')
+              : ''
+            const txt = String(el.textContent || '').trim().toLowerCase()
+            if (
+              (dsId && dsId.includes(targetSid)) ||
+              (txt && txt.includes(String(targetSid).toLowerCase())) ||
+              (normTitle && txt && (txt === normTitle || txt.includes(normTitle)))
+            ) {
+              el.click()
+              break
+            }
+          }
+        }
+      } catch (e) { /* ignore */ }
+
+      exitFullInPlace()
+      return { targetSid, targetTitle }
     }
 
     /* ── 共享折叠底座与文本折叠剪贴框（供各工程页签统一复用） ─────────────── */

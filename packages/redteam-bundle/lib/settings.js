@@ -1,10 +1,11 @@
 /**
- * 插件级设置与文件分片冲突判定（零依赖，与 `@lmtagent/redteam-tools/lib/concurrency.js` 口径完全统一）：
+ * 插件级设置与文件分片冲突判定（零依赖）：
  *   1. **并发执行智能体上限（maxAgents）**：默认 6 并发（合法范围 1..12）；
  *   2. **子智能体默认思考强度（thinkingEffort）**：默认 `'low'`（合法值 `'low' | 'medium' | 'high'`，`'none'` 或非法值收敛为 `'low'`）；
  *   3. **子智能体最大递归派发深度（maxDepth）**：默认 3（合法范围 1..5）；
  *   4. **PostgreSQL 数据库连接配置（pgUrl）**：兼容 `$DSH_HOME/redteam/settings.json` 同文件存储；
- *   5. **File-Disjoint Sharding 纯函数与分片锁注册表**：`normalizeShardPattern` / `filesOverlap` / `detectShardConflicts` / `ShardLockRegistry`。
+ *   5. **AI Planner / 派发策略 / UI 偏好统一设置（aiPlanner / dispatchPolicy / uiPreferences）**；
+ *   6. **File-Disjoint Sharding 纯函数**：`normalizeShardPattern` / `detectShardConflicts`。
  *
  * 生效顺序：settings.json → 环境变量（`REDTEAM_MAX_AGENTS` / `REDTEAM_THINKING_EFFORT` / `DSH_SUBAGENT_THINKING` / `REDTEAM_MAX_DEPTH` / `REDTEAM_PG_URL`） → 默认值。
  */
@@ -16,7 +17,7 @@ import { dirname, join } from 'node:path'
 export const DEFAULT_MAX_AGENTS = 6
 
 /** 并发槽最小/最大硬上限（1..12）。 */
-export const MIN_AGENTS_LIMIT = 1
+const MIN_AGENTS_LIMIT = 1
 export const MAX_AGENTS_LIMIT = 12
 
 /** 子代理默认思考强度（默认 low，兼顾高并发响应速度与 token 效率）。 */
@@ -25,23 +26,49 @@ export const VALID_THINKING_EFFORTS = ['low', 'medium', 'high']
 
 /** 子代理递归派发最大深度（默认 3，范围 1..5）。 */
 export const DEFAULT_MAX_DEPTH = 3
-export const MIN_MAX_DEPTH = 1
-export const MAX_MAX_DEPTH = 5
+const MIN_MAX_DEPTH = 1
 export const MAX_DEPTH_LIMIT = 5
 
 /** 默认并发槽 / 分片租约 TTL（2 分钟 = 120,000ms）。 */
 export const DEFAULT_LEASE_TTL_MS = 120_000
 
-/** 解析默认的 `$DSH_HOME/redteam` 目录。 */
-export function defaultRedteamRoot(env = process.env) {
+/** AI Planner 默认配置（默认跟随当前会话模型）。 */
+export const DEFAULT_AI_PLANNER = {
+  modelMode: 'follow_session',
+  provider: '',
+  model: '',
+  reasoningEffort: 'low',
+  timeoutMs: 60000,
+  scanRepoContext: true,
+  customConstraints: '',
+}
+
+export const VALID_PLANNER_REASONING_EFFORTS = ['none', 'low', 'medium', 'high']
+
+const MIN_PLANNER_TIMEOUT_MS = 15000
+const MAX_PLANNER_TIMEOUT_MS = 180000
+
+/** 默认子智能体派发策略。 */
+export const DEFAULT_DISPATCH_POLICY = {
+  dispatchMode: 'hybrid_auto',
+  subagentProvider: 'spawn',
+  autoWakeOnApprove: true,
+}
+
+/** 默认界面视图与拓扑方向偏好。 */
+export const DEFAULT_UI_PREFERENCES = {
+  defaultViewMode: 'novice',
+  defaultTreeDirection: 'horizontal',
+}
+
+function defaultRedteamRoot(env = process.env) {
   const dshHome = (env && typeof env.DSH_HOME === 'string' && env.DSH_HOME.trim() !== '')
     ? env.DSH_HOME.trim()
     : join(homedir(), '.dsh')
   return join(dshHome, 'redteam')
 }
 
-/** 归一化 root 参数：未传或传了配置对象时自动回退到 `$DSH_HOME/redteam`。 */
-export function resolveRootDir(root, env = process.env) {
+function resolveRootDir(root, env = process.env) {
   if (typeof root === 'string' && root.trim() !== '') {
     const trimmed = root.trim()
     return trimmed.endsWith('settings.json') ? dirname(trimmed) : trimmed
@@ -53,16 +80,15 @@ export function resolveRootDir(root, env = process.env) {
   return defaultRedteamRoot(env)
 }
 
-/** 设置文件路径（`$DSH_HOME/redteam/settings.json` 或 `<root>/settings.json`）。 */
-export function settingsPathOf(root, env = process.env) {
+function settingsPathOf(root, env = process.env) {
   if (typeof root === 'string' && root.trim().endsWith('settings.json')) {
     return root.trim()
   }
   return join(resolveRootDir(root, env), 'settings.json')
 }
 
-/** 读全部设置（读不到或损坏时返回空对象，绝不抛错）。 */
-export function readSettings(root, env = process.env) {
+function readSettings(root, env = process.env) {
+  if (root && typeof root === 'object' && !('root' in root)) return root
   try {
     const file = settingsPathOf(root, env)
     if (!existsSync(file)) return {}
@@ -152,17 +178,6 @@ export function thinkingEffortOf(root, env = process.env) {
   return DEFAULT_THINKING_EFFORT
 }
 
-/** 思考强度配置来源（`'settings' | 'env' | 'default'`）。 */
-export function thinkingEffortSourceOf(root, env = process.env) {
-  const s = readSettings(root, env)
-  const rawFile = s.thinkingEffort ?? s.thinking_effort
-  if (isRecognizedThinkingInput(rawFile)) return 'settings'
-  if (env && (isRecognizedThinkingInput(env.REDTEAM_THINKING_EFFORT) || isRecognizedThinkingInput(env.DSH_SUBAGENT_THINKING))) {
-    return 'env'
-  }
-  return 'default'
-}
-
 /** 当前生效的子智能体最大递归派发深度（1..5，默认 3）。 */
 export function maxDepthOf(root, env = process.env) {
   const s = readSettings(root, env)
@@ -171,104 +186,6 @@ export function maxDepthOf(root, env = process.env) {
   const fromEnv = Number(env && env.REDTEAM_MAX_DEPTH)
   if (Number.isFinite(fromEnv) && fromEnv >= 1) return clampMaxDepth(fromEnv)
   return DEFAULT_MAX_DEPTH
-}
-
-/** 递归深度配置来源（`'settings' | 'env' | 'default'`）。 */
-export function maxDepthSourceOf(root, env = process.env) {
-  const s = readSettings(root, env)
-  const fromFile = Number(s.maxDepth ?? s.max_depth)
-  if (Number.isFinite(fromFile) && fromFile >= 1) return 'settings'
-  const fromEnv = Number(env && env.REDTEAM_MAX_DEPTH)
-  if (Number.isFinite(fromEnv) && fromEnv >= 1) return 'env'
-  return 'default'
-}
-
-/**
- * 读取集群并发与递归子代理完整配置（`maxAgents` / `thinkingEffort` / `maxDepth`）。
- */
-export function readClusterSettings(root, env = process.env) {
-  const resolvedEnv = (root && typeof root === 'object' && root.env) ? root.env : env
-  const dir = resolveRootDir(root, resolvedEnv)
-  const maxAgents = maxAgentsOf(dir, resolvedEnv)
-  const source = maxAgentsSourceOf(dir, resolvedEnv)
-  const thinkingEffort = thinkingEffortOf(dir, resolvedEnv)
-  const thinkingEffortSource = thinkingEffortSourceOf(dir, resolvedEnv)
-  const maxDepth = maxDepthOf(dir, resolvedEnv)
-  const maxDepthSource = maxDepthSourceOf(dir, resolvedEnv)
-  return {
-    max: maxAgents,
-    maxAgents,
-    max_agents: maxAgents,
-    default: DEFAULT_MAX_AGENTS,
-    defaultMaxAgents: DEFAULT_MAX_AGENTS,
-    default_max_agents: DEFAULT_MAX_AGENTS,
-    limit: MAX_AGENTS_LIMIT,
-    maxAgentsLimit: MAX_AGENTS_LIMIT,
-    max_agents_limit: MAX_AGENTS_LIMIT,
-    source,
-    thinkingEffort,
-    thinking_effort: thinkingEffort,
-    defaultThinkingEffort: DEFAULT_THINKING_EFFORT,
-    default_thinking_effort: DEFAULT_THINKING_EFFORT,
-    validThinkingEfforts: VALID_THINKING_EFFORTS,
-    thinkingEffortSource,
-    thinking_effort_source: thinkingEffortSource,
-    maxDepth,
-    max_depth: maxDepth,
-    defaultMaxDepth: DEFAULT_MAX_DEPTH,
-    default_max_depth: DEFAULT_MAX_DEPTH,
-    minMaxDepth: MIN_MAX_DEPTH,
-    maxMaxDepth: MAX_MAX_DEPTH,
-    maxDepthLimit: MAX_DEPTH_LIMIT,
-    maxDepthSource,
-    max_depth_source: maxDepthSource,
-    path: settingsPathOf(dir, resolvedEnv),
-  }
-}
-
-/**
- * 保存集群并发与递归子代理配置（支持 `writeClusterSettings({ maxAgents, thinkingEffort, maxDepth })`
- * 或 `writeClusterSettings(root, { maxAgents, thinkingEffort, maxDepth })`）。
- */
-export function writeClusterSettings(rootOrPatch = {}, maybePatch = undefined, env = process.env) {
-  let root
-  let input
-  if (typeof rootOrPatch === 'string') {
-    root = rootOrPatch
-    input = (maybePatch && typeof maybePatch === 'object') ? maybePatch : {}
-  } else if (rootOrPatch && typeof rootOrPatch === 'object') {
-    root = rootOrPatch.root
-    input = rootOrPatch
-  } else {
-    root = undefined
-    input = {}
-  }
-  const resolvedEnv = (input && input.env) ? input.env : env
-  const dir = resolveRootDir(root, resolvedEnv)
-  const patch = {}
-
-  const rawMaxAgents = input.maxAgents ?? input.max_agents ?? input.max
-  if (rawMaxAgents !== undefined && rawMaxAgents !== null && rawMaxAgents !== '') {
-    patch.maxAgents = clampMaxAgents(rawMaxAgents)
-  }
-
-  const rawThinking = input.thinkingEffort ?? input.thinking_effort ?? input.thinking
-  if (rawThinking !== undefined && rawThinking !== null && rawThinking !== '') {
-    patch.thinkingEffort = normalizeThinkingEffort(rawThinking)
-  }
-
-  const rawMaxDepth = input.maxDepth ?? input.max_depth ?? input.depth
-  if (rawMaxDepth !== undefined && rawMaxDepth !== null && rawMaxDepth !== '') {
-    patch.maxDepth = clampMaxDepth(rawMaxDepth)
-  }
-
-  writeSettings(dir, patch, resolvedEnv)
-  return readClusterSettings(dir, resolvedEnv)
-}
-
-/** 读取并发上限及关联的 `thinking_effort` / `max_depth` 状态。 */
-export function readMaxAgents(root, env = process.env) {
-  return readClusterSettings(root, env)
 }
 
 /**
@@ -326,38 +243,6 @@ export function saveMaxDepth(rootOrValue, maybeValue, env = process.env) {
 }
 
 /**
- * 组装并发槽与递归子代理状态（供 `redteam_agent_slot` 与面板 `agentsStatus` 共用）。
- */
-export function clusterConcurrencyStatus(root, live = {}, env = process.env) {
-  const cluster = readClusterSettings(root, env)
-  const used = Math.max(Number(live.used) || 0, 0)
-  const free = Math.max(cluster.maxAgents - used, 0)
-  return Object.assign({}, cluster, live, {
-    max: cluster.maxAgents,
-    used,
-    free,
-    thinking_effort: cluster.thinkingEffort,
-    thinkingEffort: cluster.thinkingEffort,
-    max_depth: cluster.maxDepth,
-    maxDepth: cluster.maxDepth,
-  })
-}
-
-/**
- * 读取当前配置的 PostgreSQL 连接串（未配置返回 null）。
- */
-export function pgUrlOf(root, env = process.env) {
-  const s = readSettings(root, env)
-  if (typeof s.pgUrl === 'string' && s.pgUrl.trim()) return s.pgUrl.trim()
-  if (env && typeof env.REDTEAM_PG_URL === 'string' && env.REDTEAM_PG_URL.trim()) return env.REDTEAM_PG_URL.trim()
-  if (env && typeof env.DSH_PG_URL === 'string' && env.DSH_PG_URL.trim()) return env.DSH_PG_URL.trim()
-  if (env && typeof env.DATABASE_URL === 'string' && /^postgres(?:ql)?:\/\//i.test(env.DATABASE_URL.trim())) {
-    return env.DATABASE_URL.trim()
-  }
-  return null
-}
-
-/**
  * 保存或清除 PostgreSQL 连接串。
  * @param root - 事实库根目录。
  * @param pgUrl - `postgresql://...` 或空字符串（清除）。
@@ -379,8 +264,265 @@ export function savePgUrl(root, pgUrl, env = process.env) {
   return clean
 }
 
+function normalizeBoolFlag(value, fallback) {
+  if (value === undefined || value === null) return fallback
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const cleaned = value.trim().toLowerCase()
+    if (cleaned === 'false' || cleaned === '0' || cleaned === 'no' || cleaned === 'off') return false
+    if (cleaned === 'true' || cleaned === '1' || cleaned === 'yes' || cleaned === 'on') return true
+    return Boolean(cleaned)
+  }
+  return Boolean(value)
+}
+
+function clampPlannerTimeoutMs(value) {
+  if (value === undefined || value === null || typeof value === 'boolean') {
+    return DEFAULT_AI_PLANNER.timeoutMs
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return DEFAULT_AI_PLANNER.timeoutMs
+  }
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return DEFAULT_AI_PLANNER.timeoutMs
+  return Math.min(Math.max(n, MIN_PLANNER_TIMEOUT_MS), MAX_PLANNER_TIMEOUT_MS)
+}
+
+/** 规范化 AI Planner 配置对象，约束枚举值、超时范围 [15000..180000] 与自定义约束长度。 */
+export function normalizeAiPlannerConfig(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const rawMode = src.modelMode ?? src.model_mode
+  const cleanedMode = typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : ''
+  const modelMode = cleanedMode === 'custom' ? 'custom' : DEFAULT_AI_PLANNER.modelMode
+
+  const provider = typeof src.provider === 'string' ? src.provider.trim() : DEFAULT_AI_PLANNER.provider
+  const model = typeof src.model === 'string' ? src.model.trim() : DEFAULT_AI_PLANNER.model
+
+  const rawEffort = src.reasoningEffort ?? src.reasoning_effort
+  const cleanedEffort = typeof rawEffort === 'string' ? rawEffort.trim().toLowerCase() : ''
+  const reasoningEffort = VALID_PLANNER_REASONING_EFFORTS.includes(cleanedEffort)
+    ? cleanedEffort
+    : DEFAULT_AI_PLANNER.reasoningEffort
+
+  const timeoutMs = clampPlannerTimeoutMs(src.timeoutMs ?? src.timeout_ms)
+  const scanRepoContext = normalizeBoolFlag(
+    src.scanRepoContext ?? src.scan_repo_context,
+    DEFAULT_AI_PLANNER.scanRepoContext,
+  )
+
+  const rawConstraints = src.customConstraints ?? src.custom_constraints
+  const customConstraints = typeof rawConstraints === 'string'
+    ? rawConstraints.slice(0, 4000)
+    : DEFAULT_AI_PLANNER.customConstraints
+
+  return {
+    modelMode,
+    provider,
+    model,
+    reasoningEffort,
+    timeoutMs,
+    scanRepoContext,
+    customConstraints,
+  }
+}
+
+/** 规范化子智能体派发策略配置。 */
+export function normalizeDispatchPolicy(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const rawDispatchMode = src.dispatchMode ?? src.dispatch_mode
+  const cleanedDispatchMode = typeof rawDispatchMode === 'string' ? rawDispatchMode.trim().toLowerCase() : ''
+  const dispatchMode = cleanedDispatchMode === 'captain_only'
+    ? 'captain_only'
+    : DEFAULT_DISPATCH_POLICY.dispatchMode
+
+  const rawProvider = src.subagentProvider ?? src.subagent_provider
+  const cleanedProvider = typeof rawProvider === 'string' ? rawProvider.trim().toLowerCase() : ''
+  const subagentProvider = cleanedProvider === 'fork'
+    ? 'fork'
+    : DEFAULT_DISPATCH_POLICY.subagentProvider
+
+  const autoWakeOnApprove = normalizeBoolFlag(
+    src.autoWakeOnApprove ?? src.auto_wake_on_approve,
+    DEFAULT_DISPATCH_POLICY.autoWakeOnApprove,
+  )
+
+  return {
+    dispatchMode,
+    subagentProvider,
+    autoWakeOnApprove,
+  }
+}
+
+/** 规范化 UI 视图与拓扑方向偏好设置。 */
+export function normalizeUiPreferences(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const rawViewMode = src.defaultViewMode ?? src.default_view_mode
+  const cleanedViewMode = typeof rawViewMode === 'string' ? rawViewMode.trim().toLowerCase() : ''
+  const defaultViewMode = cleanedViewMode === 'expert'
+    ? 'expert'
+    : DEFAULT_UI_PREFERENCES.defaultViewMode
+
+  const rawTreeDir = src.defaultTreeDirection ?? src.default_tree_direction
+  const cleanedTreeDir = typeof rawTreeDir === 'string' ? rawTreeDir.trim().toLowerCase() : ''
+  const defaultTreeDirection = cleanedTreeDir === 'vertical'
+    ? 'vertical'
+    : DEFAULT_UI_PREFERENCES.defaultTreeDirection
+
+  return {
+    defaultViewMode,
+    defaultTreeDirection,
+  }
+}
+
+/** 读取归一化后的 AI Planner 配置。 */
+export function aiPlannerConfigOf(root, env = process.env) {
+  const s = readSettings(root, env)
+  return normalizeAiPlannerConfig(s.aiPlanner ?? s.ai_planner)
+}
+
+/** 读取归一化后的子智能体派发策略配置。 */
+export function dispatchPolicyOf(root, env = process.env) {
+  const s = readSettings(root, env)
+  return normalizeDispatchPolicy(s.dispatchPolicy ?? s.dispatch_policy)
+}
+
+/** 读取归一化后的界面视图与拓扑方向偏好设置。 */
+export function uiPreferencesOf(root, env = process.env) {
+  const s = readSettings(root, env)
+  return normalizeUiPreferences(s.uiPreferences ?? s.ui_preferences)
+}
+
+/** 脱敏 PostgreSQL 连接串中的密码为 `****`。 */
+export function maskPgUrl(url) {
+  const s = typeof url === 'string' ? url.trim() : String(url || '').trim()
+  if (!s) return ''
+  const schemeIdx = s.indexOf('://')
+  if (schemeIdx < 0) return s
+  const authStart = schemeIdx + 3
+  const slashIdx = s.indexOf('/', authStart)
+  const queryIdx = s.indexOf('?', authStart)
+  const hashIdx = s.indexOf('#', authStart)
+  const endCandidates = [slashIdx, queryIdx, hashIdx].filter((idx) => idx >= 0)
+  const authEnd = endCandidates.length > 0 ? Math.min(...endCandidates) : s.length
+  const authority = s.slice(authStart, authEnd)
+  const atIdx = authority.lastIndexOf('@')
+  if (atIdx < 0) return s
+  const userinfo = authority.slice(0, atIdx)
+  const colonIdx = userinfo.indexOf(':')
+  if (colonIdx < 0 || colonIdx === userinfo.length - 1) return s
+  const maskedUserinfo = `${userinfo.slice(0, colonIdx)}:****`
+  return `${s.slice(0, authStart)}${maskedUserinfo}${authority.slice(atIdx)}${s.slice(authEnd)}`
+}
+
+function resolvePgUrlRaw(root, env = process.env) {
+  const s = readSettings(root, env)
+  if (typeof s.pgUrl === 'string' && /^postgres(?:ql)?:\/\//i.test(s.pgUrl.trim())) {
+    return s.pgUrl.trim()
+  }
+  const envCandidates = [env?.REDTEAM_PG_URL, env?.DSH_PG_URL, env?.DATABASE_URL]
+  for (const cand of envCandidates) {
+    if (typeof cand === 'string' && /^postgres(?:ql)?:\/\//i.test(cand.trim())) {
+      return cand.trim()
+    }
+  }
+  if (env && typeof env.PGHOST === 'string' && env.PGHOST.trim()) {
+    return `postgresql://${encodeURIComponent(env.PGUSER || 'postgres')}:${encodeURIComponent(env.PGPASSWORD || '')}@${env.PGHOST.trim()}:${Number(env.PGPORT) || 5432}/${encodeURIComponent(env.PGDATABASE || 'dsh_devteam')}`
+  }
+  return ''
+}
+
+/** 读取完整归一化后的插件统一设置对象。 */
+export function getUnifiedSettings(root, env = process.env) {
+  const rawPgUrl = resolvePgUrlRaw(root, env)
+  return {
+    maxAgents: maxAgentsOf(root, env),
+    maxAgentsSource: maxAgentsSourceOf(root, env),
+    maxDepth: maxDepthOf(root, env),
+    thinkingEffort: thinkingEffortOf(root, env),
+    pgUrlConfigured: Boolean(rawPgUrl),
+    pgUrlMasked: rawPgUrl ? maskPgUrl(rawPgUrl) : '',
+    aiPlanner: aiPlannerConfigOf(root, env),
+    dispatchPolicy: dispatchPolicyOf(root, env),
+    uiPreferences: uiPreferencesOf(root, env),
+  }
+}
+
+/** 校验并合并保存统一设置到 `settings.json`，返回更新后的 `getUnifiedSettings` 快照。 */
+export function saveUnifiedSettings(root, patch, env = process.env) {
+  let targetRoot = root
+  let targetPatch = patch
+  if (patch === undefined && root && typeof root === 'object' && !('root' in root)) {
+    targetRoot = undefined
+    targetPatch = root
+  }
+  const src = targetPatch && typeof targetPatch === 'object' && !Array.isArray(targetPatch) ? targetPatch : {}
+  const dir = resolveRootDir(targetRoot, env)
+  const current = readSettings(dir, env)
+  const nextPatch = {}
+
+  if (src.maxAgents !== undefined || src.max_agents !== undefined) {
+    nextPatch.maxAgents = clampMaxAgents(src.maxAgents ?? src.max_agents)
+  }
+  if (src.thinkingEffort !== undefined || src.thinking_effort !== undefined) {
+    nextPatch.thinkingEffort = normalizeThinkingEffort(src.thinkingEffort ?? src.thinking_effort)
+  }
+  if (src.maxDepth !== undefined || src.max_depth !== undefined) {
+    nextPatch.maxDepth = clampMaxDepth(src.maxDepth ?? src.max_depth)
+  }
+  if (src.aiPlanner !== undefined || src.ai_planner !== undefined) {
+    const rawPlanner = 'aiPlanner' in src && src.aiPlanner !== undefined ? src.aiPlanner : src.ai_planner
+    if (rawPlanner === null) {
+      nextPatch.aiPlanner = normalizeAiPlannerConfig(null)
+    } else if (rawPlanner && typeof rawPlanner === 'object' && !Array.isArray(rawPlanner)) {
+      const prevPlanner = normalizeAiPlannerConfig(current.aiPlanner ?? current.ai_planner)
+      nextPatch.aiPlanner = normalizeAiPlannerConfig(Object.assign({}, prevPlanner, rawPlanner))
+    }
+  }
+  if (src.dispatchPolicy !== undefined || src.dispatch_policy !== undefined) {
+    const rawPolicy = 'dispatchPolicy' in src && src.dispatchPolicy !== undefined ? src.dispatchPolicy : src.dispatch_policy
+    if (rawPolicy === null) {
+      nextPatch.dispatchPolicy = normalizeDispatchPolicy(null)
+    } else if (rawPolicy && typeof rawPolicy === 'object' && !Array.isArray(rawPolicy)) {
+      const prevPolicy = normalizeDispatchPolicy(current.dispatchPolicy ?? current.dispatch_policy)
+      nextPatch.dispatchPolicy = normalizeDispatchPolicy(Object.assign({}, prevPolicy, rawPolicy))
+    }
+  }
+  if (src.uiPreferences !== undefined || src.ui_preferences !== undefined) {
+    const rawUi = 'uiPreferences' in src && src.uiPreferences !== undefined ? src.uiPreferences : src.ui_preferences
+    if (rawUi === null) {
+      nextPatch.uiPreferences = normalizeUiPreferences(null)
+    } else if (rawUi && typeof rawUi === 'object' && !Array.isArray(rawUi)) {
+      const prevUi = normalizeUiPreferences(current.uiPreferences ?? current.ui_preferences)
+      nextPatch.uiPreferences = normalizeUiPreferences(Object.assign({}, prevUi, rawUi))
+    }
+  }
+
+  const hasPgUrl = ('pgUrl' in src && src.pgUrl !== undefined) || ('pg_url' in src && src.pg_url !== undefined)
+  let pgUrlValue
+  if (hasPgUrl) {
+    pgUrlValue = 'pgUrl' in src && src.pgUrl !== undefined ? src.pgUrl : src.pg_url
+    if (pgUrlValue !== null && typeof pgUrlValue === 'string' && pgUrlValue.trim() !== '') {
+      if (!/^postgres(?:ql)?:\/\//i.test(pgUrlValue.trim())) {
+        throw new Error('PostgreSQL 连接串必须以 postgres:// 或 postgresql:// 开头')
+      }
+    }
+  }
+
+  writeSettings(dir, nextPatch, env)
+
+  if (hasPgUrl) {
+    if (pgUrlValue === null || (typeof pgUrlValue === 'string' && pgUrlValue.trim() === '')) {
+      savePgUrl(dir, '', env)
+    } else if (typeof pgUrlValue === 'string') {
+      savePgUrl(dir, pgUrlValue, env)
+    }
+  }
+
+  return getUnifiedSettings(dir, env)
+}
+
 /* ============================================================================
- * File-Disjoint Sharding 纯确定性冲突检测与 ShardLockRegistry
+ * File-Disjoint Sharding 纯确定性冲突检测
  * ========================================================================== */
 
 /**
@@ -439,7 +581,7 @@ function globToRegExp(globPat) {
  *   - `'packages/redteam-ui/lib/client.js'` 与 `'packages/redteam-ui/*'` → `true`
  *   - `'packages/redteam-ui/lib/client.js'` 与 `'packages/redteam-ui/lib/styles.js'` → `false`
  */
-export function filesOverlap(patA, patB) {
+function filesOverlap(patA, patB) {
   const a = normalizeShardPattern(patA)
   const b = normalizeShardPattern(patB)
   if (a === '' || b === '') return false
@@ -544,134 +686,4 @@ export function detectShardConflicts(requestedFiles, activeEntries, options = {}
   }
 
   return { ok: conflicts.length === 0, conflicts }
-}
-
-/**
- * 进程内带 TTL 租约的分片文件锁注册表（支持按根会话或项目工作区隔离）。
- */
-export class ShardLockRegistry {
-  constructor(options = {}) {
-    const ttl = typeof options === 'number'
-      ? options
-      : Number(options && (options.ttlMs ?? options.ttl_ms))
-    this.ttlMs = Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_LEASE_TTL_MS
-    this.maxScopes = (options && typeof options === 'object' && Number.isFinite(Number(options.maxScopes)) && Number(options.maxScopes) > 0)
-      ? Math.floor(Number(options.maxScopes))
-      : 256
-    this.scopes = new Map()
-  }
-
-  prune(now = Date.now()) {
-    for (const [scope, map] of this.scopes.entries()) {
-      for (const [owner, entry] of map.entries()) {
-        if (entry.expiresAt <= now) map.delete(owner)
-      }
-      if (map.size === 0) this.scopes.delete(scope)
-    }
-    while (this.scopes.size > this.maxScopes) {
-      const oldest = this.scopes.keys().next().value
-      if (oldest === undefined) break
-      this.scopes.delete(oldest)
-    }
-  }
-
-  list(scope = 'default', now = Date.now()) {
-    this.prune(now)
-    const map = this.scopes.get(String(scope || 'default'))
-    if (!map) return []
-    return Array.from(map.values()).map((e) => ({
-      owner: e.owner,
-      label: e.label,
-      files_owned: e.files_owned.slice(),
-      acquired_at: e.acquiredAt,
-      expires_at: e.expiresAt,
-    }))
-  }
-
-  check(scope = 'default', requestedFiles = [], options = {}) {
-    const now = typeof options.now === 'number' ? options.now : Date.now()
-    const active = this.list(scope, now)
-    return detectShardConflicts(requestedFiles, active, options)
-  }
-
-  acquire(scopeOrOpts, maybeOwnerOrOpts, maybeFilesOrNow, maybeTtlMs, maybeNow) {
-    let scope = 'default'
-    let owner = ''
-    let files = []
-    let ttlMs = this.ttlMs
-    let label = ''
-    let now = Date.now()
-
-    const applySpec = (spec) => {
-      if (spec.scope ?? spec.rootId ?? spec.engagement_id ?? spec.engagement) {
-        scope = String(spec.scope ?? spec.rootId ?? spec.engagement_id ?? spec.engagement)
-      }
-      owner = String(spec.owner ?? spec.key ?? spec.worker_name ?? owner)
-      label = String(spec.label ?? spec.worker_name ?? owner)
-      const rawFiles = spec.files_owned ?? spec.files ?? spec.patterns ?? []
-      files = Array.isArray(rawFiles) ? rawFiles : (typeof rawFiles === 'string' ? [rawFiles] : [])
-      const rawTtl = Number(spec.ttlMs ?? spec.ttl_ms)
-      if (Number.isFinite(rawTtl) && rawTtl > 0) ttlMs = rawTtl
-      if (typeof spec.now === 'number' && Number.isFinite(spec.now)) now = spec.now
-    }
-
-    if (scopeOrOpts && typeof scopeOrOpts === 'object' && !Array.isArray(scopeOrOpts)) {
-      applySpec(scopeOrOpts)
-      if (typeof maybeOwnerOrOpts === 'number' && Number.isFinite(maybeOwnerOrOpts)) now = maybeOwnerOrOpts
-    } else {
-      scope = String(scopeOrOpts || 'default')
-      if (maybeOwnerOrOpts && typeof maybeOwnerOrOpts === 'object' && !Array.isArray(maybeOwnerOrOpts)) {
-        applySpec(maybeOwnerOrOpts)
-        scope = String(scopeOrOpts || scope || 'default')
-        if (typeof maybeFilesOrNow === 'number' && Number.isFinite(maybeFilesOrNow)) now = maybeFilesOrNow
-      } else {
-        owner = String(maybeOwnerOrOpts || '')
-        label = owner
-        files = Array.isArray(maybeFilesOrNow) ? maybeFilesOrNow : (typeof maybeFilesOrNow === 'string' ? [maybeFilesOrNow] : [])
-        if (Number.isFinite(Number(maybeTtlMs)) && Number(maybeTtlMs) > 0) ttlMs = Number(maybeTtlMs)
-        if (typeof maybeNow === 'number' && Number.isFinite(maybeNow)) now = maybeNow
-      }
-    }
-
-    const normalized = Array.from(new Set(files.map(normalizeShardPattern).filter(Boolean)))
-    this.prune(now)
-    const active = this.list(scope, now)
-    const check = detectShardConflicts(normalized, active, { ignoreOwner: owner })
-    if (!check.ok) {
-      return { ok: false, conflicts: check.conflicts }
-    }
-    if (!owner) owner = 'shard#' + now
-    if (normalized.length > 0) {
-      if (!this.scopes.has(scope)) this.scopes.set(scope, new Map())
-      this.scopes.get(scope).set(owner, {
-        owner,
-        label: label || owner,
-        files_owned: normalized,
-        acquiredAt: now,
-        expiresAt: now + ttlMs,
-      })
-      this.prune(now)
-    }
-    return { ok: true, conflicts: [], owner, files_owned: normalized, expires_at: now + ttlMs }
-  }
-
-  release(scope = 'default', owner = undefined) {
-    if (scope && typeof scope === 'object' && !Array.isArray(scope)) {
-      owner = scope.owner ?? scope.key ?? scope.worker_name
-      scope = scope.scope ?? scope.rootId ?? scope.engagement_id ?? scope.engagement ?? 'default'
-    } else if (owner && typeof owner === 'object' && !Array.isArray(owner)) {
-      owner = owner.owner ?? owner.key ?? owner.worker_name
-    }
-    const key = String(scope || 'default')
-    const map = this.scopes.get(key)
-    if (!map) return false
-    if (owner === undefined) {
-      const had = map.size > 0
-      this.scopes.delete(key)
-      return had
-    }
-    const deleted = map.delete(String(owner))
-    if (map.size === 0) this.scopes.delete(key)
-    return deleted
-  }
 }

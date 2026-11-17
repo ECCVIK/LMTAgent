@@ -177,7 +177,7 @@ const V018_CSS_SELECTORS = [
   '.rt-analytics-trio',
   '.rt-p5-tree-stage',
   '.rt-p5-branches-grid',
-  '.rt-node-handle',
+  '.rt-tree-port',
 ]
 for (const selector of V018_CSS_SELECTORS) {
   ok(PANEL_CSS.includes(selector), `styles.js 包含 v0.18.0 布局选择器「${selector}」`)
@@ -208,7 +208,8 @@ const V019_CSS_SELECTORS = [
   '.rt-panzoom-viewport',
   '.rt-tree-wave-row',
   '.rt-tree-expanded-grid',
-  '.rt-n8n-diamond-pin',
+  '.rt-tree-edges-svg',
+  '.rt-tree-port',
   '.rt-step-chain',
   '.rt-step-node',
   '.rt-agent-inspector-drawer',
@@ -241,7 +242,7 @@ for (const label of V019_STEP_CHAIN_LABELS) {
 }
 
 const V019_INSPECT_JUMP_TOKENS = [
-  '跳转侧边聊天框打开该 Agent 会话',
+  '跳转会话聊天',
   'openAgentSessionInHostChat',
   'agentSessionDetail',
 ]
@@ -271,7 +272,6 @@ const V020_TREE_AND_LMTEX_TOKENS = [
   'rt-wave-horizontal-lane',
   'rt-wave-right-children',
   'rt-lower-process-deck',
-  'rt-pri-badge',
   'rt-digest-box',
   'rt-plan-approve-btn',
   'planApproveWorker',
@@ -319,12 +319,12 @@ ok(
   'styles.js (PANEL_CSS) 包含许愿润色向导样式「.rt-wish-wizard」',
 )
 ok(
-  /svg\.rt-h-wave-branch-line\s*\{[^}]*background\s*:\s*none/s.test(PANEL_CSS),
-  'styles.js (PANEL_CSS) 包含 svg.rt-h-wave-branch-line 背景重置（background: none）',
+  /svg\.rt-tree-edges-svg\s*\{[^}]*background\s*:\s*none/s.test(PANEL_CSS),
+  'styles.js (PANEL_CSS) 包含 svg.rt-tree-edges-svg 背景重置（background: none）',
 )
 
-/* ── 9. v0.22.0 1:1 会话强隔离、独立「协同与审批」页、单一视图切换器、SVG 绝对定位与 6 槽位去重契约 ── */
-console.log('— 冒烟九：v0.22.0 1:1 会话强隔离、独立协同页、单一 UiModeSwitcher、SVG 几何修复与宿主槽位去重')
+/* ── 9. v0.22.0+ 1:1 会话强隔离、统一设置中心、单一视图切换器、阶段无缩放 SVG 几何与 6 槽位契约 ── */
+console.log('— 冒烟九：v0.22.0+ 会话隔离、统一设置中心、单一 UiModeSwitcher、SVG 几何契约与噪音清理')
 const uiModeMountCount = (source.match(/h\(\s*UiModeSwitcher\b/g) || []).length
 ok(
   uiModeMountCount === 1,
@@ -360,10 +360,29 @@ ok(
   '包含 useScopedSession 1:1 会话隔离、sessionOnboarding 跳过/重开状态机与独立「协同与审批」一级页签',
 )
 ok(
-  (PANEL_CSS.includes('.rt-h-fanout-col') || source.includes('rt-h-fanout-col'))
-    && (/\.rt-h-root-fanout-svg\s*\{[^}]*position\s*:\s*absolute/s.test(PANEL_CSS)
-      || /rt-h-root-fanout-svg[\s\S]{0,260}position\s*:\s*['"]absolute['"]/.test(source)),
-  '横向派生树扇出连线采用 .rt-h-fanout-col 容器 + .rt-h-root-fanout-svg 绝对定位几何，消除流式高度撑大错位',
+  /svg\.rt-tree-edges-svg\s*\{[^}]*position\s*:\s*absolute/s.test(PANEL_CSS)
+    && source.includes('rt-tree-edges-svg')
+    && source.includes('rt-tree-port')
+    && source.includes('measureBoxInStage'),
+  '派生树连线采用阶段无缩放测量 (measureBoxInStage) + 1:1 绝对定位 svg.rt-tree-edges-svg + .rt-tree-port 契约',
+)
+
+const FORBIDDEN_V023_UI_NOISE = [
+  'PRIORITY_BADGE_META',
+  'rt-n8n-diamond-pin',
+  'WISH_STARTER_TEMPLATES',
+  'P0 主控中枢',
+]
+for (const noise of FORBIDDEN_V023_UI_NOISE) {
+  ok(!source.includes(noise), `client.js 已清理旧 UI 噪音与伪模板标记「${noise}」`)
+}
+
+ok(
+  source.includes('SettingsHubTab')
+    && source.includes('getSettings')
+    && source.includes('saveSettings')
+    && PANEL_CSS.includes('.rt-settings-shell'),
+  '统一设置中心 SettingsHubTab、getSettings/saveSettings RPC 与 .rt-settings-shell 样式完整存在',
 )
 
 console.log(`\n通过 ${pass}/${pass + fail}`)

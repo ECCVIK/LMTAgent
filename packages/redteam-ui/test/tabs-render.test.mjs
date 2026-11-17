@@ -405,6 +405,84 @@ function makeResponses(shape) {
     updateCheck: { ok: false, error: '开发态不查 registry' },
     probeSessions: w({ ok: true, webshells: [], tunnels: [] }),
     activateEngagement: w({ ok: true, current: ENGINE }),
+    getSettings: w({
+      ok: true,
+      engagement: ENGINE,
+      max: 3,
+      maxAgents: 3,
+      maxDepth: 3,
+      thinkingEffort: 'low',
+      limit: 12,
+      aiPlanner: {
+        modelMode: 'follow_session',
+        provider: '',
+        model: '',
+        reasoningEffort: 'low',
+        timeoutMs: 60000,
+        scanRepoContext: true,
+        customConstraints: '',
+      },
+      dispatchPolicy: {
+        dispatchMode: 'hybrid_auto',
+        subagentProvider: 'spawn',
+        autoWakeOnApprove: true,
+      },
+      uiPreferences: {
+        defaultViewMode: 'novice',
+        defaultTreeDirection: 'horizontal',
+      },
+      db_engine: { engine: 'sqlite', pgUrlMasked: '' },
+      feishu_config: {
+        webhook_url: '',
+        events: { on_node: true, on_gate: true, on_ship: true },
+      },
+      model_catalog: {
+        available: true,
+        groups: [
+          { id: 'deepseek', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'DeepSeek V3' }] },
+        ],
+      },
+      active_session_route: {
+        provider: 'deepseek',
+        model: 'deepseek-chat',
+        source: 'agentDefaultModel',
+      },
+    }),
+    saveSettings: (body) => w({
+      ok: true,
+      saved: true,
+      max: (body && body.maxAgents) || 3,
+      maxAgents: (body && body.maxAgents) || 3,
+    }),
+    clarifyWishWithAI: w({
+      ok: true,
+      model: 'deepseek/deepseek-chat',
+      detected_context: 'Node.js 全栈工程',
+      questions: [
+        {
+          id: 'q1',
+          question: '确认交付形态？',
+          multi: false,
+          options: [{ label: 'Web 看板 (推荐)', value: '交付 Web 看板' }],
+        },
+      ],
+    }),
+    refineAndDecomposeWish: (body) => w({
+      ok: true,
+      preview_only: Boolean(body && body.preview_only),
+      ai_generated: true,
+      model: 'deepseek/deepseek-chat',
+      project_name: '实时协同看板',
+      refined_prompt: '构建实时多智能体协同看板',
+      goals: [
+        { wave: 1, role: 'recon', title: 'Wave 1 · 测绘', assigned_goal: '梳理接口', files_owned: ['docs/spec.md'] },
+      ],
+      worker_tasks: empty
+        ? []
+        : [{ id: 1, wave: 'wave-1', worker_role: 'recon', worker_name: 'recon-1', title: 'Wave 1 · 测绘', status: 'running' }],
+    }),
+    feishuConfig: w({ ok: true, saved: true }),
+    feishuTestPush: w({ ok: true, sent: true }),
   }
 }
 
@@ -464,9 +542,9 @@ async function openFirstScoreRow() {
   return true
 }
 
-/* v0.22.0 页签结构：
-   · 一级分区（6 个）：协同与审批（居首） / 总览 / 架构 / 质量 / 报告 / 集群
-   · 二级子页签（10 个）：智能体与并发（p5 实时拓扑）与 角色与提示词（8 角色 Markdown 模板）解耦分离 */
+/* v0.23.0 页签结构：
+   · 一级分区（7 个）：协同与审批（居首） / 总览 / 架构 / 质量 / 报告 / 集群 / 设置
+   · 二级子页签（11 个，含设置页）：智能体与并发（p5 实时拓扑）与 角色与提示词（8 角色 Markdown 模板）解耦分离 */
 const TAB_LABELS = ['模块与服务', '智能体与并发', '角色与提示词', '运行环境', '构建产物', '代码审查与缺陷', '交付里程碑', '研发交付报告', '工程模式库', '研发技能库']
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -480,16 +558,29 @@ for (const shape of ['data', 'empty', 'error']) {
   let out = ''
   try { out = (await renderAll()).texts } catch (error) { err = error }
   ok(err === null && out.length > 0, `[${shape}] 面板渲染不抛异常且有输出（输出 ${out.length} 字符）` + (err ? '：' + err.message : ''))
-  if (shape === 'data') ok(TAB_LABELS.every((t) => out.includes(t)), '10 个子页签标签都渲染出来')
+  if (shape === 'data') ok(TAB_LABELS.every((t) => out.includes(t)), '10 个工程子页签标签都渲染出来')
 }
 
-console.log('\n— 10 个子页签 + 独立「协同与审批」一级页签逐个渲染（有数据 / 空 / 报错）')
+console.log('\n— 10 个子页签 + 一级页签「协同与审批」「设置」逐个渲染（有数据 / 空 / 报错）')
 for (const shape of ['data', 'empty', 'error']) {
   responses = makeResponses(shape)
   resetInstances()
   await renderAll()
   const collabR = await switchTab('协同与审批')
   ok(collabR !== null && collabR.texts.length > 0, `[${shape}] 一级页签「协同与审批」渲染成功`)
+  const settingsR = await switchTab('设置')
+  ok(settingsR !== null && settingsR.texts.length > 0 && settingsR.texts.includes('统一设置中心'), `[${shape}] 一级页签「设置」渲染成功`)
+  if (shape === 'data') {
+    ok(
+      settingsR.texts.includes('AI 需求拆解与模型设置')
+        && settingsR.texts.includes('集群并发与任务派发策略')
+        && settingsR.texts.includes('存储与 PostgreSQL 连接')
+        && settingsR.texts.includes('通知集成（飞书机器人）')
+        && settingsR.texts.includes('界面偏好与角色预设管理')
+        && settingsR.texts.includes('deepseek / deepseek-chat'),
+      '[data] 「设置」页签渲染 5 大配置分区与实时会话模型路由',
+    )
+  }
   for (const label of TAB_LABELS) {
     const r = await switchTab(label)
     if (r === null) { ok(false, `[${shape}] 找不到页签「${label}」的点击入口`); continue }
@@ -508,7 +599,7 @@ console.log('\n— 有数据时的关键内容（渲染确实用了接口返回�
   const ov = await renderAll()
   ok(ov.texts.includes('实时角色决策流') || ov.texts.includes('DAG 工作流画布') || ov.texts.includes('工作流'), '总览页：首屏给出实时角色决策流与工作流画布')
   ok(['沟通与执行', '并发集群', '上下文与缓存', '交付里程碑'].every((k) => ov.texts.includes(k)), '总览页：展示精简高信噪比 4 项核心 KPI 指标卡（零重复环形图堆砌）')
-  ok(['协同与审批', '总览', '架构', '质量', '报告', '集群'].every((x) => ov.texts.includes(x)), '一级分区升级为 6 个（新增独立「协同与审批」）')
+  ok(['协同与审批', '总览', '架构', '质量', '报告', '集群', '设置'].every((x) => ov.texts.includes(x)), '一级分区升级为 7 个（含独立「协同与审批」与「设置」）')
   ok(ov.texts.indexOf('协同与审批') < ov.texts.indexOf('总览'), '「协同与审批」位于「总览」之前（居一级导航首位）')
   const dataR = await switchTab('模块与服务')
   ok(dataR.hosts.some((x) => x.props.className === 'rt-dock'), '数据密集页：默认保留侧栏，不自动全屏')
@@ -524,13 +615,14 @@ console.log('\n— 有数据时的关键内容（渲染确实用了接口返回�
   ok(f.texts.includes("后台管理员"), "代码审查与缺陷：分组右侧显示影响摘要")
   ok(f.texts.includes('只看关键缺陷') || f.texts.includes('只看关键项'), '代码审查与缺陷：默认只看关键修复/审查项（有切换按钮）')
   const s = await switchTab('智能体与并发')
-  ok(s.texts.includes('Captain') || s.texts.includes('树状图') || s.texts.includes('团队任务板'), '智能体与并发页：直出实时 p5 集群拓扑与泳道画布')
+  ok(s.texts.includes('Captain') && s.texts.includes('树状图') && s.texts.includes('团队任务板'), '智能体与并发页：直出实时 p5 集群拓扑（Captain / 树状图 / 团队任务板）')
+  ok(s.texts.includes('在设置页调整全部参数'), '智能体与并发页：提供一键跳转统一设置中心入口')
   ok(s.texts.includes('并发槽 1/3') && s.texts.includes('3min 无心跳自动回收 · 分片排他锁'), '智能体与并发页：紧凑自适应并发槽与 3min 租约锁状态渲染出来')
   ok(!s.texts.includes('WorkBuddy Cluster · p3') && !s.texts.includes('SLOT #1'), '智能体与并发页：已彻底移除旧版 12 槽方块墙与夸大标语')
   ok(!s.texts.includes('e45') && !s.texts.includes('Admin@123'), '智能体与并发页：不包含会话口令/凭据明文')
   ok(!s.texts.includes('**'), '智能体与并发页：不再露出 Markdown 粗体标记 **')
   ok(!s.texts.includes('`'), '智能体与并发页：不再露出行内代码反引号')
-  ok(s.texts.includes('redteam_agent_slot') && s.texts.includes('同时最多 3 个执行智能体'),
+  ok(s.texts.includes('redteam_agent_slot') && s.texts.includes('3 个执行智能体'),
     '智能体与并发页：槽位核验说明清晰可读')
   const pTab = await switchTab('角色与提示词')
   ok(pTab.texts.includes('Captain') && pTab.texts.includes('角色与提示词'), '角色与提示词页：独立承载 2×4 gstack 角色卡片网格')
@@ -698,7 +790,7 @@ console.log('\n— 页签栏的 ARIA 语义')
   const tabs = hosts.filter((x) => x.props.role === 'tab')
   const list = hosts.filter((x) => x.props.role === 'tablist')
   ok(list.length === 1, '页签栏有 role=tablist（1 个）')
-  ok(tabs.length === 10, '10 个子页签都是 role=tab（实际 ' + tabs.length + '）')
+  ok(tabs.length === 11, '11 个子页签都是 role=tab（含设置页，实际 ' + tabs.length + '）')
   ok(tabs.every((x) => x.props['aria-selected'] !== undefined), '每个页签都带 aria-selected（读屏软件据此播报选中态）')
   const selected = tabs.filter((x) => x.props['aria-selected'] === 'true')
   ok(selected.length === 1 && selected[0].props.title !== undefined, '同一时刻只有一个页签是选中态')

@@ -711,6 +711,9 @@ export function dispatch(store, req = {}) {
     if (op === 'retryWorkerTask' || op === 'retry_worker') {
       return Object.assign({ ok: true }, store.retryWorkerTask(Object.assign({ engagement_id: fallbackId }, req)))
     }
+    if (op === 'bindWorkerSession' || op === 'bind_worker_session') {
+      return Object.assign({ ok: true }, store.bindWorkerSession(Object.assign({ engagement_id: fallbackId }, req)))
+    }
 
     const id = req.engagement
     if (!id) throw new Error('engagement required')
@@ -953,6 +956,9 @@ export class RedteamStore {
     this.engagementsDir = join(root, 'engagements')
     this.handles = new Map()
     this._syncedWorkerSig = new Map()
+    this._intPkCache = new WeakMap()
+    this._ensuredClosedLoopCols = new WeakSet()
+    this._seededScoreEngs = new Set()
     this._closedLoopSeq = 0
     mkdirSync(this.engagementsDir, { recursive: true })
   }
@@ -1050,12 +1056,7 @@ export class RedteamStore {
 
   /** 枚举全部会话状态机记录（供 UI / 诊断使用）。 */
   listSessionBindings() {
-    const raw = this.#readSessionStateRecords()
-    const out = {}
-    for (const key of Object.keys(raw)) {
-      out[key] = this.getSessionState(key)
-    }
-    return out
+    return this.#readSessionStateRecords()
   }
 
   /**
@@ -1113,10 +1114,6 @@ export class RedteamStore {
       has_conversation: Boolean(entry?.has_conversation),
       updated_at: entry?.updated_at || null,
     }
-  }
-
-  getSessionBinding(sessionId) {
-    return this.getSessionState(sessionId)
   }
 
   /**
@@ -1274,7 +1271,8 @@ export class RedteamStore {
   db(id, options = {}) {
     let handle = this.handles.get(id)
     if (handle) return handle
-    if (!existsSync(this.dbPathOf(id))) {
+    const isNewSqlite = !existsSync(this.dbPathOf(id))
+    if (isNewSqlite) {
       if (options.create !== true) throw new Error(`engagement not found: ${id}`)
       mkdirSync(this.dirOf(id), { recursive: true })
     }
@@ -1291,8 +1289,7 @@ export class RedteamStore {
     } else {
       handle.exec(HAS_FTS5 ? DDL + ASSET_FTS_DDL : DDL)
     }
-    migrate(handle)
-    this.#ensureClosedLoopTables(handle)
+    if (!isNewSqlite || handle.mode === 'postgresql') migrate(handle)
     this.handles.set(id, handle)
     return handle
   }
@@ -1302,6 +1299,9 @@ export class RedteamStore {
       try { handle.close() } catch { /* 关闭失败不阻断卸载 */ }
     }
     this.handles.clear()
+    this._intPkCache = new WeakMap()
+    this._ensuredClosedLoopCols = new WeakSet()
+    this._seededScoreEngs.clear()
     if (this.kbHandle) {
       try { this.kbHandle.close() } catch { /* 忽略 */ }
       this.kbHandle = null
@@ -1689,122 +1689,57 @@ export class RedteamStore {
    * 确保 1 Plan + N Workers 闭环四张表（含 shard_locks）在当前句柄中已创建且列齐全。
    * 注意：严禁执行 PRAGMA foreign_keys = OFF，保持整连接外键约束始终开启。
    */
-  #ensureClosedLoopTables(db) {
-    if (!db) return
-    try {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS plan_goals (
-          id TEXT PRIMARY KEY,
-          engagement_id TEXT NOT NULL DEFAULT '',
-          parent_goal_id TEXT,
-          prompt_hash TEXT NOT NULL DEFAULT '',
-          user_prompt TEXT NOT NULL DEFAULT '',
-          title TEXT NOT NULL DEFAULT '',
-          objective TEXT NOT NULL DEFAULT '',
-          wave TEXT NOT NULL DEFAULT 'wave-1',
-          ui_priority TEXT NOT NULL DEFAULT 'P1',
-          priority_weight INTEGER NOT NULL DEFAULT 80,
-          status TEXT NOT NULL DEFAULT 'planned',
-          approval_note TEXT NOT NULL DEFAULT '',
-          approved_at TEXT,
-          created_at TEXT NOT NULL DEFAULT '',
-          updated_at TEXT NOT NULL DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS worker_tasks (
-          id TEXT PRIMARY KEY,
-          engagement_id TEXT NOT NULL DEFAULT '',
-          goal_id TEXT,
-          session_id TEXT NOT NULL DEFAULT '',
-          worker_name TEXT NOT NULL DEFAULT '',
-          worker_role TEXT NOT NULL DEFAULT 'exploit',
-          wave TEXT NOT NULL DEFAULT 'wave-2',
-          ui_priority TEXT NOT NULL DEFAULT 'P1',
-          priority_weight INTEGER NOT NULL DEFAULT 80,
-          tags_json TEXT NOT NULL DEFAULT '[]',
-          files_owned_json TEXT NOT NULL DEFAULT '[]',
-          assigned_goal TEXT NOT NULL DEFAULT '',
-          status TEXT NOT NULL DEFAULT 'queued',
-          approval_state TEXT NOT NULL DEFAULT 'working',
-          next_goal TEXT NOT NULL DEFAULT '',
-          error_detail TEXT NOT NULL DEFAULT '',
-          tool_calls INTEGER NOT NULL DEFAULT 0,
-          turns INTEGER NOT NULL DEFAULT 0,
-          duration_ms INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL DEFAULT '',
-          updated_at TEXT NOT NULL DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS worker_digests (
-          id TEXT PRIMARY KEY,
-          engagement_id TEXT NOT NULL DEFAULT '',
-          worker_task_id TEXT NOT NULL,
-          goal_id TEXT,
-          worker_name TEXT NOT NULL DEFAULT '',
-          what_was_done TEXT NOT NULL DEFAULT '',
-          files_touched_json TEXT NOT NULL DEFAULT '[]',
-          key_decisions_json TEXT NOT NULL DEFAULT '[]',
-          verification TEXT NOT NULL DEFAULT 'passed',
-          raw_tokens INTEGER NOT NULL DEFAULT 0,
-          compressed_tokens INTEGER NOT NULL DEFAULT 0,
-          compression_pct INTEGER NOT NULL DEFAULT 0,
-          approval_decision TEXT NOT NULL DEFAULT 'pending_approval',
-          followup_goal TEXT NOT NULL DEFAULT '',
-          created_at TEXT NOT NULL DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS shard_locks (
-          id TEXT PRIMARY KEY,
-          engagement_id TEXT NOT NULL DEFAULT '',
-          worker_task_id TEXT NOT NULL DEFAULT '',
-          worker_name TEXT NOT NULL DEFAULT '',
-          wave TEXT NOT NULL DEFAULT 'wave-3',
-          file_pattern TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'active',
-          acquired_at TEXT NOT NULL DEFAULT '',
-          released_at TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_shard_locks_eng ON shard_locks(engagement_id, status);
-      `)
-    } catch { /* 表已由 schema.js 创建或句柄不支持时忽略 */ }
-    try {
-      const cols = new Set(db.prepare('PRAGMA table_info(worker_tasks)').all().map((c) => c.name))
-      if (cols.size > 0) {
-        if (!cols.has('files_owned_json')) {
-          try { db.exec("ALTER TABLE worker_tasks ADD COLUMN files_owned_json TEXT NOT NULL DEFAULT '[]'") } catch { /* ignore */ }
-        }
-        if (!cols.has('error_detail')) {
-          try { db.exec("ALTER TABLE worker_tasks ADD COLUMN error_detail TEXT NOT NULL DEFAULT ''") } catch { /* ignore */ }
-        }
-        if (!cols.has('duration_ms')) {
-          try { db.exec('ALTER TABLE worker_tasks ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0') } catch { /* ignore */ }
-        }
-      }
-    } catch { /* ignore */ }
-  }
-
   #nextClosedLoopUid(prefix) {
     this._closedLoopSeq = (Number(this._closedLoopSeq) || 0) + 1
     return `${prefix}-${Date.now().toString(36)}-${this._closedLoopSeq}`
   }
 
   #isTableIntPk(db, table) {
+    let tableMap = this._intPkCache.get(db)
+    if (tableMap && tableMap.has(table)) return tableMap.get(table)
     try {
       const cols = db.prepare(`PRAGMA table_info(${table})`).all()
       const pk = cols.find((c) => c.name === 'id')
-      return Boolean(pk && String(pk.type || '').toUpperCase() === 'INTEGER' && Number(pk.pk) > 0)
+      const res = Boolean(pk && String(pk.type || '').toUpperCase() === 'INTEGER' && Number(pk.pk) > 0)
+      if (!tableMap) {
+        tableMap = new Map()
+        this._intPkCache.set(db, tableMap)
+      }
+      tableMap.set(table, res)
+      return res
     } catch {
       return false
     }
+  }
+
+  #ensureClosedLoopColumns(db) {
+    if (!db) return
+    if (!this._ensuredClosedLoopCols) this._ensuredClosedLoopCols = new WeakSet()
+    if (this._ensuredClosedLoopCols.has(db)) return
+    this._ensuredClosedLoopCols.add(db)
+    const ensure = (table, col, ddl) => {
+      try {
+        const cols = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((r) => r.name))
+        if (cols.size > 0 && !cols.has(col)) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`)
+        }
+      } catch { /* ignore column migration errors */ }
+    }
+    ensure('plan_goals', 'acceptance_criteria_json', "TEXT NOT NULL DEFAULT '[]'")
+    ensure('worker_tasks', 'acceptance_criteria_json', "TEXT NOT NULL DEFAULT '[]'")
+    ensure('worker_tasks', 'dispatched_at', "TEXT NOT NULL DEFAULT ''")
   }
 
   #openClosedLoopDb(explicitId, createIfMissing = true) {
     const resolvedId = String(explicitId || this.activeEngagementId() || 'default').trim() || 'default'
     if (this.handles.has(resolvedId) || existsSync(this.dbPathOf(resolvedId))) {
       const db = this.db(resolvedId)
-      this.#ensureClosedLoopTables(db)
+      this.#ensureClosedLoopColumns(db)
       return { resolvedId, db }
     }
     if (!createIfMissing) return { resolvedId, db: null }
     const db = this.db(resolvedId, { create: true })
-    this.#ensureClosedLoopTables(db)
+    this.#ensureClosedLoopColumns(db)
     return { resolvedId, db }
   }
 
@@ -1825,6 +1760,7 @@ export class RedteamStore {
     if (!t) return null
     const tags = parseJson(t.tags_json, [])
     const filesOwned = parseJson(t.files_owned_json, [])
+    const acceptanceCriteria = parseJson(t.acceptance_criteria_json, [])
     return Object.assign({}, t, {
       engagement_id: t.engagement_id || resolvedId,
       priority_weight: Number(t.priority_weight) || 0,
@@ -1835,6 +1771,11 @@ export class RedteamStore {
       tags_json: typeof t.tags_json === 'string' ? t.tags_json : JSON.stringify(Array.isArray(tags) ? tags : []),
       files_owned: Array.isArray(filesOwned) ? filesOwned : [],
       files_owned_json: typeof t.files_owned_json === 'string' ? t.files_owned_json : JSON.stringify(Array.isArray(filesOwned) ? filesOwned : []),
+      acceptance_criteria: Array.isArray(acceptanceCriteria) ? acceptanceCriteria : [],
+      acceptance_criteria_json: typeof t.acceptance_criteria_json === 'string'
+        ? t.acceptance_criteria_json
+        : JSON.stringify(Array.isArray(acceptanceCriteria) ? acceptanceCriteria : []),
+      dispatched_at: String(t.dispatched_at || ''),
       error_detail: String(t.error_detail || ''),
     })
   }
@@ -1880,10 +1821,14 @@ export class RedteamStore {
     try {
       planGoals = db.prepare(
         'SELECT * FROM plan_goals ORDER BY COALESCE(priority_weight, 0) DESC, created_at ASC, id ASC',
-      ).all().map((g) => Object.assign({}, g, {
-        engagement_id: g.engagement_id || resolvedId,
-        priority_weight: Number(g.priority_weight) || 0,
-      }))
+      ).all().map((g) => {
+        const acceptanceCriteria = parseJson(g.acceptance_criteria_json, [])
+        return Object.assign({}, g, {
+          engagement_id: g.engagement_id || resolvedId,
+          priority_weight: Number(g.priority_weight) || 0,
+          acceptance_criteria: Array.isArray(acceptanceCriteria) ? acceptanceCriteria : [],
+        })
+      })
     } catch { planGoals = [] }
     try {
       workerTasks = db.prepare(
@@ -2293,6 +2238,8 @@ export class RedteamStore {
 
   /**
    * 1. 将用户需求拆解为结构化 `plan_goals`（4 波次），预分配互不重叠 `files_owned` 的 `worker_tasks` 并登记 `shard_locks`。
+   *    当收到真实 AI 生成的结构化 `payload.goals` 时按目标规范落库并支持 `acceptance_criteria / wave / role / title / assigned_goal / files_owned`；
+   *    若 `payload.require_ai === true` 且未提供有效非空 `goals`（且未显式允许 `allow_static_fallback: true`），拒绝走静默静态模板。
    */
   decomposeUserPrompt(arg1 = {}, arg2 = undefined) {
     let input = {}
@@ -2300,18 +2247,75 @@ export class RedteamStore {
       if (arg2 && typeof arg2 === 'object') input = Object.assign({ engagement_id: arg1 }, arg2)
       else if (typeof arg2 === 'string') input = { engagement_id: arg1, user_prompt: arg2 }
       else input = { user_prompt: arg1 }
+    } else if ((arg1 === null || arg1 === undefined) && arg2 && typeof arg2 === 'object') {
+      input = arg2
     } else if (arg1 && typeof arg1 === 'object') {
       input = arg1
     }
 
-    const { resolvedId, db } = this.#openClosedLoopDb(input.engagement_id || input.engagement, true)
+    const firstNonEmpty = (...vals) => {
+      for (const v of vals) {
+        if (typeof v === 'string' && v.trim() !== '') return v.trim()
+      }
+      return ''
+    }
+    const normalizeWave = (raw, fallback = 'wave-2') => {
+      if (raw === undefined || raw === null) return fallback
+      const s = String(raw).trim().toLowerCase()
+      if (!s) return fallback
+      if (/^\d+$/.test(s)) return `wave-${s}`
+      if (/^wave[\s_-]*(\d+)$/.test(s)) return s.replace(/^wave[\s_-]*(\d+)$/, 'wave-$1')
+      return s
+    }
+
+    const resolvedId = String(input.engagement_id || input.engagement || this.activeEngagementId() || 'default').trim() || 'default'
+    const validInputGoals = Array.isArray(input.goals)
+      ? input.goals.filter((item) => {
+          if (typeof item === 'string') return item.trim() !== ''
+          if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+          return Boolean(firstNonEmpty(
+            item.title,
+            item.name,
+            item.assigned_goal,
+            item.assignedGoal,
+            item.objective,
+            item.description,
+            item.goal,
+          ))
+        })
+      : []
+    const hasAiGoals = validInputGoals.length > 0
+
+    if (input.require_ai === true && !hasAiGoals && input.allow_static_fallback !== true) {
+      return {
+        ok: false,
+        requires_llm: true,
+        engagement_id: resolvedId,
+        error: '未提供 AI 拆解目标（需要真实 LLM 调用生成蓝图）',
+      }
+    }
+
+    const { db } = this.#openClosedLoopDb(resolvedId, true)
     const userPrompt = String(
       input.user_prompt ?? input.userPrompt ?? input.prompt ?? input.wish ?? input.goal ?? '构建 1 Plan + N Workers 闭环研发与回归验证流水线',
     ).trim() || '构建 1 Plan + N Workers 闭环研发与回归验证流水线'
     const pHash = promptHash(userPrompt)
     const now = nowIso()
     const priorityWeights = { P0: 100, P1: 80, P2: 50, P3: 20 }
-    const refinedSpec = this.refineUserWish({ engagement_id: resolvedId, user_prompt: userPrompt, spec_only: true }).refined_spec
+    const baseRefined = this.refineUserWish({ engagement_id: resolvedId, user_prompt: userPrompt, spec_only: true }).refined_spec
+    const customRefined = input.refined_spec && typeof input.refined_spec === 'object' ? input.refined_spec : {}
+    const topLevelCriteria = this.#parseStringList(
+      input.acceptance_criteria ?? input.acceptanceCriteria ?? customRefined.acceptance_criteria,
+      [],
+    )
+    const refinedSpec = {
+      title: firstNonEmpty(customRefined.title, input.title, baseRefined.title),
+      summary: firstNonEmpty(customRefined.summary, input.summary, baseRefined.summary),
+      clarifications: Array.isArray(customRefined.clarifications) && customRefined.clarifications.length > 0
+        ? customRefined.clarifications
+        : baseRefined.clarifications,
+      acceptance_criteria: topLevelCriteria.length > 0 ? topLevelCriteria : baseRefined.acceptance_criteria,
+    }
 
     const defaultTemplates = [
       {
@@ -2364,13 +2368,14 @@ export class RedteamStore {
       },
     ]
 
-    const rawGoals = Array.isArray(input.goals) && input.goals.length > 0 ? input.goals : defaultTemplates
+    const rawGoals = hasAiGoals ? validInputGoals : defaultTemplates
     const goalIntPk = this.#isTableIntPk(db, 'plan_goals')
     const taskIntPk = this.#isTableIntPk(db, 'worker_tasks')
 
     const createdGoals = []
     const createdTasks = []
     const createdLocks = []
+    const collectedGoalCriteria = []
     let prevGoalId = null
 
     for (let i = 0; i < rawGoals.length; i++) {
@@ -2378,14 +2383,49 @@ export class RedteamStore {
       const g = typeof rawGoals[i] === 'string'
         ? { title: rawGoals[i], objective: rawGoals[i] }
         : (rawGoals[i] || {})
-      const wave = String(g.wave || tpl.wave || `wave-${i + 1}`)
-      const uiPriority = ['P0', 'P1', 'P2', 'P3'].includes(g.ui_priority || g.priority)
-        ? (g.ui_priority || g.priority)
-        : tpl.ui_priority
+      const wave = normalizeWave(g.wave, hasAiGoals ? (i < defaultTemplates.length ? tpl.wave : 'wave-3') : (tpl.wave || `wave-${i + 1}`))
+      const rawPri = String(g.ui_priority ?? g.priority ?? '').trim().toUpperCase()
+      const uiPriority = ['P0', 'P1', 'P2', 'P3'].includes(rawPri)
+        ? rawPri
+        : (hasAiGoals ? (wave === 'wave-1' ? 'P0' : 'P1') : tpl.ui_priority)
       const priorityWeight = Number(g.priority_weight) || priorityWeights[uiPriority] || tpl.priority_weight || 80
-      const title = String(g.title || tpl.title).trim()
-      const objective = String(g.objective || g.description || g.title || tpl.objective).trim()
-      const goalStatus = String(g.status || tpl.status || (i === 0 ? 'running' : 'planned'))
+      const assignedGoal = firstNonEmpty(
+        g.assigned_goal,
+        g.assignedGoal,
+        g.objective,
+        g.description,
+        g.goal,
+        g.title,
+        g.name,
+        hasAiGoals ? '' : tpl.objective,
+      )
+      const objective = firstNonEmpty(
+        g.objective,
+        g.assigned_goal,
+        g.assignedGoal,
+        g.description,
+        g.goal,
+        g.title,
+        g.name,
+        assignedGoal,
+        tpl.objective,
+      )
+      const title = firstNonEmpty(
+        g.title,
+        g.name,
+        hasAiGoals ? assignedGoal.slice(0, 72) : '',
+        tpl.title,
+      )
+      const goalAcceptanceCriteria = this.#parseStringList(g.acceptance_criteria ?? g.acceptanceCriteria, [])
+      for (const c of goalAcceptanceCriteria) {
+        if (!collectedGoalCriteria.includes(c)) collectedGoalCriteria.push(c)
+      }
+      const acceptanceCriteriaJson = JSON.stringify(goalAcceptanceCriteria)
+      const goalStatus = firstNonEmpty(
+        g.status,
+        hasAiGoals ? ((wave === 'wave-1' || i === 0) ? 'running' : 'planned') : tpl.status,
+        i === 0 ? 'running' : 'planned',
+      )
       const parentGoalId = g.parent_goal_id !== undefined ? g.parent_goal_id : prevGoalId
       const preferredGoalId = g.id || this.#nextClosedLoopUid(`goal-w${i + 1}`)
       const bindGoalId = goalIntPk
@@ -2396,8 +2436,8 @@ export class RedteamStore {
         INSERT INTO plan_goals (
           id, engagement_id, parent_goal_id, prompt_hash, user_prompt,
           title, objective, wave, ui_priority, priority_weight,
-          status, approval_note, approved_at, created_at, updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          status, approval_note, approved_at, acceptance_criteria_json, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
           title = excluded.title,
           objective = excluded.objective,
@@ -2405,6 +2445,7 @@ export class RedteamStore {
           ui_priority = excluded.ui_priority,
           priority_weight = excluded.priority_weight,
           status = excluded.status,
+          acceptance_criteria_json = excluded.acceptance_criteria_json,
           updated_at = excluded.updated_at
       `).run(
         bindGoalId,
@@ -2420,6 +2461,7 @@ export class RedteamStore {
         goalStatus,
         g.approval_note ?? '',
         g.approved_at ?? null,
+        acceptanceCriteriaJson,
         now,
         now,
       )
@@ -2440,27 +2482,45 @@ export class RedteamStore {
         status: goalStatus,
         approval_note: g.approval_note ?? '',
         approved_at: g.approved_at ?? null,
+        acceptance_criteria: goalAcceptanceCriteria,
+        acceptance_criteria_json: acceptanceCriteriaJson,
         created_at: now,
         updated_at: now,
       }
       createdGoals.push(goalRecord)
 
+      const workerRole = firstNonEmpty(
+        g.worker_role,
+        g.role,
+        g.workerRole,
+        hasAiGoals ? 'exploit' : tpl.worker_role,
+        'exploit',
+      )
       const rawTags = Array.isArray(g.tags)
         ? g.tags
-        : (typeof g.tags_json === 'string' ? parseJson(g.tags_json, tpl.tags) : tpl.tags)
+        : (typeof g.tags_json === 'string'
+          ? parseJson(g.tags_json, tpl.tags)
+          : (hasAiGoals ? [`#${wave}`, `#${workerRole}`, '#ai-plan'] : tpl.tags))
       const tagsJson = JSON.stringify(rawTags)
-      const workerRole = String(g.worker_role || g.role || tpl.worker_role || 'exploit')
-      const workerName = String(g.worker_name || g.name || (i < defaultTemplates.length ? tpl.worker_name : `${workerRole}-shard-${i + 1}`))
-      const fallbackFilesOwned = i < defaultTemplates.length
+      const workerName = firstNonEmpty(
+        g.worker_name,
+        g.workerName,
+        g.name,
+        hasAiGoals ? `${workerRole}-${wave}-${i + 1}` : (i < defaultTemplates.length ? tpl.worker_name : `${workerRole}-shard-${i + 1}`),
+      )
+      const hasExplicitFilesOwned = g.files_owned !== undefined || g.filesOwned !== undefined || g.files_owned_json !== undefined
+      const fallbackFilesOwned = !hasAiGoals && i < defaultTemplates.length
         ? tpl.files_owned
         : [`shards/${wave}/${slugify(workerName) || ('shard-' + (i + 1))}/**`]
-      const filesOwned = this.#parseStringList(g.files_owned ?? g.filesOwned ?? g.files_owned_json, fallbackFilesOwned)
+      const filesOwned = (hasExplicitFilesOwned
+        ? this.#parseStringList(g.files_owned ?? g.filesOwned ?? g.files_owned_json, [])
+        : fallbackFilesOwned)
         .map((p) => normalizeShardPattern(p))
         .filter(Boolean)
       const filesOwnedJson = JSON.stringify(filesOwned)
-      const sessionId = String(g.session_id || g.sessionId || `sess-${pHash.slice(0, 6)}-w${i + 1}`)
-      const taskStatus = goalStatus === 'running' ? 'running' : 'queued'
-      const approvalState = String(g.approval_state || 'working')
+      const sessionId = firstNonEmpty(g.session_id, g.sessionId, `sess-${pHash.slice(0, 6)}-w${i + 1}`)
+      const taskStatus = firstNonEmpty(g.task_status, g.taskStatus, goalStatus === 'running' ? 'running' : 'queued')
+      const approvalState = firstNonEmpty(g.approval_state, g.approvalState, 'working')
       const preferredTaskId = g.worker_task_id || this.#nextClosedLoopUid(`wt-w${i + 1}`)
       const bindTaskId = taskIntPk
         ? (Number.isInteger(Number(preferredTaskId)) ? Number(preferredTaskId) : null)
@@ -2470,8 +2530,8 @@ export class RedteamStore {
         INSERT INTO worker_tasks (
           id, engagement_id, goal_id, session_id, worker_name, worker_role,
           wave, ui_priority, priority_weight, tags_json, files_owned_json, assigned_goal,
-          status, approval_state, next_goal, error_detail, tool_calls, turns, created_at, updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          status, approval_state, next_goal, error_detail, acceptance_criteria_json, tool_calls, turns, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
           goal_id = excluded.goal_id,
           worker_name = excluded.worker_name,
@@ -2484,6 +2544,7 @@ export class RedteamStore {
           assigned_goal = excluded.assigned_goal,
           status = excluded.status,
           approval_state = excluded.approval_state,
+          acceptance_criteria_json = excluded.acceptance_criteria_json,
           updated_at = excluded.updated_at
       `).run(
         bindTaskId,
@@ -2497,11 +2558,12 @@ export class RedteamStore {
         priorityWeight,
         tagsJson,
         filesOwnedJson,
-        objective,
+        assignedGoal,
         taskStatus,
         approvalState,
         '',
         '',
+        acceptanceCriteriaJson,
         Number(g.tool_calls) || 0,
         Number(g.turns) || 0,
         now,
@@ -2536,16 +2598,23 @@ export class RedteamStore {
         tags: rawTags,
         files_owned_json: filesOwnedJson,
         files_owned: filesOwned,
-        assigned_goal: objective,
+        assigned_goal: assignedGoal,
+        acceptance_criteria: goalAcceptanceCriteria,
+        acceptance_criteria_json: acceptanceCriteriaJson,
         status: taskStatus,
         approval_state: approvalState,
         next_goal: '',
         error_detail: errorDetail,
+        dispatched_at: '',
         tool_calls: Number(g.tool_calls) || 0,
         turns: Number(g.turns) || 0,
         created_at: now,
         updated_at: now,
       })
+    }
+
+    if (hasAiGoals && topLevelCriteria.length === 0 && collectedGoalCriteria.length > 0) {
+      refinedSpec.acceptance_criteria = collectedGoalCriteria
     }
 
     this._recordPgWrite('INSERT', 'plan_goals', {
@@ -2563,6 +2632,7 @@ export class RedteamStore {
 
     return {
       ok: true,
+      source: hasAiGoals ? 'ai' : 'static_fallback',
       engagement_id: resolvedId,
       engagement: resolvedId,
       prompt_hash: pHash,
@@ -3578,6 +3648,268 @@ export class RedteamStore {
   }
 
   /**
+   * 绑定真实子智能体会话 ID 到既有 `worker_tasks` 行（支持 `wt-<id>`、数字 `id`、旧 `session_id` 或 `worker_name`），
+   * 并按需更新 `status` / `dispatched_at` / `error_detail` 等字段与 PG 写表探针记录。
+   */
+  bindWorkerSession(engagementId, workerRef, realSessionId, extraPatch = {}) {
+    let engInput = engagementId
+    let refInput = workerRef
+    let newSessInput = realSessionId
+    let patchInput = extraPatch
+
+    if (engagementId && typeof engagementId === 'object' && !Array.isArray(engagementId)) {
+      const obj = engagementId
+      engInput = obj.engagement_id ?? obj.engagement ?? obj.engagementId
+      const explicitNewSess = obj.real_session_id ?? obj.realSessionId ?? obj.new_session_id ?? obj.newSessionId ?? obj.target_session_id
+      refInput = obj.worker_ref ?? obj.workerRef ?? obj.worker_task_id ?? obj.workerTaskId
+        ?? obj.worker_id ?? obj.workerId ?? obj.id
+        ?? obj.old_session_id ?? obj.oldSessionId ?? obj.prev_session_id ?? obj.prevSessionId
+        ?? obj.worker_name ?? obj.workerName
+      if ((refInput === undefined || refInput === null || String(refInput).trim() === '') && explicitNewSess !== undefined && explicitNewSess !== null) {
+        refInput = obj.session_id ?? obj.sessionId
+      }
+      newSessInput = explicitNewSess ?? obj.session_id ?? obj.sessionId
+      patchInput = Object.assign(
+        {},
+        obj,
+        (workerRef && typeof workerRef === 'object' && !Array.isArray(workerRef) ? workerRef : {}),
+        (obj.extraPatch && typeof obj.extraPatch === 'object' ? obj.extraPatch : {}),
+        (obj.patch && typeof obj.patch === 'object' ? obj.patch : {}),
+      )
+    } else if (workerRef && typeof workerRef === 'object' && !Array.isArray(workerRef)) {
+      const obj = workerRef
+      const explicitNewSess = (typeof realSessionId === 'string' && realSessionId.trim() !== '')
+        ? realSessionId
+        : (obj.real_session_id ?? obj.realSessionId ?? obj.new_session_id ?? obj.newSessionId ?? obj.target_session_id)
+      refInput = obj.worker_ref ?? obj.workerRef ?? obj.worker_task_id ?? obj.workerTaskId
+        ?? obj.worker_id ?? obj.workerId ?? obj.id
+        ?? obj.old_session_id ?? obj.oldSessionId ?? obj.prev_session_id ?? obj.prevSessionId
+        ?? obj.worker_name ?? obj.workerName
+      if ((refInput === undefined || refInput === null || String(refInput).trim() === '') && explicitNewSess !== undefined && explicitNewSess !== null) {
+        refInput = obj.session_id ?? obj.sessionId
+      }
+      newSessInput = explicitNewSess ?? obj.session_id ?? obj.sessionId
+      patchInput = Object.assign(
+        {},
+        obj,
+        (extraPatch && typeof extraPatch === 'object' && !Array.isArray(extraPatch) ? extraPatch : {}),
+        (obj.extraPatch && typeof obj.extraPatch === 'object' ? obj.extraPatch : {}),
+        (obj.patch && typeof obj.patch === 'object' ? obj.patch : {}),
+      )
+    } else if (refInput && typeof refInput === 'object' && !Array.isArray(refInput)) {
+      const obj = refInput
+      refInput = obj.worker_ref ?? obj.workerRef ?? obj.worker_task_id ?? obj.workerTaskId
+        ?? obj.worker_id ?? obj.workerId ?? obj.id
+        ?? obj.old_session_id ?? obj.oldSessionId ?? obj.worker_name ?? obj.workerName
+    }
+
+    const resolvedId = String(engInput || this.activeEngagementId() || 'default').trim() || 'default'
+    const realSid = String(newSessInput === undefined || newSessInput === null ? '' : newSessInput).trim()
+    if (!realSid) {
+      return { ok: false, engagement_id: resolvedId, error: 'realSessionId required' }
+    }
+    const rawRef = refInput === undefined || refInput === null ? '' : String(refInput).trim()
+    if (!rawRef) {
+      return { ok: false, engagement_id: resolvedId, error: 'workerRef required' }
+    }
+
+    const { db } = this.#openClosedLoopDb(resolvedId, true)
+    const findTaskByRef = (refVal) => {
+      if (refVal === undefined || refVal === null) return null
+      const str = String(refVal).trim()
+      if (!str) return null
+      let found = db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(refVal)
+        || db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ?').get(str)
+      const wtNumMatch = /^wt-(\d+)$/i.exec(str)
+      if (!found && wtNumMatch) {
+        found = db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ?').get(wtNumMatch[1])
+      }
+      if (!found && /^\d+$/.test(str)) {
+        found = db.prepare('SELECT * FROM worker_tasks WHERE CAST(id AS TEXT) = ?').get(`wt-${str}`)
+      }
+      if (!found) {
+        found = db.prepare(
+          'SELECT * FROM worker_tasks WHERE session_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1',
+        ).get(str)
+      }
+      if (!found) {
+        found = db.prepare(
+          'SELECT * FROM worker_tasks WHERE worker_name = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1',
+        ).get(str)
+      }
+      return found || null
+    }
+
+    let taskRow = findTaskByRef(typeof refInput === 'number' ? refInput : rawRef)
+    if (!taskRow && patchInput && typeof patchInput === 'object') {
+      const altRefs = [
+        patchInput.worker_task_id,
+        patchInput.worker_id,
+        patchInput.old_session_id,
+        patchInput.oldSessionId,
+        patchInput.worker_name,
+        patchInput.workerName,
+      ]
+      for (const alt of altRefs) {
+        if (alt !== undefined && alt !== null && String(alt).trim() !== '' && String(alt).trim() !== rawRef) {
+          taskRow = findTaskByRef(alt)
+          if (taskRow) break
+        }
+      }
+    }
+
+    if (!taskRow) {
+      return {
+        ok: false,
+        engagement_id: resolvedId,
+        worker_ref: rawRef,
+        error: `worker_task not found: ${rawRef}`,
+      }
+    }
+
+    const now = nowIso()
+    const p = patchInput && typeof patchInput === 'object' ? patchInput : {}
+    const priorityWeights = { P0: 100, P1: 80, P2: 50, P3: 20 }
+
+    const normalizeWave = (raw, fallback) => {
+      if (raw === undefined || raw === null) return fallback
+      const s = String(raw).trim().toLowerCase()
+      if (!s) return fallback
+      if (/^\d+$/.test(s)) return `wave-${s}`
+      if (/^wave[\s_-]*(\d+)$/.test(s)) return s.replace(/^wave[\s_-]*(\d+)$/, 'wave-$1')
+      return s
+    }
+
+    const nextStatus = p.status !== undefined && String(p.status).trim() !== ''
+      ? String(p.status).trim()
+      : String(taskRow.status || 'running')
+    const rawApprovalState = p.approval_state ?? p.approvalState
+    const nextApprovalState = rawApprovalState !== undefined && String(rawApprovalState).trim() !== ''
+      ? String(rawApprovalState).trim()
+      : String(taskRow.approval_state || 'working')
+    const rawDispatchedAt = p.dispatched_at ?? p.dispatchedAt
+    const nextDispatchedAt = rawDispatchedAt !== undefined
+      ? String(rawDispatchedAt ?? '')
+      : (String(taskRow.dispatched_at || '') || now)
+    const rawErrorDetail = p.error_detail !== undefined ? p.error_detail : p.errorDetail
+    const nextErrorDetail = rawErrorDetail !== undefined
+      ? String(rawErrorDetail ?? '')
+      : (p.clear_error === true ? '' : String(taskRow.error_detail || ''))
+    const rawWorkerName = p.worker_name ?? p.workerName
+    const nextWorkerName = rawWorkerName !== undefined && String(rawWorkerName).trim() !== ''
+      ? String(rawWorkerName).trim()
+      : String(taskRow.worker_name || '')
+    const rawWorkerRole = p.worker_role ?? p.workerRole ?? p.role
+    const nextWorkerRole = rawWorkerRole !== undefined && String(rawWorkerRole).trim() !== ''
+      ? String(rawWorkerRole).trim()
+      : String(taskRow.worker_role || 'exploit')
+    const nextWave = p.wave !== undefined && String(p.wave).trim() !== ''
+      ? normalizeWave(p.wave, String(taskRow.wave || 'wave-2'))
+      : String(taskRow.wave || 'wave-2')
+    const rawPri = String(p.ui_priority ?? p.priority ?? '').trim().toUpperCase()
+    const nextUiPriority = ['P0', 'P1', 'P2', 'P3'].includes(rawPri)
+      ? rawPri
+      : String(taskRow.ui_priority || 'P1')
+    const nextPriorityWeight = Number.isFinite(Number(p.priority_weight)) && Number(p.priority_weight) > 0
+      ? Number(p.priority_weight)
+      : (['P0', 'P1', 'P2', 'P3'].includes(rawPri)
+        ? priorityWeights[rawPri]
+        : (Number(taskRow.priority_weight) || priorityWeights[nextUiPriority] || 80))
+    const rawAssignedGoal = p.assigned_goal ?? p.assignedGoal
+    const nextAssignedGoal = rawAssignedGoal !== undefined
+      ? String(rawAssignedGoal ?? '').trim()
+      : String(taskRow.assigned_goal || '')
+    const rawNextGoal = p.next_goal ?? p.nextGoal
+    const nextGoal = rawNextGoal !== undefined
+      ? String(rawNextGoal ?? '').trim()
+      : String(taskRow.next_goal || '')
+    const nextTurns = p.turns !== undefined && Number.isFinite(Number(p.turns))
+      ? Math.max(0, Math.floor(Number(p.turns)))
+      : (Number(taskRow.turns) || 0)
+    const rawToolCalls = p.tool_calls ?? p.toolCalls
+    const nextToolCalls = rawToolCalls !== undefined && Number.isFinite(Number(rawToolCalls))
+      ? Math.max(0, Math.floor(Number(rawToolCalls)))
+      : (Number(taskRow.tool_calls) || 0)
+    const rawDurationMs = p.duration_ms ?? p.durationMs
+    const nextDurationMs = rawDurationMs !== undefined && Number.isFinite(Number(rawDurationMs))
+      ? Math.max(0, Math.floor(Number(rawDurationMs)))
+      : (Number(taskRow.duration_ms) || 0)
+    const nextFilesOwnedJson = (p.files_owned !== undefined || p.filesOwned !== undefined || p.files_owned_json !== undefined)
+      ? JSON.stringify(
+          this.#parseStringList(p.files_owned ?? p.filesOwned ?? p.files_owned_json, [])
+            .map((pat) => normalizeShardPattern(pat))
+            .filter(Boolean),
+        )
+      : String(taskRow.files_owned_json || '[]')
+
+    const previousSessionId = String(taskRow.session_id || '')
+
+    db.prepare(`
+      UPDATE worker_tasks
+      SET session_id = ?,
+          worker_name = ?,
+          worker_role = ?,
+          wave = ?,
+          ui_priority = ?,
+          priority_weight = ?,
+          files_owned_json = ?,
+          assigned_goal = ?,
+          status = ?,
+          approval_state = ?,
+          next_goal = ?,
+          error_detail = ?,
+          tool_calls = ?,
+          turns = ?,
+          duration_ms = ?,
+          dispatched_at = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(
+      realSid,
+      nextWorkerName,
+      nextWorkerRole,
+      nextWave,
+      nextUiPriority,
+      nextPriorityWeight,
+      nextFilesOwnedJson,
+      nextAssignedGoal,
+      nextStatus,
+      nextApprovalState,
+      nextGoal,
+      nextErrorDetail,
+      nextToolCalls,
+      nextTurns,
+      nextDurationMs,
+      nextDispatchedAt,
+      now,
+      taskRow.id,
+    )
+
+    this._recordPgWrite('UPDATE', 'worker_tasks', {
+      engagement_id: resolvedId,
+      role: nextWorkerRole || 'plan',
+      rows: 1,
+      summary: `BIND worker_tasks · ${nextWorkerName || taskRow.id} (${previousSessionId || 'unbound'} -> ${realSid})`,
+    })
+
+    const pgWriteProbeSnap = this.pgWriteProbe(resolvedId)
+    const updatedTask = this.#formatWorkerTaskRow(
+      db.prepare('SELECT * FROM worker_tasks WHERE id = ?').get(taskRow.id),
+      resolvedId,
+    )
+
+    return {
+      ok: true,
+      engagement_id: resolvedId,
+      worker_task_id: updatedTask.id,
+      previous_session_id: previousSessionId,
+      session_id: realSid,
+      worker_task: updatedTask,
+      pg_write_probe: pgWriteProbeSnap,
+    }
+  }
+
+  /**
    * 保存飞书群机器人 Webhook URL、事件订阅与启用开关配置。
    */
   saveFeishuConfig(arg1 = {}, arg2 = undefined) {
@@ -3885,7 +4217,7 @@ export class RedteamStore {
   /**
    * p2: 实时 PostgreSQL 写表活动探针快照（结合当前靶标库真实行数 + 实时写入缓冲流）。
    */
-  pgWriteProbe(id, preStats = null) {
+  pgWriteProbe(id, preStats = null, preloaded = null) {
     const resolvedId = id || this.activeEngagementId() || 'default'
     const rowStats = Object.assign({}, preStats || {})
     try {
@@ -3913,17 +4245,18 @@ export class RedteamStore {
       rowStats.poc_kb = Number(k.prepare('SELECT COUNT(*) AS n FROM poc').get()?.n ?? 0) || 0
     } catch { /* 忽略 */ }
     try {
-      const wfPath = this.#workflowStatePathOf(resolvedId)
-      if (wfPath && existsSync(wfPath)) {
-        const wf = JSON.parse(readFileSync(wfPath, 'utf8'))
-        if (wf && Array.isArray(wf.nodes)) {
-          rowStats.dag_nodes = wf.nodes.filter((n) => n.status && n.status !== 'pending' && n.status !== 'standby').length
-        }
-        if (wf && Array.isArray(wf.runs)) rowStats.agent_runs = wf.runs.length
+      let wf = preloaded && preloaded.workflowState
+      if (!wf) {
+        const wfPath = this.#workflowStatePathOf(resolvedId)
+        if (wfPath && existsSync(wfPath)) wf = JSON.parse(readFileSync(wfPath, 'utf8'))
       }
+      if (wf && Array.isArray(wf.nodes)) {
+        rowStats.dag_nodes = wf.nodes.filter((n) => n.status && n.status !== 'pending' && n.status !== 'standby').length
+      }
+      if (wf && Array.isArray(wf.runs)) rowStats.agent_runs = wf.runs.length
     } catch { /* 忽略 */ }
 
-    const closedLoop = this.#readClosedLoopState(resolvedId)
+    const closedLoop = (preloaded && preloaded.closedLoop) || this.#readClosedLoopState(resolvedId)
     const cls = closedLoop.closed_loop_stats
     rowStats.plan_goals = closedLoop.plan_goals.length
     rowStats.worker_tasks = closedLoop.worker_tasks.length
@@ -4136,8 +4469,8 @@ export class RedteamStore {
     const nowMs = Date.now()
     try { this.reapExpiredAgentLeases(resolvedId, options) } catch { /* ignore reap errors */ }
     const state = this.#readWorkflowState(resolvedId)
-    const probe = this.pgWriteProbe(resolvedId)
     const closedLoop = this.#readClosedLoopState(resolvedId)
+    const probe = this.pgWriteProbe(resolvedId, null, { workflowState: state, closedLoop })
 
     let steps = []
     let findings = []
@@ -4766,93 +5099,45 @@ export class RedteamStore {
       : ''
     const rawAction = String(actionPayload.action || actionPayload.kind || actionPayload.type || fallbackOp || 'retryNode').trim()
 
-    if (rawAction === 'refine_wish' || rawAction === 'refineUserWish') {
-      const res = this.refineUserWish(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'refine_wish',
-      })
-    }
+    const withEng = Object.assign({}, actionPayload, { engagement_id: resolvedId })
+    const wfResult = (action, res) => Object.assign({}, this.workflowDag(resolvedId), res, {
+      ok: res.ok !== false,
+      action,
+    })
 
-    if (rawAction === 'decompose' || rawAction === 'decomposeUserPrompt') {
-      const res = this.decomposeUserPrompt(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'decompose',
-      })
-    }
-
-    if (rawAction === 'submit_digest' || rawAction === 'submitWorkerDigest') {
-      const res = this.submitWorkerDigest(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'submit_digest',
-      })
-    }
-
-    if (rawAction === 'approve_worker' || rawAction === 'planApproveWorker' || rawAction === 'approveWorkerAndDispatchNext') {
-      const res = this.approveWorkerAndDispatchNext(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'approve_worker',
-      })
+    const directAction = {
+      refine_wish: ['refine_wish', 'refineUserWish'],
+      refineUserWish: ['refine_wish', 'refineUserWish'],
+      decompose: ['decompose', 'decomposeUserPrompt'],
+      decomposeUserPrompt: ['decompose', 'decomposeUserPrompt'],
+      submit_digest: ['submit_digest', 'submitWorkerDigest'],
+      submitWorkerDigest: ['submit_digest', 'submitWorkerDigest'],
+      approve_worker: ['approve_worker', 'approveWorkerAndDispatchNext'],
+      planApproveWorker: ['approve_worker', 'approveWorkerAndDispatchNext'],
+      approveWorkerAndDispatchNext: ['approve_worker', 'approveWorkerAndDispatchNext'],
+      acquire_locks: ['acquire_locks', 'acquireShardLocks'],
+      acquireShardLocks: ['acquire_locks', 'acquireShardLocks'],
+      release_locks: ['release_locks', 'releaseShardLocks'],
+      releaseShardLocks: ['release_locks', 'releaseShardLocks'],
+      update_goal: ['update_goal', 'updateWorkerGoal'],
+      updateWorkerGoal: ['update_goal', 'updateWorkerGoal'],
+      add_worker: ['add_worker', 'addCustomWorkerTask'],
+      addCustomWorkerTask: ['add_worker', 'addCustomWorkerTask'],
+      retry_worker: ['retry_worker', 'retryWorkerTask'],
+      retryWorkerTask: ['retry_worker', 'retryWorkerTask'],
+      bind_worker_session: ['bind_worker_session', 'bindWorkerSession'],
+      bindWorkerSession: ['bind_worker_session', 'bindWorkerSession'],
+    }[rawAction]
+    if (directAction) {
+      return wfResult(directAction[0], this[directAction[1]](withEng))
     }
 
     if (rawAction === 'sync_workers' || rawAction === 'syncHostWorkersToPg') {
-      const res = this.syncHostWorkersToPg(resolvedId, actionPayload.workers || actionPayload.items || [])
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'sync_workers',
-      })
-    }
-
-    if (rawAction === 'acquire_locks' || rawAction === 'acquireShardLocks') {
-      const res = this.acquireShardLocks(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'acquire_locks',
-      })
+      return wfResult('sync_workers', this.syncHostWorkersToPg(resolvedId, actionPayload.workers || actionPayload.items || []))
     }
 
     if (rawAction === 'list_locks' || rawAction === 'listShardLocks') {
-      const locks = this.listShardLocks(resolvedId, actionPayload)
-      return Object.assign({}, this.workflowDag(resolvedId), {
-        ok: true,
-        action: 'list_locks',
-        locks,
-      })
-    }
-
-    if (rawAction === 'release_locks' || rawAction === 'releaseShardLocks') {
-      const res = this.releaseShardLocks(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'release_locks',
-      })
-    }
-
-    if (rawAction === 'update_goal' || rawAction === 'updateWorkerGoal') {
-      const res = this.updateWorkerGoal(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'update_goal',
-      })
-    }
-
-    if (rawAction === 'add_worker' || rawAction === 'addCustomWorkerTask') {
-      const res = this.addCustomWorkerTask(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'add_worker',
-      })
-    }
-
-    if (rawAction === 'retry_worker' || rawAction === 'retryWorkerTask') {
-      const res = this.retryWorkerTask(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: res.ok !== false,
-        action: 'retry_worker',
-      })
+      return wfResult('list_locks', { ok: true, locks: this.listShardLocks(resolvedId, actionPayload) })
     }
 
     if (
@@ -4861,14 +5146,8 @@ export class RedteamStore {
       || rawAction === 'saveFeishuWebhook'
       || rawAction === 'saveFeishu'
     ) {
-      const res = this.saveFeishuConfig(Object.assign({}, actionPayload, { engagement_id: resolvedId }))
       const note = '已保存飞书群聊机器人 Webhook 与事件订阅配置。'
-      return Object.assign({}, this.workflowDag(resolvedId), res, {
-        ok: true,
-        action: 'feishuConfig',
-        note,
-        message: note,
-      })
+      return wfResult('feishuConfig', Object.assign(this.saveFeishuConfig(withEng), { ok: true, note, message: note }))
     }
 
     const state = this.#readWorkflowState(resolvedId)
@@ -5499,6 +5778,7 @@ export class RedteamStore {
       let order = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM score_point').get().n
       for (const point of missing) insert(point, order++)
     }
+    this._seededScoreEngs.add(id)
     if (missing.length === 0 && purgedPoints === 0 && synced === 0) return { seeded: 0 }
     return {
       seeded: missing.length,
@@ -5511,10 +5791,7 @@ export class RedteamStore {
 
   listScorePoints(id, f = {}) {
     const db = this.db(id)
-    /* 每次都跑一次播种：它是幂等的，同时承担三件事 ——
-       ① 空库首次播种；② 新规则/被误删的点自愈补齐；③ 老库把旧默认点标为 legacy（v0.11.0 迁移）。
-       ⚠️ 早先只在"一个得分点都没有"时才调它，于是老库（已有旧点）永远不会被迁移。 */
-    this.seedScorePoints(id)
+    if (!this._seededScoreEngs.has(id)) this.seedScorePoints(id)
     /* 按**分值从低到高**展示（同分保持定义顺序）——用户按分值大小判断先打谁更直观 */
     const rows = db.prepare('SELECT * FROM score_point ORDER BY COALESCE(points, 0) ASC, sort_order ASC, id ASC').all()
     const hits = db.prepare('SELECT * FROM score_hit ORDER BY recorded_at DESC, id DESC').all()
@@ -5879,9 +6156,7 @@ export class RedteamStore {
   /** 记录一次得分（某个得分点在某个目标上被拿下）。 */
   addScoreHit(id, hit = {}) {
     const db = this.db(id)
-    /* 得分点可能还没播种（新建靶标后直接记分）：先跑一次幂等播种，
-       否则会以"score point not found"报错，而真实原因是默认得分点尚未写入。 */
-    this.seedScorePoints(id)
+    if (!this._seededScoreEngs.has(id)) this.seedScorePoints(id)
     let pointId = hit.point_id !== undefined && hit.point_id !== null ? Number(hit.point_id) : null
     /* 按 code 找得分点（最常用）。旧 code 已随旧得分项一起作废（v0.11.1）：
        这里**不做静默改派** —— 改派目标本身可能已不存在，静默吞掉会让用户
@@ -6139,11 +6414,6 @@ export class RedteamStore {
 
   /* ---------- 漏洞 / 凭据 / 访问会话 ---------- */
 
-  /** 兼容别名：记录一条审查发现/漏洞。 */
-  recordFinding(id, v = {}) {
-    return this.addVuln(id, v)
-  }
-
   /** 记录一条漏洞；带 cve 时按 (asset_id, cve, target) 幂等更新。 */
   addVuln(id, v = {}) {
     const db = this.db(id)
@@ -6339,11 +6609,6 @@ export class RedteamStore {
   }
 
   /* ---------- WebShell 与隧道：打的过程中随时可复用的资产 ---------- */
-
-  /** 兼容别名：新增或更新 WebShell。 */
-  upsertWebshell(id, w = {}) {
-    return this.addWebshell(id, w)
-  }
 
   /**
    * 登记一个已上线的 WebShell。同一 url+pass_key 视为同一条，重复登记即刷新。
@@ -9087,8 +9352,9 @@ export class RedteamStore {
     /* 连落盘目录一起删（只在 pocs/ 内按 code 精确删除；删不掉不影响数据一致性） */
     let removedFiles = 0
     try {
-      const dir = join(this.pocsDirOf(), row.code)
-      if (existsSync(dir) && dir.startsWith(this.pocsDirOf())) {
+      const pocsRoot = this.pocsDirOf()
+      const dir = assertPathWithin(join(pocsRoot, row.code), [pocsRoot])
+      if (existsSync(dir)) {
         removedFiles = readdirSync(dir).length
         rmSync(dir, { recursive: true, force: true })
       }
@@ -9749,9 +10015,6 @@ function rpCodeBlock(lang, text) {
   const fence = '`'.repeat(longest)
   return [fence + lang, s, fence]
 }
-function rpStatusLabel(s) {
-  return ({ untested: '未测试', testing: '测试中', tested: '已测试', blocked: '被封禁', abandoned: '已放弃', no_surface: '无攻击面' })[s] || s || '未测试'
-}
 function rpAttackPath(p) {
   const s = String(p === null || p === undefined ? '' : p).replace(/\\/g, '/').trim()
   if (s === '') return ''
@@ -9829,14 +10092,6 @@ function rpCleanHttpBlock(block) {
 function rpValidHttpRequest(text) {
   return rpSplitHttpRequests(text).length > 0
 }
-function rpTokenize(text) {
-  const s = String(text || '')
-  const out = new Set()
-  for (const m of s.matchAll(/[A-Za-z][A-Za-z0-9_.-]{2,}/g)) out.add(m[0].toLowerCase())
-  for (const m of s.matchAll(/[\u4e00-\u9fa5]{2,}/g)) out.add(m[0])
-  for (const m of s.matchAll(/\d+(?:\.\d+)?\s*(?:万|亿|条|行|MB|GB|TB|个|台|张)/g)) out.add(m[0])
-  return Array.from(out).slice(0, 48)
-}
 function rpStepMatchesItem(step, item) {
   const hay = [step.title, step.detail, step.result, step.tool].join(' ').toLowerCase()
   if (hay.trim() === '') return false
@@ -9848,76 +10103,6 @@ function rpStepMatchesItem(step, item) {
   const seg = path.split('/').filter((x) => x.length >= 3)[0]
   if (seg && hay.includes(seg.toLowerCase())) return true
   return false
-}
-function rpVulnTargetMismatch(item) {
-  if (!item.vuln) return false
-  return rpPortConflict([item.vuln.title, item.vuln.cve].join(' '), item.target)
-}
-function rpStepScore(step, tokens, item) {
-  const hay = [step.title, step.detail, step.result, step.tool].join(' ').toLowerCase()
-  let score = 0
-  for (const t of tokens) {
-    const k = String(t).toLowerCase()
-    if (k.length >= 2 && hay.includes(k)) score += k.length >= 4 ? 2 : 1
-  }
-  if (step.stage_code === item.stage_code) score += 2
-  const host = rpHostOfTarget(item.target)
-  if (host !== null && hay.includes(host)) score += 3
-  return score
-}
-function rpSelectSteps(item, max = 3) {
-  const steps = item.steps || []
-  item._conflictSteps = []
-  if (steps.length === 0) return []
-  const picked = []
-  const conflict = []
-  const add = (s) => {
-    if (!s) return
-    if (rpPortConflict([s.title, s.detail, s.result, s.tool].join(' '), item.target)) {
-      if (!conflict.some((x) => x.id === s.id)) conflict.push(s)
-      return
-    }
-    if (!picked.some((x) => x.id === s.id)) picked.push(s)
-  }
-  if (item.step_id !== null && item.step_id !== undefined) {
-    for (const s of steps.filter((x) => x.id === item.step_id)) add(s)
-  }
-  if (item.vuln && item.vuln.id !== null && item.vuln.id !== undefined) {
-    for (const s of steps.filter((x) => x.vuln_id === item.vuln.id)) add(s)
-  }
-  if (item.point_id !== null && item.point_id !== undefined) {
-    for (const s of steps.filter((x) => x.point_id === item.point_id)) add(s)
-  }
-  if (picked.length === 0) {
-    const tokens = rpTokenize([item.evidence, item.gained, item.how, item.point_name, item.target].join(' '))
-    const scored = steps
-      .filter((s) => rpStepMatchesItem(s, item))
-      .map((s) => ({ s, score: rpStepScore(s, tokens, item) }))
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-    for (const x of scored.slice(0, max)) add(x.s)
-  }
-  const source = item.trace && item.trace.step_source ? item.trace.step_source : 'asset'
-  const limit = source === 'asset' ? max : Math.max(max, 5)
-  item._conflictSteps = conflict
-  return picked.slice(0, limit).sort((a, b) => (a.seq === b.seq ? a.id - b.id : (a.seq || 0) - (b.seq || 0)))
-}
-function rpSelectCreds(item, steps) {
-  const list = item.credentials || []
-  if (list.length === 0) return []
-  const host = rpHostOfTarget(item.target)
-  const text = [item.evidence, item.how, item.gained, ...(steps || []).map((s) => [s.title, s.detail, s.result].join(' '))].join(' ')
-  const scored = list.map((c) => {
-    let score = 0
-    const ch = String(c.host || '').toLowerCase()
-    if (c.username && text.includes(String(c.username))) score += 3
-    if (host !== null && ch.includes(host)) score += 2
-    if (c.privilege && text.includes(String(c.privilege))) score += 1
-    if (c.source && text.includes(String(c.source))) score += 1
-    return { c, score }
-  }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score)
-  if (scored.length > 0) return scored.slice(0, 2).map((x) => x.c)
-  return list.length === 1 ? list : []
 }
 function rpReplayOf(item) {
   const allRequests = (item.requests || []).filter((r) => rpValidHttpRequest(r.request))
@@ -9967,149 +10152,6 @@ function rpReplayOf(item) {
     label: mismatch ? '关联报文 Host 与本条目标不一致，已剔除' : '没有留存可复现入口',
     source: 'none', mismatch, reqHost, rejected: mismatch,
   }
-}
-function rpItemDetailLines(item, showSecrets) {
-  const out = []
-  if (item.asset_ip) out.push('- **资产**：`' + item.asset_ip + '`')
-  if (item.gained) out.push('- **拿到**：' + rpClipText(item.gained, 300))
-  if (item.vuln) {
-    out.push('- **利用漏洞**：' + [item.vuln.cve, item.vuln.title].filter(Boolean).join(' ')
-      + (item.vuln_source === 'step' ? '（关联自攻击步骤，非记分时显式填写）' : ''))
-  }
-  if (item.recorded_at) out.push('- **取得时间**：' + String(item.recorded_at).replace('T', ' ').slice(0, 19)
-    + (item.recorded_by ? '（' + item.recorded_by + '）' : ''))
-  if (item.nth_of_point > 1) out.push('- **同类第 ' + item.nth_of_point + ' 次**')
-  if (item.evidence) out.push('- **结果原文**：' + rpClip(item.evidence, 5000))
-  if (item.how) out.push('- **怎么拿到的**：' + rpClipText(item.how, 300))
-  if (item.note) out.push('- **备注**：' + rpClip(item.note, 2000))
-  if ((item.replay_cmd_unfilled || []).length > 0) out.push('- **模板未填占位符**：' + item.replay_cmd_unfilled.join('、'))
-  const steps = item.steps || []
-  if (steps.length > 0) {
-    out.push('- **完整动作记录**（' + steps.length + ' 步）：')
-    for (const [i, s] of steps.entries()) {
-      const meta = [
-        s.agent ? '角色 ' + s.agent : '',
-        s.stage_code ? '阶段 ' + s.stage_code : '',
-        s.inferred ? '按同资产推断' : '',
-        s.recorded_at ? String(s.recorded_at).replace('T', ' ').slice(0, 19) : '',
-      ].filter(Boolean).join(' · ')
-      out.push('  ' + (i + 1) + '. ' + rpClipText(s.title || '(未命名动作)', 160) + (meta ? '（' + meta + '）' : ''))
-      if (s.detail) out.push('     - 说明：' + rpClipText(s.detail, 400))
-      if (s.tool) {
-        out.push('     - 命令：')
-        out.push(...rpCodeBlock('bash', rpClip(s.tool, 20000)).map((l) => '       ' + l))
-      }
-      if (s.result) out.push('     - 结果：' + rpClipText(s.result, 2000))
-      if (s.evidence_ref) out.push('     - 证据文件：`' + rpAttackPath(s.evidence_ref) + '`')
-    }
-  }
-  const creds = item.credentials || []
-  if (creds.length > 0) {
-    out.push('- **凭据（' + creds.length + ' 条，默认脱敏）**：')
-    for (const c of creds) {
-      out.push('  - `' + (c.host || '—') + '` ' + (c.username || '(无用户名)') + ' / ' + (c.secret_type || 'password')
-        + '：' + rpSecretOf(c, showSecrets)
-        + (c.privilege ? ' · 权限 ' + c.privilege : '')
-        + (c.source ? ' · 来源 ' + c.source : '')
-        + (c.tool ? ' · 取得方式 ' + rpOneLine(c.tool, 160) : ''))
-    }
-  }
-  const tunnels = item.tunnels || []
-  if (tunnels.length > 0) {
-    out.push('- **隧道 / 通道**：')
-    for (const t of tunnels) {
-      out.push('  - `' + (t.kind || 'socks5') + ' ' + (t.listen || '') + '` 入口 ' + (t.entry || '未登记')
-        + (t.reach ? ' · 可达 ' + t.reach : '')
-        + ' · 目标侧 ' + (t.entry_kind || '未声明')
-        + (t.legit === false ? ' · 不算跨越边界' : '')
-        + (t.status ? ' · ' + t.status : ''))
-      if (t.command) {
-        out.push(...rpCodeBlock('bash', rpClip(t.command, 8000)).map((l) => '    ' + l))
-      }
-    }
-  }
-  const shells = item.webshells || []
-  if (shells.length > 0) {
-    out.push('- **WebShell**：')
-    for (const w of shells) {
-      out.push('  - `' + (w.url || '') + '` ' + (w.shell_type || 'shell')
-        + (w.pass_key ? ' · 口令/密钥 ' + (showSecrets ? w.pass_key : '••••') : '')
-        + (w.privilege ? ' · 权限 ' + w.privilege : '')
-        + (w.status ? ' · ' + w.status : ''))
-    }
-  }
-  const files = item.attack_files || []
-  if (files.length > 0) {
-    out.push('- **攻击文件（复现路径）**：')
-    for (const f of files) {
-      out.push('  - `' + (f.path || f.name || '') + '`'
-        + (f.kind ? '（' + f.kind + '）' : '')
-        + (f.name && f.path ? ' ' + f.name : '')
-        + (f.description ? '：' + rpClipText(f.description, 160) : ''))
-    }
-  }
-  const reqs = item.requests || []
-  if (reqs.length > 0) {
-    out.push('- **原始请求（' + reqs.length + ' 条）**：')
-    for (const [ri, r] of reqs.entries()) {
-      out.push('  - 请求 ' + (ri + 1) + '：' + (r.label || ((r.method || 'GET') + ' ' + (r.url || '')))
-        + (r.source === 'auto' ? '（自动匹配，需核对）' : '')
-        + (r.status === null || r.status === undefined ? '' : ' · HTTP ' + r.status))
-      out.push(...rpCodeBlock('http', rpClip(r.request || ((r.method || 'GET') + ' ' + (r.url || '') + ' HTTP/1.1'), 20000)).map((l) => '    ' + l))
-      if (r.response) {
-        out.push('    - 响应摘要：')
-        out.push(...rpCodeBlock('http', rpClip(r.response, 1200)).map((l) => '      ' + l))
-      }
-    }
-  }
-  if ((item.gaps || []).length > 0) out.push('- **复现材料缺口**：' + item.gaps.join('；'))
-  if ((item.shots || []).length > 0) {
-    out.push('- **证据截图**：')
-    for (const sh of item.shots) out.push('  - ' + rpOneLine(sh.label || '证据图', 160) + '（`' + (sh.url || '') + '`）')
-  }
-  return out
-}
-
-function rpSimpleResult(item, n = 130) {
-  /* 得分证据（score_hit.evidence）是“这条到底拿到了什么”的第一手记录；
-     vuln.gained 只作兜底，避免把关联漏洞的描述当成这条成果的结果。 */
-  const g = item.evidence || item.gained || item.point_name
-  return rpClipText(g, n)
-}
-function rpReplayState(item) {
-  const r = item._replay
-  if (r.rejected) return 'Host 不符'
-  if (r.crossPort) return '跨端口'
-  if (item._vulnMismatch) return '跨端口关联'
-  if (r.kind === 'http') return r.source === 'linked' ? '有报文' : '自动匹配报文'
-  if (r.kind === 'cli') return '有命令'
-  if (r.kind === 'template') return '仅模板'
-  return '缺入口'
-}
-function rpCredMatchesItem(c, x) {
-  const ch = rpHostOfTarget(c.host)
-  if (ch === null) return false
-  const th = rpHostOfTarget(x.target)
-  if (th !== null && ch === th) return true
-  if (x._asset) {
-    if (ch === String(x._asset.ip || '').toLowerCase()) return true
-    if (ch === String(x._asset.primary_name || '').toLowerCase()) return true
-    for (const n of x._asset.names || []) if (ch === String(n.name || '').toLowerCase()) return true
-  }
-  const text = [x.evidence, x.how, ...(x._steps || []).map((s) => [s.title, s.detail, s.result, s.tool].join(' '))].join(' ').toLowerCase()
-  return text.includes(ch)
-}
-function rpUniqueCreds(list) {
-  const map = new Map()
-  for (const x of list) for (const c of x._creds || []) {
-    if (!rpCredMatchesItem(c, x)) continue
-    if (!map.has(c.id)) map.set(c.id, c)
-  }
-  return Array.from(map.values())
-}
-function rpSecretOf(c, showSecrets) {
-  if (showSecrets) return c.secret_value || '—'
-  return c.secret_value ? '••••' : '—'
 }
 function rpAssetProof(a, list, assets) {
   const names = [a.primary_name, ...(a.names || []).map((n) => n.name)].filter(Boolean)
@@ -10518,238 +10560,4 @@ function renderTemplateReport(report, options = {}) {
     }
   }
   return out.join('\n')
-}
-
-function renderDeliveryReport(store, id, items, targetName, options = {}, summary = {}) {
-  const showSecrets = options.secrets === true
-  const assets = (store.listAssets(id, { limit: 2000 }).items || [])
-  const stats = store.stats(id)
-  const webshells = store.listWebshells(id, { limit: 20 })
-  const tunnels = store.listTunnels(id, { limit: 20 })
-  const assetById = new Map(assets.map((a) => [Number(a.id), a]))
-  const assetByHost = new Map()
-  for (const a of assets) {
-    if (a.ip) assetByHost.set(String(a.ip).toLowerCase(), a)
-    if (a.primary_name) assetByHost.set(String(a.primary_name).toLowerCase(), a)
-    for (const n of a.names || []) if (n.name) assetByHost.set(String(n.name).toLowerCase(), a)
-  }
-  const resolveAsset = (item) => {
-    if (item.asset_id !== null && item.asset_id !== undefined && assetById.has(Number(item.asset_id))) return assetById.get(Number(item.asset_id))
-    const h = rpHostOfTarget(item.target)
-    if (h !== null && assetByHost.has(h)) return assetByHost.get(h)
-    return null
-  }
-  for (const item of items) {
-    item._asset = resolveAsset(item)
-    item._vulnMismatch = rpVulnTargetMismatch(item)
-    /* 边界条目必须有边界证据（入口区/落点区/隔离设备/靶标内网资产）。
-       老数据没有 note 里的【边界证据】标记，报告里明确标“待补”，不再默认当成已证实。 */
-    item._boundaryMissing = /^boundary-/.test(String(item.code || '')) && !/【边界证据】/.test(String(item.note || ''))
-    item._replay = rpReplayOf(item)
-    item._steps = rpSelectSteps(item)
-    item._stepsUnmatched = item._steps.length === 0 && (item.steps || []).length > 0 && (item._conflictSteps || []).length === 0
-    item._creds = rpSelectCreds(item, item._steps)
-  }
-  const groups = new Map()
-  for (const item of items) {
-    const a = item._asset
-    const key = a ? 'asset:' + a.id : (() => {
-      const h = rpHostOfTarget(item.target)
-      return 'host:' + (h || rpOneLine(item.target, 60) || 'unknown')
-    })()
-    if (!groups.has(key)) groups.set(key, { key, asset: a, label: a ? null : (rpHostOfTarget(item.target) || rpOneLine(item.target, 60)), items: [], points: 0 })
-    const g = groups.get(key)
-    g.items.push(item)
-    g.points += Number(item.points) || 0
-  }
-  const groupList = Array.from(groups.values()).sort((a, b) => {
-    if (a.asset && !b.asset) return -1
-    if (!a.asset && b.asset) return 1
-    return b.points - a.points
-  })
-  for (const [gi, g] of groupList.entries()) {
-    g.no = gi + 1
-    g.items.sort((a, b) => (a.chain_no || a.seq || 0) - (b.chain_no || b.seq || 0))
-    g.items.forEach((item, ii) => { item._section = g.no + '.' + (ii + 1) })
-  }
-  const stageOrder = ['internet', 'boundary', 'internal']
-  const stageName = { internet: '互联网资产权限', boundary: '边界突破', internal: '内网资产权限' }
-  const byStage = new Map()
-  for (const st of stageOrder) byStage.set(st, items.filter((x) => x.stage_code === st).sort((a, b) => (a.chain_no || 0) - (b.chain_no || 0)))
-  for (const [si, st] of stageOrder.entries()) {
-    for (const [ii, x] of (byStage.get(st) || []).entries()) {
-      x._scoreNo = '2.' + (si + 1) + '.' + (ii + 1)
-      x._reproNo = '4.' + (si + 1) + '.' + (ii + 1)
-    }
-  }
-  const lines = []
-  const totalPoints = items.reduce((n, x) => n + (Number(x.points) || 0), 0)
-  const assetGroups = groupList.filter((g) => g.asset)
-  const unassigned = groupList.filter((g) => !g.asset)
-  const target = targetName || id
-  lines.push('# ' + target + ' · 工程交付复现报告', '')
-  lines.push('> 靶标：' + target + '　·　生成：' + String(nowIso()).replace('T', ' ').slice(0, 16) + '　·　计分项：' + items.length + ' 项　·　总分：' + totalPoints + ' 分　·　得分资产：' + assetGroups.length + ' 台' + (unassigned.length > 0 ? '（另有 ' + unassigned.length + ' 个未归属/网段条目）' : ''), '')
-  lines.push('> 只列**得分的资产与得分项**；未计分资产、漏洞与完整报文见控制台。凭据默认脱敏，本机查看加 `secrets: true`。', '')
-  const excluded = []
-  if (summary.selfCreatedExcluded) excluded.push('自己注册/自建账号 ' + summary.selfCreatedExcluded + ' 条')
-  if (summary.serviceCappedExcluded) excluded.push('同资产同端口重复的账号/数据库权限 ' + summary.serviceCappedExcluded + ' 条（服务已拿满）')
-  if (summary.disabledExcluded) excluded.push('停用得分点 ' + summary.disabledExcluded + ' 条')
-  if (excluded.length > 0) lines.push('> 未计入：' + excluded.join('；') + '（与面板口径一致）。')
-  lines.push('')
-  /* 一、资产证明 */
-  lines.push('## 一、靶标单位资产证明', '')
-  lines.push('> 证明口径：有 ICP/证书/WHOIS/首页页脚等归属证明 → 靶标直连；仅有域名/标题/同段/隧道可达 → 靶标关联/同段；靶标侧隧道可达 + 内网业务系统 → 靶标内网；供应链/跳板资产单列。强度：强=有 ICP 备案/证书/WHOIS/首页页脚/单位落款等归属证明；中=同段/隧道可达或配置关联；待补=无直接证据（建议补首页/备案截图）。', '')
-  lines.push('| # | 资产 | 归属类型 | 归属证据 | 证明强度 | 得分 |')
-  lines.push('| --- | --- | --- | --- | --- | --- |')
-  for (const [i, g] of assetGroups.entries()) {
-    const p = rpAssetProof(g.asset, g.items, assets)
-    lines.push('| A' + (i + 1) + ' | `' + g.asset.ip + '`' + (g.asset.primary_name ? '（' + rpCell(g.asset.primary_name, 28) + '）' : '') + ' | ' + p.type + ' | ' + rpCell(p.proof, 110) + ' | ' + p.strength + ' | +' + g.points + ' / ' + g.items.length + ' 项 |')
-  }
-  for (const [i, g] of unassigned.entries()) {
-    const label = String(g.label || '')
-    const isCidr = label.includes('/') || /\.0$/.test(label)
-    const isDescriptive = /[\u4e00-\u9fa5]/.test(label) && !/^\d+\.\d+\.\d+\.\d+$/.test(label)
-    const isJump = /VPS|跳板/i.test(label) || (g.items.length > 0 && g.items.every((x) => x.code === 'terminal-access' || String(x.target || '').includes('→')))
-    const type = isCidr ? '跨资产/网段' : isJump ? '跳板/VPS' : isDescriptive ? '描述性 target' : '未关联'
-    const proof = isCidr
-      ? '边界突破条目，按可达网段计分；非单台资产'
-      : isJump
-        ? '演练用跳板/VPS（非靶标单位资产），仅用于承载隧道/终端入口'
-        : isDescriptive
-          ? '按得分项 target 归组，库中无对应资产记录；建议补 asset_id 与归属证明'
-          : '仅按 target 归组，库中无匹配资产记录；需补 asset_id 与归属证明'
-    lines.push('| A' + (assetGroups.length + i + 1) + ' | `' + rpCell(label, 28) + '` | ' + type + ' | ' + proof + ' | 待补 | +' + g.points + ' / ' + g.items.length + ' 项 |')
-  }
-  lines.push('')
-  /* 二、得分汇总 */
-  lines.push('## 二、得分汇总表', '')
-  lines.push('| 阶段 | 计分项 | 得分 | 占比 |')
-  lines.push('| --- | --- | --- | --- |')
-  for (const st of stageOrder) {
-    const list = byStage.get(st) || []
-    const pts = list.reduce((n, x) => n + (Number(x.points) || 0), 0)
-    lines.push('| ' + stageName[st] + ' | ' + list.length + ' | +' + pts + ' | ' + (totalPoints > 0 ? (pts / totalPoints * 100).toFixed(1) : '0.0') + '% |')
-  }
-  lines.push('')
-  lines.push('> 复现状态：有报文=真实关联报文；自动匹配报文=同目标自动匹配，需核对；有命令=关联步骤命令；仅模板=未留存命令；缺入口=无证据；跨端口/跨端口关联=入口或操作端口不是本条目标，需核对；Host 不符=报文目标对不上，已剔除。', '')
-  for (const [si, st] of stageOrder.entries()) {
-    const list = byStage.get(st) || []
-    const pts = list.reduce((n, x) => n + (Number(x.points) || 0), 0)
-    lines.push('### 2.' + (si + 1) + ' ' + stageName[st] + '（' + list.length + ' 项 / +' + pts + ' 分）', '')
-    if (list.length === 0) { lines.push('本阶段无得分项。', ''); continue }
-    lines.push('| # | 得分点 | 分值 | 资产 | 结果 | 复现 |')
-    lines.push('| --- | --- | --- | --- | --- | --- |')
-    for (const x of list) {
-      const asset = x._asset ? x._asset.ip : x.target
-      lines.push('| ' + x._scoreNo + ' | ' + rpCell(x.point_name, 32) + ' | +' + x.points + ' | `' + rpCell(asset, 42) + '` | ' + rpCell(rpSimpleResult(x), 66) + ' | ' + rpReplayState(x) + ' |')
-    }
-    lines.push('')
-  }
-  /* 三、凭据 */
-  lines.push('## 三、账号密码凭据权限汇总表', '')
-  lines.push('> 只列直接用于计分条目的凭据；`••••` 为默认脱敏。完整 ' + (stats.credentials || 0) + ' 条见控制台。', '')
-  for (const [si, st] of stageOrder.entries()) {
-    const list = byStage.get(st) || []
-    lines.push('### 3.' + (si + 1) + ' ' + stageName[st], '')
-    if (list.length === 0) { lines.push('本阶段无得分项。', ''); continue }
-    const creds = rpUniqueCreds(list)
-    if (creds.length === 0) {
-      lines.push('本阶段无新增账号凭据。', '')
-    } else {
-      lines.push('| 资产 | 账号 | 权限 | 来源 | 明文 | 用于 |')
-      lines.push('| --- | --- | --- | --- | --- | --- |')
-      for (const c of creds) {
-        const used = list.filter((x) => (x._creds || []).some((y) => y.id === c.id) && rpCredMatchesItem(c, x)).map((x) => x._scoreNo).slice(0, 5).join('、')
-        lines.push('| `' + rpCell(c.host, 38) + '` | ' + rpCell(c.username || '—', 18) + ' | ' + rpCell(c.privilege || '—', 34) + ' | ' + rpCell(c.source || '—', 28) + ' | ' + rpCell(rpSecretOf(c, showSecrets), 22) + ' | ' + used + ' |')
-      }
-      lines.push('')
-    }
-    if (st === 'boundary') {
-      lines.push('**边界入口（WebShell / 隧道）**', '')
-      const ws = (webshells || []).filter((w) => w.status === 'online' || w.status === undefined).slice(0, 4)
-      const tn = (tunnels || []).filter((t) => t.status === 'active').slice(0, 4)
-      if (ws.length === 0 && tn.length === 0) {
-        lines.push('未登记在线 WebShell / 隧道。', '')
-      } else {
-        lines.push('| 类型 | 入口 | 凭据 / 密钥 | 可达 / 状态 |')
-        lines.push('| --- | --- | --- | --- |')
-        for (const w of ws) {
-          lines.push('| WebShell | `' + rpCell(w.url, 48) + '` | ' + rpCell(w.shell_type || '', 14) + ' / ' + rpCell(showSecrets ? (w.pass_key || '') : (w.pass_key ? '••••' : ''), 18) + ' | ' + rpCell(w.status || '', 10) + ' |')
-        }
-        for (const t of tn) {
-          lines.push('| 隧道 | ' + rpCell(t.kind || '', 12) + ' `' + rpCell(t.listen || '', 28) + '` | ' + rpCell(t.entry_kind || '', 18) + ' | ' + rpCell(t.reach || '', 38) + ' / ' + rpCell(t.status || '', 10) + ' |')
-        }
-        lines.push('')
-      }
-    }
-  }
-  /* 四、复现 */
-  lines.push('## 四、得分点复现', '')
-  lines.push('> 每条只给一条最短复现路径；完整报文 / 命令见控制台。', '')
-  for (const [si, st] of stageOrder.entries()) {
-    const list = byStage.get(st) || []
-    lines.push('### 4.' + (si + 1) + ' ' + stageName[st], '')
-    if (list.length === 0) { lines.push('本阶段无得分项。', ''); continue }
-    for (const x of list) {
-      lines.push('#### ' + x._reproNo + ' ' + x.point_name + '（+' + x.points + ' 分）— `' + rpOneLine(x.target, 70) + '`', '')
-      lines.push('- **结果**：' + rpSimpleResult(x, 240))
-      if (x.confirm && x.confirm.need) lines.push('- **判定**：' + rpClipText(x.confirm.need, 140))
-      lines.push('- **复现**：' + x._replay.label)
-      const r = x._replay
-      if (r.kind === 'http') {
-        const blocks = (r.blocks || []).slice(0, 2)
-        for (const [bi, b] of blocks.entries()) {
-          if (blocks.length > 1) lines.push('请求 ' + (bi + 1) + '/' + blocks.length + '：')
-          lines.push(...rpCodeBlock('http', rpClip(b, 1100)))
-        }
-        const resp = r.primary && r.primary.response ? rpClipText(r.primary.response, 220) : ''
-        if (resp) lines.push('- **预期回显**：', ...rpCodeBlock('http', rpClip(resp, 220)))
-      } else if (r.kind === 'cli') {
-        lines.push(...rpCodeBlock('bash', rpClip(r.command, 900)))
-      } else if (r.kind === 'template') {
-        lines.push(...rpCodeBlock('bash', rpClip(r.command, 700)))
-        lines.push('> 仅模板 / 未留存当日命令，需按目标重放。')
-      } else {
-        lines.push('> 缺复现入口：需补 `score_hit` 的 `command` 或 `vuln_add` 的 `request`。')
-      }
-      /* 完整条目：面板卡片能看到的步骤 / 凭据 / 隧道 / 马 / 攻击文件 / 全部报文 / 缺口，
-         下载的 Markdown 也必须有；只给一条最短路径会导致“页面有、文件里没有”。 */
-      lines.push(...rpItemDetailLines(x, showSecrets))
-      let hasTunnelCmd = false
-      if (st === 'boundary') {
-        const prefix = (String(x.target || '').match(/\d+\.\d+\.\d+/) || [])[0] || ''
-        const allTunnels = (tunnels || []).filter((t) => t.status === 'active' && t.command)
-        const related = allTunnels.filter((t) => (prefix && String(t.reach || '').includes(prefix)) || String(x.target || '').includes(String(t.listen || '')) || String(x.target || '').includes(String(t.reach || '')))
-        const pick = related.length > 0 ? related.slice(0, 1) : []
-        if (pick.length > 0) {
-          hasTunnelCmd = true
-          lines.push('- **隧道建立命令**：')
-          lines.push(...rpCodeBlock('bash', rpClip(pick[0].command, 700)))
-        } else if (/192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\./.test(String(x.target || ''))) {
-          lines.push('> 隧道建立命令未在隧道记录中留存，见控制台「会话隧道」。')
-        }
-      }
-      lines.push('- **证据截图**：' + (x.shots || []).length + ' 张 / 报文 ' + (x.requests || []).length + ' 条 / 步骤 ' + (x._steps || []).length + ' 步')
-      if ((x.shots || []).length > 0) {
-        /* 面板的 ShotStrip 会展示全部代表图（最多 3 张）；下载文件只放第一张会缺内容 */
-        for (const [si, sh] of x.shots.entries()) {
-          lines.push('', '![' + (si === 0 ? '证据' : '证据 ' + (si + 1)) + '](' + (sh.url || '') + ')')
-          lines.push('> ' + rpOneLine(sh.label || '', 140) + (sh.kind === 'card' ? '（记录生成的证据摘录，非现场截图）' : ''))
-        }
-      }
-      if (x._boundaryMissing) lines.push('- **缺口**：边界证据待补——入口区/落点区/隔离设备/实际访问到的靶标内网资产四问不完整；同区隧道只能按 internal 计。')
-      else if (x._vulnMismatch) lines.push('- **缺口**：关联漏洞/入口跨端口，需核对入口与目标的因果关系。')
-      else if (r.rejected) lines.push('- **缺口**：关联报文 Host 与本条目标不一致，已剔除；需改绑。')
-      else if (r.crossPort) lines.push('- **缺口**：跨端口关联，入口/操作端口不是本条目标，需核对。')
-      else if (r.kind === 'template' && hasTunnelCmd) lines.push('- **缺口**：复现模板占位符未填；隧道命令已给出，内网访问命令需补一条实测记录。')
-      else if (r.kind === 'template') lines.push('- **缺口**：仅模板，未留存真实命令；需补。')
-      else if (r.kind === 'none') lines.push('- **缺口**：无复现入口；需补。')
-      lines.push('')
-    }
-  }
-  lines.push('---', '')
-  const cardShots = items.reduce((n, x) => n + (x.shots || []).filter((sh) => sh.kind === 'card').length, 0)
-  if (cardShots > 0) lines.push('> 证据说明：报告中有 ' + cardShots + ' 张为记录生成的证据摘录（非现场截图）；现场截图单独标注。')
-  lines.push('> 本报告只列得分资产与得分项；未计分资产、未利用漏洞、完整证据索引见控制台。')
-  return lines.join('\n')
 }

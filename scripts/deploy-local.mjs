@@ -28,7 +28,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { installPreset, packagePaths } from '../packages/redteam-bundle/lib/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -133,7 +133,7 @@ for (const profile of ordered) {
   const entry = join(installedRoot, 'lib', 'index.js')
   if (!existsSync(entry)) continue
   /* 软链到仓库的安装（开发态）用仓库路径反而更好（改源码即时生效）；真实拷贝的安装用包内路径 */
-  const mod = await import(entry)
+  const mod = await import(pathToFileURL(entry).href)
   presetResult = mod.installPreset({ force: true, log: (msg) => console.log('   [' + profile + '] ' + msg) })
   console.log(`   [${profile}] 技能目录将写成：${presetResult.skillsDir}`)
   break

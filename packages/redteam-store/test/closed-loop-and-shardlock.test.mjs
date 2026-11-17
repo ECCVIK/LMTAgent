@@ -24,6 +24,42 @@ import {
   interpolatePgParams,
   translateSqlToPg,
 } from '../lib/pg-engine.js'
+import {
+  DEFAULT_MAX_AGENTS,
+  MAX_AGENTS_LIMIT,
+  DEFAULT_THINKING_EFFORT,
+  VALID_THINKING_EFFORTS,
+  DEFAULT_MAX_DEPTH,
+  MAX_DEPTH_LIMIT,
+  DEFAULT_LEASE_TTL_MS,
+  DEFAULT_AI_PLANNER,
+  VALID_PLANNER_REASONING_EFFORTS,
+  DEFAULT_DISPATCH_POLICY,
+  DEFAULT_UI_PREFERENCES,
+  writeSettings,
+  clampMaxAgents,
+  normalizeThinkingEffort,
+  clampMaxDepth,
+  maxAgentsOf,
+  maxAgentsSourceOf,
+  thinkingEffortOf,
+  maxDepthOf,
+  saveMaxAgents,
+  saveThinkingEffort,
+  saveMaxDepth,
+  savePgUrl,
+  normalizeShardPattern as normalizeSettingsShardPattern,
+  detectShardConflicts,
+  normalizeAiPlannerConfig,
+  normalizeDispatchPolicy,
+  normalizeUiPreferences,
+  aiPlannerConfigOf,
+  dispatchPolicyOf,
+  uiPreferencesOf,
+  maskPgUrl,
+  getUnifiedSettings,
+  saveUnifiedSettings,
+} from '../lib/settings.js'
 
 let pass = 0
 let fail = 0
@@ -512,6 +548,358 @@ try {
   ok(
     probeTest.engagements.size <= 64 && !probeTest.engagements.has('eng-0') && probeTest.engagements.has('eng-79'),
     `PgWriteActivityProbe.engagements 严格限制在 64 个槽位以内并淘汰最旧条目 (当前 ${probeTest.engagements.size})`,
+  )
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     9. settings.js 统一配置读写、边界钳制、pgUrl 脱敏与兼容性校验
+     ═══════════════════════════════════════════════════════════════════════ */
+  console.log('— 9. settings.js getUnifiedSettings / saveUnifiedSettings / maskPgUrl 回归')
+  const settingsRoot = join(root, 'unified-settings-root')
+  const emptyEnv = {}
+
+  ok(
+    DEFAULT_MAX_AGENTS === 6
+      && MAX_AGENTS_LIMIT === 12
+      && DEFAULT_THINKING_EFFORT === 'low'
+      && VALID_THINKING_EFFORTS.length === 3
+      && DEFAULT_MAX_DEPTH === 3
+      && MAX_DEPTH_LIMIT === 5
+      && DEFAULT_LEASE_TTL_MS === 120_000
+      && typeof writeSettings === 'function'
+      && typeof clampMaxAgents === 'function'
+      && typeof normalizeThinkingEffort === 'function'
+      && typeof clampMaxDepth === 'function'
+      && typeof maxAgentsOf === 'function'
+      && typeof maxAgentsSourceOf === 'function'
+      && typeof thinkingEffortOf === 'function'
+      && typeof maxDepthOf === 'function'
+      && typeof saveMaxAgents === 'function'
+      && typeof saveThinkingEffort === 'function'
+      && typeof saveMaxDepth === 'function'
+      && typeof savePgUrl === 'function'
+      && typeof normalizeSettingsShardPattern === 'function'
+      && typeof detectShardConflicts === 'function',
+    'settings.js 完整保留原有全部导出符号',
+  )
+
+  ok(
+    DEFAULT_AI_PLANNER.modelMode === 'follow_session'
+      && DEFAULT_AI_PLANNER.timeoutMs === 60000
+      && VALID_PLANNER_REASONING_EFFORTS.join(',') === 'none,low,medium,high'
+      && DEFAULT_DISPATCH_POLICY.dispatchMode === 'hybrid_auto'
+      && DEFAULT_DISPATCH_POLICY.subagentProvider === 'spawn'
+      && DEFAULT_UI_PREFERENCES.defaultViewMode === 'novice'
+      && DEFAULT_UI_PREFERENCES.defaultTreeDirection === 'horizontal',
+    'settings.js 默认常量与枚举值精确对齐契约',
+  )
+
+  ok(
+    maskPgUrl('postgres://alice:s3cr3tPass@db.internal:5432/redteam') === 'postgres://alice:****@db.internal:5432/redteam'
+      && maskPgUrl('postgresql://bob:p@ss:word@10.0.0.2:5432/db?sslmode=require') === 'postgresql://bob:****@10.0.0.2:5432/db?sslmode=require'
+      && maskPgUrl('postgres://alice@db.internal:5432/redteam') === 'postgres://alice@db.internal:5432/redteam'
+      && maskPgUrl('') === '',
+    'maskPgUrl 精准将口令脱敏为 **** 且保留无密码 URL 与查询参数',
+  )
+
+  const initialUnified = getUnifiedSettings(settingsRoot, emptyEnv)
+  ok(
+    initialUnified.maxAgents === 6
+      && initialUnified.maxAgentsSource === 'default'
+      && initialUnified.maxDepth === 3
+      && initialUnified.thinkingEffort === 'low'
+      && initialUnified.pgUrlConfigured === false
+      && initialUnified.pgUrlMasked === ''
+      && initialUnified.aiPlanner.modelMode === 'follow_session'
+      && initialUnified.dispatchPolicy.dispatchMode === 'hybrid_auto'
+      && initialUnified.uiPreferences.defaultViewMode === 'novice',
+    'getUnifiedSettings 在无 settings.json 时返回完整默认归一化配置',
+  )
+
+  const longConstraints = 'C'.repeat(4500)
+  const savedUnified1 = saveUnifiedSettings(settingsRoot, {
+    maxAgents: 99,
+    maxDepth: 99,
+    thinkingEffort: 'none',
+    pgUrl: 'postgresql://secuser:topSecret99@127.0.0.1:5432/lmt_prod?sslmode=require',
+    aiPlanner: {
+      modelMode: 'custom',
+      provider: '  openai  ',
+      model: '  gpt-5-codex  ',
+      reasoningEffort: 'none',
+      timeoutMs: 5000,
+      scanRepoContext: false,
+      customConstraints: longConstraints,
+    },
+    dispatchPolicy: {
+      dispatchMode: 'captain_only',
+      subagentProvider: 'fork',
+      autoWakeOnApprove: false,
+    },
+    uiPreferences: {
+      defaultViewMode: 'expert',
+      defaultTreeDirection: 'vertical',
+    },
+  }, emptyEnv)
+
+  ok(
+    savedUnified1.maxAgents === 12
+      && savedUnified1.maxAgentsSource === 'settings'
+      && savedUnified1.maxDepth === 5
+      && savedUnified1.thinkingEffort === 'low',
+    'saveUnifiedSettings 正确钳制 maxAgents(<=12)、maxDepth(<=5) 并收敛 thinkingEffort=none->low',
+  )
+  ok(
+    savedUnified1.pgUrlConfigured === true
+      && savedUnified1.pgUrlMasked === 'postgresql://secuser:****@127.0.0.1:5432/lmt_prod?sslmode=require'
+      && !savedUnified1.pgUrlMasked.includes('topSecret99'),
+    'saveUnifiedSettings 支持写入 pgUrl 且 getUnifiedSettings 仅返回脱敏掩码串',
+  )
+  ok(
+    savedUnified1.aiPlanner.modelMode === 'custom'
+      && savedUnified1.aiPlanner.provider === 'openai'
+      && savedUnified1.aiPlanner.model === 'gpt-5-codex'
+      && savedUnified1.aiPlanner.reasoningEffort === 'none'
+      && savedUnified1.aiPlanner.timeoutMs === 15000
+      && savedUnified1.aiPlanner.scanRepoContext === false
+      && savedUnified1.aiPlanner.customConstraints.length === 4000,
+    'aiPlanner 正确执行 trim、reasoningEffort=none 保留、timeoutMs 下界钳制 15000 与 customConstraints 4000 字截断',
+  )
+  ok(
+    savedUnified1.dispatchPolicy.dispatchMode === 'captain_only'
+      && savedUnified1.dispatchPolicy.subagentProvider === 'fork'
+      && savedUnified1.dispatchPolicy.autoWakeOnApprove === false
+      && savedUnified1.uiPreferences.defaultViewMode === 'expert'
+      && savedUnified1.uiPreferences.defaultTreeDirection === 'vertical',
+    'dispatchPolicy 与 uiPreferences 持久化并正确读回',
+  )
+
+  const savedUnified2 = saveUnifiedSettings(settingsRoot, {
+    maxAgents: 0,
+    maxDepth: 0,
+    aiPlanner: { timeoutMs: 999999, reasoningEffort: 'extreme' },
+    dispatchPolicy: { dispatchMode: 'invalid_mode', subagentProvider: 'invalid_prov' },
+    uiPreferences: { defaultViewMode: 'alien', defaultTreeDirection: 'diagonal' },
+  }, emptyEnv)
+  ok(
+    savedUnified2.maxAgents === 1
+      && savedUnified2.maxDepth === 1
+      && savedUnified2.aiPlanner.timeoutMs === 180000
+      && savedUnified2.aiPlanner.reasoningEffort === 'low'
+      && savedUnified2.aiPlanner.provider === 'openai'
+      && savedUnified2.aiPlanner.model === 'gpt-5-codex'
+      && savedUnified2.dispatchPolicy.dispatchMode === 'hybrid_auto'
+      && savedUnified2.dispatchPolicy.subagentProvider === 'spawn'
+      && savedUnified2.dispatchPolicy.autoWakeOnApprove === false
+      && savedUnified2.uiPreferences.defaultViewMode === 'novice'
+      && savedUnified2.uiPreferences.defaultTreeDirection === 'horizontal',
+    'saveUnifiedSettings 部分更新保留已有字段并正确钳制下界/上界及非法枚举回退',
+  )
+
+  const clearedPg = saveUnifiedSettings(settingsRoot, { pgUrl: null }, emptyEnv)
+  ok(
+    clearedPg.pgUrlConfigured === false && clearedPg.pgUrlMasked === '',
+    'saveUnifiedSettings({ pgUrl: null }) 按 savePgUrl 语义清除 pgUrl',
+  )
+
+  let invalidPgThrew = false
+  try {
+    saveUnifiedSettings(settingsRoot, { pgUrl: 'mysql://user:pass@localhost/db' }, emptyEnv)
+  } catch {
+    invalidPgThrew = true
+  }
+  ok(invalidPgThrew === true, 'saveUnifiedSettings 对非 postgres(ql):// 连接串抛出校验异常')
+
+  const directPlanner = aiPlannerConfigOf(settingsRoot, emptyEnv)
+  const directPolicy = dispatchPolicyOf(settingsRoot, emptyEnv)
+  const directUi = uiPreferencesOf(settingsRoot, emptyEnv)
+  const normBadPlanner = normalizeAiPlannerConfig({ modelMode: 'invalid', timeoutMs: 'abc', scanRepoContext: 'false' })
+  const normBadPolicy = normalizeDispatchPolicy({ dispatchMode: 'x', subagentProvider: 'y', autoWakeOnApprove: '0' })
+  const normBadUi = normalizeUiPreferences({ defaultViewMode: 'z', defaultTreeDirection: 'w' })
+  ok(
+    directPlanner.provider === 'openai'
+      && directPolicy.autoWakeOnApprove === false
+      && directUi.defaultViewMode === 'novice'
+      && normBadPlanner.modelMode === 'follow_session'
+      && normBadPlanner.timeoutMs === 60000
+      && normBadPlanner.scanRepoContext === false
+      && normBadPolicy.dispatchMode === 'hybrid_auto'
+      && normBadPolicy.subagentProvider === 'spawn'
+      && normBadPolicy.autoWakeOnApprove === false
+      && normBadUi.defaultViewMode === 'novice'
+      && normBadUi.defaultTreeDirection === 'horizontal',
+    'aiPlannerConfigOf / dispatchPolicyOf / uiPreferencesOf 与 normalize* helper 行为一致',
+  )
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     10. decomposeUserPrompt require_ai 拒绝静态模板 & AI 结构化 goals 写入
+     ═══════════════════════════════════════════════════════════════════════ */
+  console.log('— 10. decomposeUserPrompt require_ai:true 门控与真实 AI goals 落库')
+  const aiEng = store.openEngagement('v022-ai-planner-test')
+  const aiEngId = aiEng.id
+  const aiDb = store.db(aiEngId)
+
+  const rejectedNoGoals = store.decomposeUserPrompt(aiEngId, {
+    wish: '构建分布式任务队列',
+    require_ai: true,
+  })
+  const rejectedEmptyGoals = dispatch(store, {
+    op: 'decomposeUserPrompt',
+    engagement_id: aiEngId,
+    wish: '构建分布式任务队列',
+    require_ai: true,
+    goals: [{}],
+  })
+  const goalsCountAfterReject = aiDb.prepare('SELECT COUNT(*) AS n FROM plan_goals').get().n
+  const tasksCountAfterReject = aiDb.prepare('SELECT COUNT(*) AS n FROM worker_tasks').get().n
+  ok(
+    rejectedNoGoals.ok === false
+      && rejectedNoGoals.requires_llm === true
+      && rejectedNoGoals.error === '未提供 AI 拆解目标（需要真实 LLM 调用生成蓝图）'
+      && rejectedEmptyGoals.ok === false
+      && rejectedEmptyGoals.requires_llm === true
+      && Number(goalsCountAfterReject) === 0
+      && Number(tasksCountAfterReject) === 0,
+    'require_ai:true 且无有效非空 goals 时直接拒绝并返回 requires_llm:true，绝不写入静态模板',
+  )
+
+  const aiGoalsPayload = {
+    wish: '实现统一设置中心与真实会话绑定闭环',
+    require_ai: true,
+    goals: [
+      {
+        wave: 1,
+        role: 'assess',
+        title: 'Store 契约与设置持久化',
+        assigned_goal: '在 settings.js 与 core.js 实现统一设置与 bindWorkerSession',
+        files_owned: ['packages/redteam-store/lib/settings.js', 'packages/redteam-store/lib/core.js'],
+        acceptance_criteria: ['getUnifiedSettings 返回完整结构', 'bindWorkerSession 精准更新 session_id'],
+      },
+      {
+        wave: 'wave-2',
+        role: 'exploit',
+        title: 'UI 设置面板集成',
+        assigned_goal: '渲染设置抽屉与 AI Planner 配置表单',
+        files_owned: ['packages/redteam-ui/lib/**'],
+        acceptance_criteria: ['支持 custom 模型模式切换', '掩码展示 pgUrl'],
+      },
+    ],
+  }
+  const aiDecomp = store.decomposeUserPrompt(aiEngId, aiGoalsPayload)
+  ok(
+    aiDecomp.ok === true
+      && aiDecomp.source === 'ai'
+      && aiDecomp.plan_goals.length === 2
+      && aiDecomp.worker_tasks.length === 2
+      && aiDecomp.plan_goals[0].wave === 'wave-1'
+      && aiDecomp.plan_goals[0].title === 'Store 契约与设置持久化'
+      && aiDecomp.worker_tasks[0].worker_role === 'assess'
+      && aiDecomp.worker_tasks[0].assigned_goal === '在 settings.js 与 core.js 实现统一设置与 bindWorkerSession'
+      && aiDecomp.worker_tasks[0].files_owned.length === 2
+      && aiDecomp.worker_tasks[0].acceptance_criteria.length === 2
+      && aiDecomp.shard_locks.length === 3,
+    'decomposeUserPrompt 接收结构化 AI payload.goals 并正确写入 plan_goals / worker_tasks / shard_locks',
+  )
+
+  const fallbackAllowed = store.decomposeUserPrompt({
+    engagement_id: aiEngId,
+    wish: '验证显式静态兜底开关',
+    allow_static_fallback: true,
+  })
+  ok(
+    fallbackAllowed.ok === true && fallbackAllowed.source === 'static_fallback' && fallbackAllowed.goals.length === 4,
+    '显式 allow_static_fallback:true 时允许走离线兜底模板',
+  )
+
+  /* ═══════════════════════════════════════════════════════════════════════
+     11. bindWorkerSession 精准绑定真实 session_id 与 PG 探针记录
+     ═══════════════════════════════════════════════════════════════════════ */
+  console.log('— 11. bindWorkerSession 按 wt-<id>/数字id/旧session_id/worker_name 绑定真实会话')
+  const [aiTask1, aiTask2] = aiDecomp.worker_tasks
+  aiDb.prepare('UPDATE worker_tasks SET error_detail = ? WHERE id = ?').run('stale_dispatch_error', aiTask1.id)
+
+  const bindById = store.bindWorkerSession(aiEngId, aiTask1.id, 'real-dsh-session-001', {
+    status: 'running',
+    dispatched_at: '2026-11-17T10:15:00.000Z',
+    error_detail: '',
+  })
+  ok(
+    bindById.ok === true
+      && bindById.session_id === 'real-dsh-session-001'
+      && bindById.worker_task.session_id === 'real-dsh-session-001'
+      && bindById.worker_task.status === 'running'
+      && bindById.worker_task.dispatched_at === '2026-11-17T10:15:00.000Z'
+      && bindById.worker_task.error_detail === ''
+      && bindById.pg_write_probe.recent_events.some((e) => String(e.summary || '').includes('BIND worker_tasks')),
+    'bindWorkerSession 按 task id 精准更新 session_id / status / dispatched_at / error_detail 并触发 pgWriteProbe 记录',
+  )
+
+  const bindByOldSession = dispatch(store, {
+    op: 'bindWorkerSession',
+    engagement_id: aiEngId,
+    workerRef: aiTask2.session_id,
+    realSessionId: 'real-dsh-session-002',
+    status: 'running',
+    error_detail: '',
+  })
+  ok(
+    bindByOldSession.ok === true && bindByOldSession.worker_task.id === aiTask2.id && bindByOldSession.session_id === 'real-dsh-session-002',
+    'dispatch(bindWorkerSession) 支持按旧 session_id 精准绑定新真实 session_id',
+  )
+
+  const bindByWorkerName = await dispatchAsync(store, {
+    op: 'bindWorkerSession',
+    engagement_id: aiEngId,
+    worker_name: aiTask2.worker_name,
+    real_session_id: 'real-dsh-session-002-v2',
+  })
+  ok(
+    bindByWorkerName.ok === true
+      && bindByWorkerName.worker_task.id === aiTask2.id
+      && bindByWorkerName.worker_task.session_id === 'real-dsh-session-002-v2',
+    'dispatchAsync(bindWorkerSession) 支持按 worker_name 精准更新 session_id',
+  )
+
+  /* 验证数字 id 与 wt-<num> 双向匹配 */
+  aiDb.prepare(`
+    INSERT INTO worker_tasks (
+      id, engagement_id, goal_id, session_id, worker_name, worker_role,
+      wave, ui_priority, priority_weight, tags_json, files_owned_json, assigned_goal,
+      status, approval_state, next_goal, error_detail, tool_calls, turns, created_at, updated_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+    '777',
+    aiEngId,
+    aiDecomp.plan_goals[0].id,
+    'sess-num-777',
+    'numeric-worker-777',
+    'qa',
+    'wave-4',
+    'P1',
+    80,
+    '[]',
+    '[]',
+    '测试数字 id 绑定',
+    'queued',
+    'working',
+    '',
+    'old_err',
+    0,
+    0,
+    '2026-11-17T10:00:00.000Z',
+    '2026-11-17T10:00:00.000Z',
+  )
+  const bindWtPrefixForNum = store.bindWorkerSession(aiEngId, 'wt-777', 'real-num-sess-777', {
+    status: 'running',
+    error_detail: '',
+  })
+  const bindMissingRef = store.bindWorkerSession(aiEngId, 'wt-does-not-exist-999', 'real-sess-none')
+  ok(
+    bindWtPrefixForNum.ok === true
+      && String(bindWtPrefixForNum.worker_task.id) === '777'
+      && bindWtPrefixForNum.worker_task.session_id === 'real-num-sess-777'
+      && bindWtPrefixForNum.worker_task.error_detail === ''
+      && bindMissingRef.ok === false,
+    'bindWorkerSession 支持 wt-<数字> 匹配数字主键行，并对不存在引用优雅返回 ok:false',
   )
 
   store.close()

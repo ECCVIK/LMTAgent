@@ -56,7 +56,13 @@ const chunks = files.map((file) => {
     console.error(`[assemble-client] Empty source module: ${file}`)
     process.exit(1)
   }
-  return raw
+  // 仅剥离独立成行的 JS 块注释，不触碰字符串字面量与行内逻辑
+  const cleaned = raw
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\/[ \t]*$/gm, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimEnd()
+  return cleaned
 })
 
 const assembled = chunks.join('\n\n') + '\n'

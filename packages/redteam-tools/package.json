@@ -1,6 +1,6 @@
 {
   "name": "dsh-redteam-tools",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "private": true,
   "description": "LMTAgent 智能体工具集：会话工作台绑定、闭环目标拆解与摘要压缩、ShardLock 排他锁与角色技能库",
   "type": "module",

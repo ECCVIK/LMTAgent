@@ -56,15 +56,27 @@ function createRealStore(rootDir) {
 /**
  * 构造轻量 Cordis 风格插件宿主模拟（捕获 routes、effects、event listeners）
  */
-function createMockPluginHost({ store, sessionsSvc = null, subagentsSvc = null, tokenMeterSvc = null }) {
+function createMockPluginHost({
+  store,
+  sessionsSvc = null,
+  subagentsSvc = null,
+  tokenMeterSvc = null,
+  llmSvc = null,
+  agentDefaultModelSvc = null,
+  agentsSvc = null,
+}) {
   const routes = new Map()
   const disposers = []
   const bus = new EventEmitter()
 
   const services = {
+    redteam: store,
     sessions: sessionsSvc,
     subagents: subagentsSvc,
     tokenMeter: tokenMeterSvc,
+    llm: llmSvc,
+    agentDefaultModel: agentDefaultModelSvc,
+    agents: agentsSvc,
   }
 
   const ctx = {
@@ -691,69 +703,330 @@ async function main() {
           openEngAlias.status === 200 && (openEngAlias.json?.engagement?.id === 'eng-wish-demo' || store.activeEngagementId() === 'eng-wish-demo'),
         ))
 
-        /* refineAndDecomposeWish：preview_only: true 零写库 + 03-wish-wizard 字段对齐 */
-        const previewRes = await host.callApi({
-          op: 'refineAndDecomposeWish',
+        /* (a) 无 llm 服务时绝不静默回退假成功 */
+        const noLlmClarifyRes = await host.callApi({
+          op: 'clarifyWishWithAI',
           engagement: 'eng-wish-demo',
           prompt: '构建实时多智能体架构交付看板并支持飞书机器人通知',
-          template: 'fullstack',
-          preview_only: true,
         })
-        const dagAfterPreview = store.workflowDag('eng-wish-demo')
-        check('refineAndDecomposeWish(preview_only: true) 返回可编辑波次与 refined_prompt，且数据库零写入', Boolean(
-          previewRes.json?.ok === true
-          && previewRes.json?.preview_only === true
-          && typeof previewRes.json?.refined_prompt === 'string'
-          && previewRes.json.refined_prompt.length > 0
-          && Array.isArray(previewRes.json?.goals)
-          && previewRes.json.goals.length >= 4
-          && typeof previewRes.json.goals[0].wave === 'number'
-          && (dagAfterPreview.worker_tasks || []).length === 0,
+        check('无 DSH llm 服务时 clarifyWishWithAI 明确返回 ok=false & llm_unavailable=true', Boolean(
+          noLlmClarifyRes.json?.ok === false && noLlmClarifyRes.json?.llm_unavailable === true,
         ))
 
-        /* refineAndDecomposeWish(preview_only: false) 落库自定义 goals（含数字 wave 与 assigned_goal） */
-        const commitWishRes = await host.callApi({
+        const noLlmDecomposeRes = await host.callApi({
           op: 'refineAndDecomposeWish',
           engagement: 'eng-wish-demo',
           prompt: '构建实时多智能体架构交付看板并支持飞书机器人通知',
-          preview_only: false,
-          goals: [
-            {
-              wave: 1,
-              role: 'recon',
-              title: 'Wave 1 · 需求边界测绘',
-              assigned_goal: '梳理核心用户旅程与前后端接口字段',
-              files_owned: ['docs/prd.md'],
-            },
-            {
-              wave: 2,
-              role: 'assess',
-              title: 'Wave 2 · 分片契约冻结',
-              assigned_goal: '锁定独占文件分片锁并定义测试验收基准',
-              files_owned: ['docs/contract.md'],
-            },
-            {
-              wave: 3,
-              role: 'exploit',
-              title: 'Wave 3 · 后端桥接实现',
-              assigned_goal: '实现 SSE 推送与增量 JSONL 尾随读取',
-              files_owned: ['src/bridge.js'],
-            },
-            {
-              wave: 4,
-              role: 'qa',
-              title: 'Wave 4 · 回归门禁核验',
-              assigned_goal: '编写无外部依赖自动化回归套件',
-              files_owned: ['test/bridge.test.mjs'],
-            },
-          ],
+          preview_only: true,
         })
-        check('refineAndDecomposeWish(preview_only: false) 持久化波次目标、assigned_goal 与 files_owned', Boolean(
-          commitWishRes.json?.ok === true
-          && Array.isArray(commitWishRes.json?.worker_tasks)
-          && commitWishRes.json.worker_tasks.length === 4
-          && commitWishRes.json.worker_tasks.some((t) => t.wave === 'wave-3' && String(t.assigned_goal || '').includes('SSE 推送')),
+        const dagAfterNoLlm = store.workflowDag('eng-wish-demo')
+        check('无 DSH llm 服务时 refineAndDecomposeWish 明确返回 llm_unavailable=true 绝不伪造拆解或写库', Boolean(
+          noLlmDecomposeRes.json?.ok === false
+          && noLlmDecomposeRes.json?.llm_unavailable === true
+          && (dagAfterNoLlm.worker_tasks || []).length === 0,
         ))
+
+        /* (b)/(c)/(d) 注入 Mock llm / agentDefaultModel / agents / subagents 验证 AI 澄清拆解、方案 A 真实拉起与设置持久化 */
+        const llmCalls = []
+        const aiFollowups = []
+        const aiActivations = []
+        const aiQueuedPrompts = []
+
+        const wishRootSessionObj = {
+          id: 'root-ws-wish',
+          header: { id: 'root-ws-wish', title: 'AI 拆解根会话', cwd: wsDir },
+        }
+        const wishRootAgent = {
+          id: 'root-ws-wish',
+          options: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'low' },
+          session: wishRootSessionObj,
+          followup(msg) { aiFollowups.push(msg) },
+        }
+        const wishSessionsMap = new Map([['root-ws-wish', wishRootSessionObj]])
+        const wishSessionsSvc = {
+          list: () => Array.from(wishSessionsMap.values()),
+          get: (id) => wishSessionsMap.get(id) || null,
+        }
+        const wishAgentsSvc = {
+          get: (id) => (id === 'root-ws-wish' ? wishRootAgent : null),
+        }
+        const wishDefaultModelSvc = {
+          currentSelection: () => ({ provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'low' }),
+        }
+        const wishLlmSvc = {
+          listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
+          listModels: async (pid) => (pid === 'deepseek' ? [{ id: 'deepseek-chat', name: 'DeepSeek V3' }] : []),
+          prepareCall: async ({ provider, model, maxTokens }, _signal, applyControls) => {
+            const controls = applyControls
+              ? applyControls({}, { id: model, reasoning: { efforts: [{ id: 'low' }, { id: 'medium' }, { id: 'high' }] } })
+              : {}
+            return {
+              config: { provider, model, maxTokens, ...controls },
+              async *stream(options) {
+                llmCalls.push({
+                  provider: options.provider,
+                  model: options.model,
+                  reasoningEffort: options.reasoningEffort,
+                  system: String(options.system || ''),
+                  prompt: String(options.messages?.[0]?.content?.[0]?.text || ''),
+                })
+                const sys = String(options.system || '')
+                const jsonPayload = sys.includes('规划分析师')
+                  ? JSON.stringify({
+                      detected_context: '检测到 Node.js 多工作区工程上下文',
+                      questions: [
+                        {
+                          id: 'q1',
+                          question: '请确认飞书通知触发范围？',
+                          multi: false,
+                          options: [{ label: '节点完成 + 门禁告警 (推荐)', value: '开启节点完成与门禁告警通知' }],
+                        },
+                      ],
+                    })
+                  : JSON.stringify({
+                      project_name: '实时多智能体交付看板',
+                      refined_prompt: '构建实时多智能体架构交付看板，支持 4-Wave 分片调度与飞书机器人通知。',
+                      summary: 'AI Planner 已规划 4-Wave 严格 File-Disjoint Sharding 蓝图',
+                      clarifications: ['已确认节点完成与门禁告警通知策略'],
+                      deliverables: ['SSE 增量桥接层', '回归门禁测试套件'],
+                      goals: [
+                        {
+                          wave: 1,
+                          role: 'recon',
+                          title: 'Wave 1 · 需求边界测绘',
+                          assigned_goal: '梳理核心用户旅程与前后端接口字段',
+                          files_owned: ['docs/prd.md'],
+                          acceptance_criteria: '输出接口字段表',
+                        },
+                        {
+                          wave: 2,
+                          role: 'assess',
+                          title: 'Wave 2 · 分片契约冻结',
+                          assigned_goal: '锁定独占文件分片锁并定义测试验收基准',
+                          files_owned: ['docs/contract.md'],
+                          acceptance_criteria: '无重叠文件分片表',
+                        },
+                        {
+                          wave: 3,
+                          role: 'exploit',
+                          title: 'Wave 3 · 后端桥接实现',
+                          assigned_goal: '实现 SSE 推送与增量 JSONL 尾随读取',
+                          files_owned: ['src/bridge.js'],
+                          acceptance_criteria: 'SSE 事件推流正常',
+                        },
+                        {
+                          wave: 4,
+                          role: 'qa',
+                          title: 'Wave 4 · 回归门禁核验',
+                          assigned_goal: '编写无外部依赖自动化回归套件',
+                          files_owned: ['test/bridge.test.mjs'],
+                          acceptance_criteria: '单测全绿',
+                        },
+                      ],
+                    })
+                const mid = Math.floor(jsonPayload.length / 2)
+                yield { type: 'text-delta', index: 0, text: jsonPayload.slice(0, mid) }
+                yield { type: 'text-delta', index: 0, text: jsonPayload.slice(mid) }
+                yield { type: 'block-end', index: 0, block: { type: 'text', text: jsonPayload } }
+                yield { type: 'finish', reason: { kind: 'stop' } }
+              },
+            }
+          },
+        }
+        const wishSubagentsSvc = {
+          startActivation: async (spec) => {
+            aiActivations.push(spec)
+            const cid = `child-dsh-w-${aiActivations.length}`
+            wishSessionsMap.set(cid, {
+              id: cid,
+              header: { id: cid, parentSession: 'root-ws-wish', title: spec.label || cid, cwd: wsDir },
+            })
+            return { childId: cid }
+          },
+          queuePrompt: async (parent, childId, content) => {
+            aiQueuedPrompts.push({
+              parentId: parent && parent.id,
+              childId,
+              text: String(content?.[0]?.text || ''),
+            })
+            return { ok: true }
+          },
+          listChildren: async () => aiActivations.map((s, idx) => ({
+            id: `child-dsh-w-${idx + 1}`,
+            label: s.label,
+            status: 'running',
+          })),
+        }
+
+        const aiDispatchHost = createMockPluginHost({
+          store,
+          sessionsSvc: wishSessionsSvc,
+          subagentsSvc: wishSubagentsSvc,
+          tokenMeterSvc: { getSessionUsage: () => ({ inputTokens: 1000, outputTokens: 200, cacheReadTokens: 0 }) },
+          llmSvc: wishLlmSvc,
+          agentDefaultModelSvc: wishDefaultModelSvc,
+          agentsSvc: wishAgentsSvc,
+        })
+        try {
+          /* (d) getSettings & saveSettings 持久化与模型目录/AI约束联动 */
+          const getSet1 = await aiDispatchHost.callApi({
+            op: 'getSettings',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+          })
+          check('getSettings 返回统一配置、model_catalog 与 active_session_route', Boolean(
+            getSet1.json?.ok === true
+            && getSet1.json?.model_catalog?.available === true
+            && getSet1.json.model_catalog.groups.some((g) => g.id === 'deepseek')
+            && getSet1.json?.active_session_route?.provider === 'deepseek',
+          ))
+
+          const saveSetRes = await aiDispatchHost.callApi({
+            op: 'saveSettings',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+            maxAgents: 5,
+            thinkingEffort: 'medium',
+            maxDepth: 4,
+            aiPlanner: {
+              modelMode: 'custom',
+              provider: 'deepseek',
+              model: 'deepseek-chat',
+              reasoningEffort: 'medium',
+              timeoutMs: 45000,
+              scanRepoContext: true,
+              customConstraints: '严格遵循无交集分片测试门禁',
+            },
+            dispatchPolicy: {
+              dispatchMode: 'hybrid_auto',
+              subagentProvider: 'spawn',
+              autoWakeOnApprove: true,
+            },
+            uiPreferences: {
+              defaultViewMode: 'engineer',
+              defaultTreeDirection: 'vertical',
+            },
+          })
+          const getSet2 = await aiDispatchHost.callApi({
+            op: 'getSettings',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+          })
+          check('saveSettings 持久化 AI 规划 / 并发派发 / 界面偏好并回显生效', Boolean(
+            saveSetRes.json?.ok === true
+            && saveSetRes.json?.saved === true
+            && getSet2.json?.maxAgents === 5
+            && getSet2.json?.thinkingEffort === 'medium'
+            && getSet2.json?.maxDepth === 4
+            && getSet2.json?.aiPlanner?.modelMode === 'custom'
+            && getSet2.json?.aiPlanner?.customConstraints?.includes('严格遵循无交集分片测试门禁')
+            && getSet2.json?.dispatchPolicy?.dispatchMode === 'hybrid_auto'
+            && getSet2.json?.uiPreferences?.defaultTreeDirection === 'vertical',
+          ))
+
+          /* (b) clarifyWishWithAI 与 refineAndDecomposeWish(preview_only: true) 流式分块调用 Mock llm */
+          const clarifyRes = await aiDispatchHost.callApi({
+            op: 'clarifyWishWithAI',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+            prompt: '构建实时多智能体架构交付看板并支持飞书机器人通知',
+          })
+          check('注入 Mock llm 后 clarifyWishWithAI 流式解析真实澄清问题且带上自定义工程约束', Boolean(
+            clarifyRes.json?.ok === true
+            && Array.isArray(clarifyRes.json?.questions)
+            && clarifyRes.json.questions.length === 1
+            && llmCalls.length === 1
+            && llmCalls[0].reasoningEffort === 'medium'
+            && llmCalls[0].prompt.includes('严格遵循无交集分片测试门禁'),
+          ))
+
+          const previewRes = await aiDispatchHost.callApi({
+            op: 'refineAndDecomposeWish',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+            prompt: '构建实时多智能体架构交付看板并支持飞书机器人通知',
+            preview_only: true,
+          })
+          const dagAfterPreview = store.workflowDag('eng-wish-demo')
+          check('refineAndDecomposeWish(preview_only: true) 走 Mock llm 流式分块生成 4-Wave 提案且数据库零写入', Boolean(
+            previewRes.json?.ok === true
+            && previewRes.json?.preview_only === true
+            && previewRes.json?.ai_generated === true
+            && typeof previewRes.json?.refined_prompt === 'string'
+            && previewRes.json.refined_prompt.includes('多智能体架构交付看板')
+            && Array.isArray(previewRes.json?.goals)
+            && previewRes.json.goals.length === 4
+            && typeof previewRes.json.goals[0].wave === 'number'
+            && (dagAfterPreview.worker_tasks || []).length === 0,
+          ))
+
+          /* (c) refineAndDecomposeWish(preview_only: false) 方案 A 混合编排真实拉起 Wave 1 + followup 主代理 */
+          const commitWishRes = await aiDispatchHost.callApi({
+            op: 'refineAndDecomposeWish',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+            prompt: '构建实时多智能体架构交付看板并支持飞书机器人通知',
+            preview_only: false,
+            goals: previewRes.json.goals,
+          })
+          const wishDagAfterCommit = store.workflowDag('eng-wish-demo')
+          const wave1Task = (wishDagAfterCommit.worker_tasks || []).find((t) => t.wave === 'wave-1')
+          const wave3Task = (wishDagAfterCommit.worker_tasks || []).find((t) => t.wave === 'wave-3')
+          check('refineAndDecomposeWish(preview_only: false) 按方案 A 调用 subagents.startActivation 回写 childId 并唤醒主代理', Boolean(
+            commitWishRes.json?.ok === true
+            && commitWishRes.json?.dispatched?.mode === 'hybrid_auto'
+            && aiActivations.length === 1
+            && wave1Task && wave1Task.session_id === 'child-dsh-w-1'
+            && aiFollowups.length >= 1
+            && String(aiFollowups[aiFollowups.length - 1]?.content?.[0]?.text || '').includes('child-dsh-w-1'),
+          ))
+
+          /* dispatchWorkerTask 手动拉起 Wave 3 节点 */
+          const dispatchWave3Res = await aiDispatchHost.callApi({
+            op: 'dispatchWorkerTask',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+            worker_task_id: wave3Task.id,
+          })
+          const wishDagAfterDispatch = store.workflowDag('eng-wish-demo')
+          const wave3AfterDispatch = (wishDagAfterDispatch.worker_tasks || []).find((t) => String(t.id) === String(wave3Task.id))
+          check('dispatchWorkerTask 调用 subagents.startActivation 拉起 Wave 3 子会话并写入 session_id', Boolean(
+            dispatchWave3Res.json?.ok === true
+            && aiActivations.length === 2
+            && dispatchWave3Res.json?.childId === 'child-dsh-w-2'
+            && wave3AfterDispatch?.session_id === 'child-dsh-w-2',
+          ))
+
+          /* planApproveWorker 审批后真实透传 subagents.queuePrompt 唤醒子会话 */
+          const approveWave1Res = await aiDispatchHost.callApi({
+            op: 'planApproveWorker',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+            worker_id: 'child-dsh-w-1',
+            approval_state: 'approved',
+            next_goal: '完成交接检查并通知下游 Wave 2',
+          })
+          check('planApproveWorker 审批通过后真实调用 subagents.queuePrompt 唤醒子会话', Boolean(
+            approveWave1Res.json?.ok === true
+            && approveWave1Res.json?.dispatched?.wokeChildId === 'child-dsh-w-1'
+            && aiQueuedPrompts.some((q) => q.childId === 'child-dsh-w-1' && q.text.includes('审批通过')),
+          ))
+
+          /* retryWorkerTask 重试节点时真实透传 subagents.queuePrompt */
+          const retryWave3Res = await aiDispatchHost.callApi({
+            op: 'retryWorkerTask',
+            engagement: 'eng-wish-demo',
+            session: 'root-ws-wish',
+            worker_id: 'child-dsh-w-2',
+            reason: 'SSE 心跳单测未通过，请修复后重试',
+          })
+          check('retryWorkerTask 重试真实子会话时调用 subagents.queuePrompt 投递恢复指令', Boolean(
+            retryWave3Res.json?.ok === true
+            && aiQueuedPrompts.some((q) => q.childId === 'child-dsh-w-2' && q.text.includes('SSE 心跳单测未通过')),
+          ))
+        } finally {
+          aiDispatchHost.disposeAll()
+        }
 
         /* shardLocks 查询独占文件锁 */
         const locksRes = await host.callApi({

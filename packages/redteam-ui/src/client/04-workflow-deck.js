@@ -36,98 +36,492 @@
       },
     ]
 
-    const P4_CTX_LEGEND = [
-      { key: 'sys', label: '系统提示词', color: '#3b82f6' },
-      { key: 'tool', label: '工具定义', color: '#8b5cf6' },
-      { key: 'user', label: '用户消息', color: '#10b981' },
-      { key: 'inject', label: '注入内容', color: '#f59e0b' },
-      { key: 'skill', label: '技能注入', color: '#06b6d4' },
-      { key: 'asst', label: '助手消息', color: '#ec4899' },
-      { key: 'res', label: '工具结果', color: '#6366f1' },
-      { key: 'free', label: '空闲窗口', color: 'rgba(148,163,184,0.28)' },
-    ]
+    const useIsomorphicLayoutEffect = (typeof React !== 'undefined' && React.useLayoutEffect)
+      ? React.useLayoutEffect
+      : React.useEffect
+
+    const _p4RoleDefaults = {
+      defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
+      defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
+      filesTouched: [], nextGoal: '继续推进下一波次契约验证与回归闭环',
+    }
+    const _defP4Role = (spec) => Object.assign({}, _p4RoleDefaults, spec)
 
     const P4_ROLE_META = {
-      designer: {
+      designer: _defP4Role({
         wave: 1, role: 'designer', avatar: 'WD', color: '#ef4444',
-        uiPriority: 'P2', workerTags: ['#ui-canvas', '#design-tokens'],
-        defaultTitle: 'Wave1 designer 交互与令牌',
-        defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-        defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
-        prompt: '基于项目需求梳理模块化 Bento UI 布局、设计令牌与交互视图规范，并将视觉契约写入事实库。',
-        output: '等待执行交互与视觉设计任务。', whatWasDone: '交互与视觉规范分片已就绪。', filesTouched: [],
-        nextGoal: '继续推进下一波次契约验证与回归闭环',
-      },
-      recon: {
+        defaultTitle: 'Wave1 designer 交互与设计',
+        prompt: '基于项目需求梳理模块化 Bento UI 布局、设计令牌与交互视图规范。',
+        output: '等待执行交互与视觉设计任务。', whatWasDone: '交互与视觉规范分片已就绪。',
+      }),
+      recon: _defP4Role({
         wave: 1, role: 'recon', avatar: 'WR', color: '#10b981',
-        uiPriority: 'P2', workerTags: ['#pg-store', '#telemetry'],
-        defaultTitle: 'Wave1 recon 产品与数据源',
-        defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-        defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
-        prompt: '盘点目标项目全量业务模块、数据接口与核心功能优先级，输出结构化需求与数据源拓扑清单。',
-        output: '等待执行需求拆解与数据源测绘。', whatWasDone: '产品与数据源测绘分片已就绪。', filesTouched: [],
-        nextGoal: '继续推进下一波次契约验证与回归闭环',
-      },
-      assess: {
+        defaultTitle: 'Wave1 recon 产品与需求',
+        prompt: '盘点目标项目全量业务模块、数据接口与核心功能优先级。',
+        output: '等待执行需求拆解与数据源测绘。', whatWasDone: '产品与数据源测绘分片已就绪。',
+      }),
+      assess: _defP4Role({
         wave: 2, role: 'assess', avatar: 'WA', color: '#8b5cf6',
-        uiPriority: 'P0', workerTags: ['#arch-contract', '#pg-store'],
         defaultTitle: 'Wave2 assess 架构与分片',
-        defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-        defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
-        prompt: '基于 Wave 1 需求与设计产出，冻结模块接口契约并划分 File-Disjoint Sharding 无交集开发分片。',
-        output: '等待锁定模块接口契约与独占文件分片。', whatWasDone: '系统架构与分片边界待锁定。', filesTouched: [],
-        nextGoal: '继续推进下一波次契约验证与回归闭环',
-      },
-      exploit: {
+        prompt: '基于 Wave 1 需求与设计产出，冻结模块接口契约并划分独占文件分片。',
+        output: '等待锁定模块接口契约与独占文件分片。', whatWasDone: '系统架构与分片边界待锁定。',
+      }),
+      exploit: _defP4Role({
         wave: 3, role: 'exploit', avatar: 'WB', color: '#3b82f6',
-        uiPriority: 'P1', workerTags: ['#ui-canvas', '#pg-store'],
         defaultTitle: 'Wave3 exploit 分片构建',
-        defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-        defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
-        prompt: '在独占文件分片内执行全栈编码实现与单元测试自检，并将构建产物同步至 PG 事实库。',
-        output: '等待执行分片代码构建与自检。', whatWasDone: '分片编码实现与单元验证就绪。', filesTouched: [],
-        nextGoal: '继续推进下一波次契约验证与回归闭环',
-      },
-      'vuln-scan': {
+        prompt: '在独占文件分片内执行全栈编码实现与单元测试自检。',
+        output: '等待执行分片代码构建与自检。', whatWasDone: '分片编码实现与单元验证就绪。',
+      }),
+      'vuln-scan': _defP4Role({
         wave: 4, role: 'vuln-scan', avatar: 'WC', color: '#f59e0b',
-        uiPriority: 'P1', workerTags: ['#sec-audit', '#code-review'],
         defaultTitle: 'Wave4 vuln-scan 代码审查',
-        defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-        defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
         prompt: '对各分片代码变更执行静态缺陷审查、架构边界复核与安全门禁审计。',
-        output: '等待执行代码审查与安全门禁校验。', whatWasDone: '代码审查与安全门禁就绪。', filesTouched: [],
-        nextGoal: '继续推进下一波次契约验证与回归闭环',
-      },
-      qa: {
+        output: '等待执行代码审查与安全门禁校验。', whatWasDone: '代码审查与安全门禁就绪。',
+      }),
+      qa: _defP4Role({
         wave: 4, role: 'qa', avatar: 'WQ', color: '#06b6d4',
-        uiPriority: 'P2', workerTags: ['#ui-smoke', '#qa-gate'],
         defaultTitle: 'Wave4 qa 自动化回归',
-        defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-        defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
         prompt: '运行全量单元测试、UI 渲染冒烟测试与打包一致性断言。',
-        output: '等待运行自动化测试套件与回归校验。', whatWasDone: '自动化回归测试套件就绪。', filesTouched: [],
-        nextGoal: '继续推进下一波次契约验证与回归闭环',
-      },
-      internal: {
+        output: '等待运行自动化测试套件与回归校验。', whatWasDone: '自动化回归测试套件就绪。',
+      }),
+      internal: _defP4Role({
         wave: 4, role: 'internal', avatar: 'WI', color: '#ec4899',
-        uiPriority: 'P3', workerTags: ['#release-doc', '#feishu-sync'],
         defaultTitle: 'Wave4 internal 归档发布',
-        defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-        defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
-        prompt: '汇总 Wave 1–4 研发产物与交付里程碑，生成结构化交付报告并推送飞书通知。',
-        output: '等待汇总研发交付报告与归档。', whatWasDone: '归档发布与交付报告就绪。', filesTouched: [],
-        nextGoal: '继续推进下一波次契约验证与回归闭环',
-      },
-    }
-
-    const PRIORITY_BADGE_META = {
-      P0: { cls: 'rt-pri-badge rt-pri-badge-p0', label: 'P0 焦点审批', rank: 0 },
-      P1: { cls: 'rt-pri-badge rt-pri-badge-p1', label: 'P1 核心并发', rank: 1 },
-      P2: { cls: 'rt-pri-badge rt-pri-badge-p2', label: 'P2 已审归档', rank: 2 },
-      P3: { cls: 'rt-pri-badge rt-pri-badge-p3', label: 'P3 辅助归档', rank: 3 },
+        prompt: '汇总 Wave 1–4 研发产物与交付里程碑，生成结构化交付报告。',
+        output: '等待汇总研发交付报告与归档。', whatWasDone: '归档发布与交付报告就绪。',
+      }),
     }
 
     const WAVE_PAGE_SIZE = 24
+
+    /**
+     * 缩放无关坐标测量：沿着 offsetParent 链向上累加至 stageEl，
+     * 完全免疫祖先层 CSS transform: scale() 导致的 getBoundingClientRect 漂移。
+     */
+    function measureBoxInStage(nodeEl, stageEl) {
+      if (!nodeEl || !stageEl) return null
+      if (typeof nodeEl.offsetWidth !== 'number' || typeof nodeEl.offsetHeight !== 'number') return null
+      const w = Number(nodeEl.offsetWidth) || 0
+      const h = Number(nodeEl.offsetHeight) || 0
+      if (!(w > 0) && !(h > 0)) return null
+      let x = 0
+      let y = 0
+      let cur = nodeEl
+      let guard = 0
+      let reachedStage = false
+      while (cur && guard < 32) {
+        guard += 1
+        if (cur === stageEl) {
+          reachedStage = true
+          break
+        }
+        x += Number(cur.offsetLeft) || 0
+        y += Number(cur.offsetTop) || 0
+        const parent = cur.offsetParent
+        if (!parent) break
+        if (parent !== stageEl) {
+          x += Number(parent.clientLeft) || 0
+          y += Number(parent.clientTop) || 0
+        }
+        cur = parent
+      }
+      if (!reachedStage) return null
+      return {
+        left: Math.round(x * 10) / 10,
+        top: Math.round(y * 10) / 10,
+        right: Math.round((x + w) * 10) / 10,
+        bottom: Math.round((y + h) * 10) / 10,
+        width: w,
+        height: h,
+        midX: Math.round((x + w / 2) * 10) / 10,
+        midY: Math.round((y + h / 2) * 10) / 10,
+      }
+    }
+
+    /** 将正交拐点序列转为带平滑圆角 (Q) 的 SVG path 字符串。 */
+    function buildRoundedOrthogonalPath(points, radius) {
+      if (!Array.isArray(points) || points.length < 2) return ''
+      const dedup = []
+      for (let i = 0; i < points.length; i += 1) {
+        const pt = points[i]
+        if (!pt || pt.length < 2) continue
+        const rx = Math.round(pt[0] * 10) / 10
+        const ry = Math.round(pt[1] * 10) / 10
+        if (dedup.length > 0) {
+          const prev = dedup[dedup.length - 1]
+          if (Math.abs(prev[0] - rx) < 0.5 && Math.abs(prev[1] - ry) < 0.5) continue
+        }
+        dedup.push([rx, ry])
+      }
+      const simplified = []
+      for (let i = 0; i < dedup.length; i += 1) {
+        if (i > 0 && i < dedup.length - 1) {
+          const a = simplified[simplified.length - 1]
+          const b = dedup[i]
+          const c = dedup[i + 1]
+          if ((Math.abs(a[0] - b[0]) < 0.5 && Math.abs(b[0] - c[0]) < 0.5)
+            || (Math.abs(a[1] - b[1]) < 0.5 && Math.abs(b[1] - c[1]) < 0.5)) {
+            continue
+          }
+        }
+        simplified.push(dedup[i])
+      }
+      if (simplified.length < 2) return ''
+      if (simplified.length === 2) {
+        return 'M ' + simplified[0][0] + ',' + simplified[0][1] + ' L ' + simplified[1][0] + ',' + simplified[1][1]
+      }
+      const rMax = Number(radius) > 0 ? Number(radius) : 6
+      const cmds = ['M ' + simplified[0][0] + ',' + simplified[0][1]]
+      for (let i = 1; i < simplified.length - 1; i += 1) {
+        const prev = simplified[i - 1]
+        const cur = simplified[i]
+        const next = simplified[i + 1]
+        const dx1 = cur[0] - prev[0]
+        const dy1 = cur[1] - prev[1]
+        const dx2 = next[0] - cur[0]
+        const dy2 = next[1] - cur[1]
+        const len1 = Math.hypot(dx1, dy1)
+        const len2 = Math.hypot(dx2, dy2)
+        if (len1 < 1 || len2 < 1) {
+          cmds.push('L ' + cur[0] + ',' + cur[1])
+          continue
+        }
+        const r = Math.min(rMax, len1 / 2, len2 / 2)
+        const inX = Math.round((cur[0] - (dx1 / len1) * r) * 10) / 10
+        const inY = Math.round((cur[1] - (dy1 / len1) * r) * 10) / 10
+        const outX = Math.round((cur[0] + (dx2 / len2) * r) * 10) / 10
+        const outY = Math.round((cur[1] + (dy2 / len2) * r) * 10) / 10
+        cmds.push('L ' + inX + ',' + inY)
+        cmds.push('Q ' + cur[0] + ',' + cur[1] + ' ' + outX + ',' + outY)
+      }
+      const last = simplified[simplified.length - 1]
+      cmds.push('L ' + last[0] + ',' + last[1])
+      return cmds.join(' ')
+    }
+
+    /**
+     * 基于 Stage 坐标系精确计算 Root → Wave 与 Wave → 每个展开子卡片 的无遮挡连线。
+     */
+    function computeStageTreeEdges(opts) {
+      const stageEl = opts.stageRef ? opts.stageRef.current : opts.stageEl
+      if (!stageEl) return null
+      const stageW = Math.max(0, Math.ceil(Number(stageEl.clientWidth) || Number(stageEl.scrollWidth) || Number(stageEl.offsetWidth) || 0))
+      const stageH = Math.max(0, Math.ceil(Number(stageEl.clientHeight) || Number(stageEl.scrollHeight) || Number(stageEl.offsetHeight) || 0))
+      if (!(stageW > 0) || !(stageH > 0)) return null
+
+      const rootEl = opts.rootRef ? opts.rootRef.current : opts.rootEl
+      const rootBox = measureBoxInStage(rootEl, stageEl)
+      if (!rootBox) return null
+
+      const treeDirection = opts.treeDirection === 'vertical' ? 'vertical' : 'horizontal'
+      const waveGroups = Array.isArray(opts.waveGroups) ? opts.waveGroups : []
+      const waveCardRefs = (opts.waveCardRefsObj && opts.waveCardRefsObj.current) || opts.waveCardRefs || {}
+      const childCardRefs = (opts.childCardRefsObj && opts.childCardRefsObj.current) || opts.childCardRefs || {}
+      const expandedMap = opts.expandedMap || {}
+      const visibleChildrenByWave = opts.visibleChildrenByWave || {}
+      const selAgentId = opts.selAgentId || null
+      const animatingSpawnIds = opts.animatingSpawnIds || {}
+
+      const edges = []
+      const rootPort = treeDirection === 'horizontal'
+        ? { x: rootBox.right, y: rootBox.midY }
+        : { x: rootBox.midX, y: rootBox.bottom }
+
+      for (let wIdx = 0; wIdx < waveGroups.length; wIdx += 1) {
+        const wg = waveGroups[wIdx]
+        const waveBox = measureBoxInStage(waveCardRefs[String(wg.wave)], stageEl)
+        if (!waveBox) continue
+
+        const isWaveSelected = wg.children.some((c) => c.id === selAgentId)
+        const isWaveFocused = !selAgentId || selAgentId === 'root' || isWaveSelected
+        const isSpawningWave = wg.children.some((c) => Boolean(animatingSpawnIds[c.id]))
+        const waveWireClass = (isSpawningWave ? 'rt-wire-growing ' : '')
+          + ((wg.runningInWave > 0 || isSpawningWave) ? 'rt-wire-flowing' : '')
+
+        if (treeDirection === 'horizontal') {
+          const x1 = rootBox.right
+          const y1 = rootBox.midY
+          const x2 = waveBox.left
+          const y2 = waveBox.midY
+          const dx = Math.max(20, Math.round((x2 - x1) * 0.52 * 10) / 10)
+          edges.push({
+            key: 'edge-root-w' + wg.wave,
+            d: 'M ' + x1 + ',' + y1 + ' C ' + (x1 + dx) + ',' + y1 + ' ' + (x2 - dx) + ',' + y2 + ' ' + x2 + ',' + y2,
+            startX: x1,
+            startY: y1,
+            endX: x2,
+            endY: y2,
+            color: wg.color,
+            selected: isWaveSelected,
+            focused: isWaveFocused,
+            active: wg.runningInWave > 0,
+            wireClass: waveWireClass,
+          })
+        } else {
+          const x1 = rootBox.midX
+          const y1 = rootBox.bottom
+          const x2 = waveBox.midX
+          const y2 = waveBox.top
+          const dy = Math.max(18, Math.round((y2 - y1) * 0.52 * 10) / 10)
+          edges.push({
+            key: 'edge-root-w' + wg.wave,
+            d: 'M ' + x1 + ',' + y1 + ' C ' + x1 + ',' + (y1 + dy) + ' ' + x2 + ',' + (y2 - dy) + ' ' + x2 + ',' + y2,
+            startX: x1,
+            startY: y1,
+            endX: x2,
+            endY: y2,
+            color: wg.color,
+            selected: isWaveSelected,
+            focused: isWaveFocused,
+            active: wg.runningInWave > 0,
+            wireClass: waveWireClass,
+          })
+        }
+
+        if (!expandedMap[wg.wave]) continue
+        const visibleChildren = visibleChildrenByWave[wg.wave] || []
+        const childItems = []
+        for (let ci = 0; ci < visibleChildren.length; ci += 1) {
+          const child = visibleChildren[ci]
+          const cBox = measureBoxInStage(childCardRefs[child.id], stageEl)
+          if (cBox) childItems.push({ child, box: cBox })
+        }
+        if (childItems.length === 0) continue
+
+        if (treeDirection === 'horizontal') {
+          const sortedByLeft = childItems.slice().sort((a, b) => a.box.left - b.box.left)
+          const colAnchors = []
+          const colRights = []
+          sortedByLeft.forEach((it) => {
+            let foundIdx = -1
+            for (let k = 0; k < colAnchors.length; k += 1) {
+              if (Math.abs(colAnchors[k] - it.box.left) <= 24) {
+                foundIdx = k
+                break
+              }
+            }
+            if (foundIdx === -1) {
+              foundIdx = colAnchors.length
+              colAnchors.push(it.box.left)
+              colRights.push(it.box.right)
+            } else if (it.box.right > colRights[foundIdx]) {
+              colRights[foundIdx] = it.box.right
+            }
+            it.colIdx = foundIdx
+          })
+
+          const sortedByTop = childItems.slice().sort((a, b) => a.box.top - b.box.top)
+          const rowBands = []
+          sortedByTop.forEach((it) => {
+            let foundRow = -1
+            for (let r = 0; r < rowBands.length; r += 1) {
+              if (Math.abs(rowBands[r].anchorTop - it.box.top) <= 24) {
+                foundRow = r
+                break
+              }
+            }
+            if (foundRow === -1) {
+              foundRow = rowBands.length
+              rowBands.push({ anchorTop: it.box.top, rowTop: it.box.top, rowBottom: it.box.bottom })
+            } else {
+              rowBands[foundRow].rowTop = Math.min(rowBands[foundRow].rowTop, it.box.top)
+              rowBands[foundRow].rowBottom = Math.max(rowBands[foundRow].rowBottom, it.box.bottom)
+            }
+            it.rowIdx = foundRow
+          })
+
+          const col0Left = colAnchors[0]
+          const gapToCol0 = Math.max(12, col0Left - waveBox.right)
+          const busX = Math.round((waveBox.right + Math.min(24, gapToCol0 * 0.45)) * 10) / 10
+
+          for (let ci = 0; ci < childItems.length; ci += 1) {
+            const it = childItems[ci]
+            const c = it.child
+            const b = it.box
+            const x1 = waveBox.right
+            const y1 = waveBox.midY
+            const x2 = b.left
+            const y2 = b.midY
+            let pts
+            if (it.colIdx === 0) {
+              pts = [[x1, y1], [busX, y1], [busX, y2], [x2, y2]]
+            } else {
+              const prevColRight = colRights[it.colIdx - 1]
+              const colBusX = Math.round(((prevColRight + x2) / 2) * 10) / 10
+              const gapY = it.rowIdx === 0
+                ? Math.round((rowBands[0].rowTop - 10) * 10) / 10
+                : Math.round(((rowBands[it.rowIdx - 1].rowBottom + rowBands[it.rowIdx].rowTop) / 2) * 10) / 10
+              pts = [[x1, y1], [busX, y1], [busX, gapY], [colBusX, gapY], [colBusX, y2], [x2, y2]]
+            }
+            const d = buildRoundedOrthogonalPath(pts, 6)
+            if (!d) continue
+            const cSel = selAgentId === c.id
+            const cFocused = !selAgentId || selAgentId === 'root' || cSel
+            const cSpawn = Boolean(animatingSpawnIds[c.id])
+            const cWire = (cSpawn ? 'rt-wire-growing ' : '') + ((c.status === 'running' || cSpawn) ? 'rt-wire-flowing' : '')
+            edges.push({
+              key: 'edge-w' + wg.wave + '-c-' + c.id,
+              d,
+              startX: x1,
+              startY: y1,
+              endX: x2,
+              endY: y2,
+              color: c.status === 'error' ? '#ef4444' : (c.color || wg.color),
+              selected: cSel,
+              focused: cFocused,
+              active: c.status === 'running',
+              wireClass: cWire,
+            })
+          }
+        } else {
+          const sortedKids = childItems.slice().sort((a, b) => a.box.top - b.box.top)
+          const minLeft = sortedKids.reduce((m, it) => Math.min(m, it.box.left), sortedKids[0].box.left)
+          const spineX = Math.round((minLeft - 12) * 10) / 10
+          const trunkY = Math.round((waveBox.bottom + 14) * 10) / 10
+          for (let ci = 0; ci < sortedKids.length; ci += 1) {
+            const it = sortedKids[ci]
+            const c = it.child
+            const b = it.box
+            const x1 = waveBox.midX
+            const y1 = waveBox.bottom
+            const x2 = b.midX
+            const y2 = b.top
+            let d
+            if (ci === 0 && y2 > y1 + 14) {
+              const dy = Math.max(12, Math.round((y2 - y1) * 0.5 * 10) / 10)
+              d = 'M ' + x1 + ',' + y1 + ' C ' + x1 + ',' + (y1 + dy) + ' ' + x2 + ',' + (y2 - dy) + ' ' + x2 + ',' + y2
+            } else {
+              const prevBot = ci > 0 ? sortedKids[ci - 1].box.bottom : y1
+              const gapY = Math.round(((prevBot + y2) / 2) * 10) / 10
+              d = buildRoundedOrthogonalPath([[x1, y1], [x1, trunkY], [spineX, trunkY], [spineX, gapY], [x2, gapY], [x2, y2]], 6)
+            }
+            if (!d) continue
+            const cSel = selAgentId === c.id
+            const cFocused = !selAgentId || selAgentId === 'root' || cSel
+            const cSpawn = Boolean(animatingSpawnIds[c.id])
+            const cWire = (cSpawn ? 'rt-wire-growing ' : '') + ((c.status === 'running' || cSpawn) ? 'rt-wire-flowing' : '')
+            edges.push({
+              key: 'edge-vw' + wg.wave + '-c-' + c.id,
+              d,
+              startX: x1,
+              startY: y1,
+              endX: x2,
+              endY: y2,
+              color: c.status === 'error' ? '#ef4444' : (c.color || wg.color),
+              selected: cSel,
+              focused: cFocused,
+              active: c.status === 'running',
+              wireClass: cWire,
+            })
+          }
+        }
+      }
+
+      return {
+        direction: treeDirection,
+        width: stageW,
+        height: stageH,
+        rootPort,
+        edges,
+      }
+    }
+
+    function useStageEdgePaths(opts) {
+      const [edgeGeom, setEdgeGeom] = React.useState(null)
+      const edgeGeomRef = React.useRef(null)
+      const optsRef = React.useRef(opts)
+      optsRef.current = opts
+
+      const measureNow = React.useCallback(() => {
+        try {
+          const cur = optsRef.current
+          if (!cur || !cur.enabled) return
+          const next = computeStageTreeEdges(cur)
+          if (!next) return
+          const prev = edgeGeomRef.current
+          if (
+            prev
+            && prev.direction === next.direction
+            && Math.abs(prev.width - next.width) <= 1
+            && Math.abs(prev.height - next.height) <= 1
+            && prev.edges.length === next.edges.length
+            && prev.edges.every((pe, idx) => {
+              const ne = next.edges[idx]
+              return pe.key === ne.key && pe.d === ne.d && pe.color === ne.color
+                && pe.selected === ne.selected && pe.focused === ne.focused && pe.wireClass === ne.wireClass
+            })
+          ) {
+            return
+          }
+          edgeGeomRef.current = next
+          setEdgeGeom(next)
+        } catch { /* SSR / stub safe no-op */ }
+      }, [])
+
+      useIsomorphicLayoutEffect(() => {
+        if (!opts.enabled) return undefined
+        measureNow()
+        const rafFn = typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame
+          : (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function' ? window.requestAnimationFrame.bind(window) : null)
+        const cafFn = typeof cancelAnimationFrame === 'function'
+          ? cancelAnimationFrame
+          : (typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function' ? window.cancelAnimationFrame.bind(window) : null)
+
+        let rafId = 0
+        const scheduleMeasure = () => {
+          if (!rafFn) { measureNow(); return }
+          if (rafId && cafFn) cafFn(rafId)
+          rafId = rafFn(() => {
+            rafId = 0
+            measureNow()
+          })
+        }
+
+        if (rafFn) {
+          rafId = rafFn(() => {
+            rafId = 0
+            measureNow()
+          })
+        }
+
+        let ro = null
+        if (typeof ResizeObserver === 'function') {
+          try {
+            ro = new ResizeObserver(scheduleMeasure)
+            const stEl = opts.stageRef ? opts.stageRef.current : opts.stageEl
+            const nlEl = opts.nodeLayerRef ? opts.nodeLayerRef.current : opts.nodeLayerEl
+            const rtEl = opts.rootRef ? opts.rootRef.current : opts.rootEl
+            if (stEl) ro.observe(stEl)
+            if (nlEl) ro.observe(nlEl)
+            if (rtEl) ro.observe(rtEl)
+            const wMap = (opts.waveCardRefsObj && opts.waveCardRefsObj.current) || opts.waveCardRefs || {}
+            Object.keys(wMap).forEach((k) => { if (wMap[k]) ro.observe(wMap[k]) })
+            const cMap = (opts.childCardRefsObj && opts.childCardRefsObj.current) || opts.childCardRefs || {}
+            Object.keys(cMap).forEach((k) => { if (cMap[k]) ro.observe(cMap[k]) })
+          } catch { ro = null }
+        }
+
+        const hasWin = typeof window !== 'undefined' && typeof window.addEventListener === 'function'
+        if (hasWin) {
+          try { window.addEventListener('resize', scheduleMeasure) } catch { /* ignore */ }
+        }
+
+        return () => {
+          if (rafId && cafFn) {
+            try { cafFn(rafId) } catch { /* ignore */ }
+          }
+          if (ro && typeof ro.disconnect === 'function') {
+            try { ro.disconnect() } catch { /* ignore */ }
+          }
+          if (hasWin && typeof window.removeEventListener === 'function') {
+            try { window.removeEventListener('resize', scheduleMeasure) } catch { /* ignore */ }
+          }
+        }
+      }, [opts.enabled, opts.layoutSignature, measureNow])
+
+      return edgeGeom
+    }
 
     const inferChildRole = (rawRole, rawTitle) => {
       const r = String(rawRole || '').toLowerCase().trim()
@@ -143,24 +537,6 @@
       return 'assess'
     }
 
-    const isRealHostSessionId = (sid, hostSessionList) => {
-      const s = String(sid || '').trim()
-      if (!s || s === 'root' || s === 'root-main' || s === 'default') return false
-      if (/^(?:sub-|agent-|dom-|task-|wish-|custom-|goal-)/i.test(s)) return false
-      if (/^session-(?:plan|recon|designer|assess|exploit|qa|vuln-scan|internal)$/i.test(s)) return false
-      if (Array.isArray(hostSessionList) && hostSessionList.length > 0) {
-        for (let i = 0; i < hostSessionList.length; i += 1) {
-          const hs = hostSessionList[i]
-          if (!hs) continue
-          if (hs.id === s || hs.sessionId === s) return true
-          if (Array.isArray(hs.children) && hs.children.some((ch) => ch && (ch.id === s || ch.sessionId === s))) {
-            return true
-          }
-        }
-      }
-      return /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}/i.test(s) || (!s.startsWith('w') && s.length >= 12)
-    }
-
     function HarnessWorkflowDeck(props) {
       const eng = props.engagement || null
       const variant = props.variant === 'cluster' ? 'cluster' : (props.variant || 'overview')
@@ -169,8 +545,12 @@
       const snapshot = eng ? props.snapshot : null
       const agentsProp = eng ? props.agents : null
       const refreshKey = props.refreshKey || 0
+      const hasParentDag = props.dagData !== undefined
+      const hasParentDomTel = props.domTel !== undefined
       const { uiMode } = useUI()
       const isNovice = uiMode === 'novice'
+      const currentSess = useSession()
+      const activeSid = props.sessionId || currentSess.id || null
 
       const [mode, setMode] = React.useState('p4')
       const [selId, setSelId] = React.useState('plan')
@@ -180,22 +560,16 @@
       const [taskSearch, setTaskSearch] = React.useState('')
       const [taskFilter, setTaskFilter] = React.useState('all')
       const [expandedTaskId, setExpandedTaskId] = React.useState(null)
-      const [zoom, setZoom] = React.useState(100)
-      const [p5Expanded, setP5Expanded] = React.useState(false)
-      const [p5Filter, setP5Filter] = React.useState('all')
-      const [customTasks, setCustomTasks] = React.useState([])
       const [customWorkerNodes, setCustomWorkerNodes] = React.useState([])
       const [workerGoalOverrides, setWorkerGoalOverrides] = React.useState({})
-      const [dagState, setDagState] = React.useState(null)
+      const [localDagState, setLocalDagState] = React.useState(null)
       const [localAgents, setLocalAgents] = React.useState(null)
-      const [domTel, setDomTel] = React.useState(() => readHostDomTelemetry())
+      const [localDomTel, setLocalDomTel] = React.useState(() => (hasParentDomTel ? (props.domTel || {}) : readHostDomTelemetry()))
+      const dagState = hasParentDag ? (localDagState || props.dagData) : localDagState
+      const domTel = hasParentDomTel ? (props.domTel || {}) : localDomTel
       const [toast, setToast] = React.useState(null)
-      const [webhook, setWebhook] = React.useState('https://open.feishu.cn/open-apis/bot/v2/hook/lmtagent-workflow')
-      const [feishuOnNode, setFeishuOnNode] = React.useState(true)
-      const [feishuOnGate, setFeishuOnGate] = React.useState(true)
-      const [feishuOnShip, setFeishuOnShip] = React.useState(true)
-      const [feishuSaving, setFeishuSaving] = React.useState(false)
       const [approvedWorkerMap, setApprovedWorkerMap] = React.useState({})
+      const [dispatchingId, setDispatchingId] = React.useState(null)
 
       const [canvasSearch, setCanvasSearch] = React.useState('')
       const [canvasFilter, setCanvasFilter] = React.useState('all')
@@ -218,23 +592,28 @@
       const [retryingBusy, setRetryingBusy] = React.useState(false)
 
       React.useEffect(() => {
-        setDagState(null)
+        setLocalDagState(null)
         setLocalAgents(null)
-        setCustomTasks([])
         setCustomWorkerNodes([])
         setWorkerGoalOverrides({})
         setApprovedWorkerMap({})
+        setDispatchingId(null)
         setSelAgentId(null)
       }, [eng])
 
+      const onParentReload = props.onReload
       const reloadDag = React.useCallback(() => {
         if (!eng) {
-          setDagState(null)
+          setLocalDagState(null)
           setLocalAgents(null)
           return
         }
-        if (!_isCanvasDragging) {
-          setDomTel(readHostDomTelemetry())
+        if (hasParentDag && typeof onParentReload === 'function') {
+          onParentReload()
+          return
+        }
+        if (!hasParentDomTel && !_isCanvasDragging) {
+          setLocalDomTel(readHostDomTelemetry())
         }
         if (!agentsProp) {
           api({ op: 'agentsStatus', engagement: eng }).then((r) => {
@@ -243,19 +622,16 @@
         }
         api({ op: 'workflowDag', engagement: eng }).then((r) => {
           if (r && r.ok !== false) {
-            setDagState(r)
-            if (r.feishu_config && typeof r.feishu_config === 'object') {
-              if (r.feishu_config.webhook_url) setWebhook(String(r.feishu_config.webhook_url))
-            }
+            setLocalDagState(r)
           }
         }, () => {})
-      }, [eng, agentsProp])
+      }, [eng, agentsProp, hasParentDag, hasParentDomTel, onParentReload])
 
       React.useEffect(() => {
-        reloadDag()
-      }, [reloadDag, refreshKey])
+        if (!hasParentDag) reloadDag()
+      }, [reloadDag, refreshKey, hasParentDag])
 
-      useHostEvents(eng, reloadDag, 700)
+      useHostEvents(hasParentDag ? false : eng, reloadDag, 700)
 
       const agents = agentsProp || localAgents
       const runningAgents = (agents && Array.isArray(agents.running)) ? agents.running : []
@@ -346,12 +722,6 @@
         const rawApproval = overrideApproval
           ? overrideApproval.decisionState
           : (raw.approvalState || raw.approval_state || (isErr ? 'revision_required' : ((isRun || isPending) ? 'pending_approval' : 'approved')))
-        const uiPriority = isErr
-          ? 'P0'
-          : (raw.uiPriority || raw.ui_priority || (isRun || rawApproval === 'pending_approval' || rawApproval === 'revision_required' ? 'P0' : (meta.uiPriority || 'P2')))
-        const workerTags = Array.isArray(raw.workerTags) && raw.workerTags.length > 0
-          ? raw.workerTags
-          : (Array.isArray(raw.worker_tags) && raw.worker_tags.length > 0 ? raw.worker_tags : (meta.workerTags || ['#ui-canvas', '#pg-store']))
 
         const goalOverride = workerGoalOverrides[childId]
         const rawFilesOwned = goalOverride
@@ -390,13 +760,12 @@
           name: title,
           wave: Number(raw.wave) || (waveMatch ? Number(waveMatch[1]) : meta.wave),
           role: roleKey,
+          roleLabel: ROLE_LABEL[roleKey] || roleKey,
           avatar: avatar,
           color: color,
           title: title,
           status: resolvedStatus,
           statusLabel: resolvedStatusLabel,
-          uiPriority: uiPriority,
-          workerTags: workerTags,
           tokens: tokVal,
           rawTokens: tokVal,
           compressedTokens: compressedTokens,
@@ -493,7 +862,6 @@
       )).length
 
       const canvasFilteredChildren = fusedChildren.filter((c) => {
-        if (canvasFilter === 'p0' && c.uiPriority !== 'P0') return false
         if (canvasFilter === 'running' && c.status !== 'running') return false
         if (canvasFilter === 'pending' && c.approvalState !== 'pending_approval' && c.approvalState !== 'waiting_approval' && c.approvalState !== 'revision_required') return false
         if (canvasFilter === 'error' && c.status !== 'error' && c.approvalState !== 'revision_required') return false
@@ -532,39 +900,33 @@
       const runningCount = eng ? (fusedChildren.filter((c) => c.status === 'running').length + (runningAgents.length > 0 ? 1 : 0)) : 0
       const errorCount = fusedChildren.filter((c) => c.status === 'error').length
 
-      const allCollabEvents = []
-      fusedChildren.forEach((c, idx) => {
-        allCollabEvents.push({
-          id: 'ev-start-' + c.id, agentId: c.id, avatar: c.avatar, color: c.color, title: c.title,
-          kind: '+', label: '主控委派 ' + c.avatar, timeOrder: idx * 3 + 1, xPct: Math.min(82, 14 + idx * 22),
-        })
-        allCollabEvents.push({
-          id: 'ev-write-' + c.id, agentId: c.id, avatar: c.avatar, color: c.color, title: c.title,
-          kind: '■', label: c.avatar + ' 写入契约/产物', timeOrder: idx * 3 + 2, xPct: Math.min(88, 36 + idx * 22),
-        })
-        allCollabEvents.push({
-          id: 'ev-done-' + c.id, agentId: c.id, avatar: c.avatar, color: c.color, title: c.title,
-          kind: c.status === 'error' ? '!' : (c.status === 'running' ? '●' : '✓'),
-          label: c.status === 'error'
-            ? (c.avatar + ' 异常待修复')
-            : (c.status === 'running' ? (c.avatar + ' 正在执行分片') : (c.avatar + ' 摘要压缩写回主控')),
-          timeOrder: idx * 3 + 3, xPct: Math.min(94, 58 + idx * 18),
-        })
-      })
-      const sortedEvents = allCollabEvents.slice().sort((a, b) => (collabSort === 'asc' ? a.timeOrder - b.timeOrder : b.timeOrder - a.timeOrder))
-      const filteredEvents = sortedEvents.filter((ev) => {
-        if (selAgentId && selAgentId !== 'root' && ev.agentId !== selAgentId) return false
-        if (collabSearch.trim()) {
-          const q = collabSearch.trim().toLowerCase()
-          return ev.title.toLowerCase().includes(q) || ev.avatar.toLowerCase().includes(q) || ev.label.toLowerCase().includes(q)
+      const totalCollabEvents = fusedChildren.length * 3
+      const qCollab = collabSearch.trim().toLowerCase()
+      let filteredCollabCount = totalCollabEvents
+      if ((selAgentId && selAgentId !== 'root') || qCollab) {
+        filteredCollabCount = 0
+        for (let i = 0; i < fusedChildren.length; i += 1) {
+          const c = fusedChildren[i]
+          if (selAgentId && selAgentId !== 'root' && c.id !== selAgentId) continue
+          const titleLc = String(c.title || '').toLowerCase()
+          const avatarLc = String(c.avatar || '').toLowerCase()
+          if (!qCollab || titleLc.includes(qCollab) || avatarLc.includes(qCollab)) {
+            filteredCollabCount += 3
+          } else {
+            if (('主控委派 ' + avatarLc).includes(qCollab)) filteredCollabCount += 1
+            if ((avatarLc + ' 写入契约/产物').includes(qCollab)) filteredCollabCount += 1
+            const doneText = c.status === 'error'
+              ? (avatarLc + ' 异常待修复')
+              : (c.status === 'running' ? (avatarLc + ' 正在执行分片') : (avatarLc + ' 摘要压缩写回主控'))
+            if (doneText.includes(qCollab)) filteredCollabCount += 1
+          }
         }
-        return true
-      })
+      }
 
       const visibleLanes = [
         {
           id: 'root', avatar: '主控', title: workspaceDisplayTitle, color: '#3b82f6', isRoot: true,
-          uiPriority: 'P0', workerTags: ['#plan-orchestrator', '#lmtex-loop'],
+          wave: 0, role: 'plan',
           compressionPct: fusedChildren.length > 0 ? 85 : 0, approvalState: 'approved', tokenLabel: rootTokensLabel,
         },
       ].concat(fusedChildren.filter((c) => {
@@ -575,15 +937,16 @@
 
       const allTasks = fusedChildren.map((c) => ({
         id: 'task-' + c.id, agentId: c.id, sessionId: c.sessionId, avatar: c.avatar, color: c.color,
-        title: c.title, role: c.role, wave: c.wave, uiPriority: c.uiPriority, workerTags: c.workerTags,
+        title: c.title, role: c.role, wave: c.wave,
         compressionPct: c.compressionPct, approvalState: c.approvalState,
         status: c.status === 'running' ? 'run' : (c.status === 'pending' || c.status === 'error' ? 'wait' : 'done'),
         rawStatus: c.status,
         statusBadge: c.status === 'error'
-          ? '⚠ 异常待修复'
+          ? '异常待修复'
           : (c.status === 'running' ? '● 进行中' : (c.status === 'pending' ? '○ 待执行' : '● 已完成')),
         prompt: c.prompt, output: c.output, tokenLabel: c.tokenLabel, durationLabel: c.durationLabel, steps: c.steps,
-      })).concat(customTasks)
+        assignedGoal: c.assignedGoal, filesOwned: c.filesOwned,
+      }))
 
       const runTaskCount = allTasks.filter((t) => t.status === 'run').length
       const waitTaskCount = allTasks.filter((t) => t.status === 'wait').length
@@ -603,20 +966,16 @@
         || fusedChildren[fusedChildren.length - 1]
         || fusedChildren[0]
         || null
-      const completedGroupChildren = fusedChildren.filter((c) => !primaryTreeChild || c.id !== primaryTreeChild.id)
-      const doneGroupList = completedGroupChildren.length > 0
-        ? completedGroupChildren
-        : (fusedChildren.length > 1 ? fusedChildren.slice(0, fusedChildren.length - 1) : [])
 
       const [panZoom, setPanZoom] = React.useState({ x: 0, y: 0, scale: 1 })
       const panRef = React.useRef({ x: 0, y: 0, scale: 1, dragging: false, startX: 0, startY: 0, rafId: 0 })
       const stageDomRef = React.useRef(null)
       const viewportDomRef = React.useRef(null)
-      const horizStageDomRef = React.useRef(null)
-      const fanoutColDomRef = React.useRef(null)
+      const treeStageDomRef = React.useRef(null)
+      const treeNodeLayerDomRef = React.useRef(null)
       const rootCardDomRef = React.useRef(null)
-      const wavesStackDomRef = React.useRef(null)
       const waveCardDomRefs = React.useRef({})
+      const childCardDomRefs = React.useRef({})
 
       const [treeDirection, setTreeDirection] = React.useState(() => {
         try {
@@ -813,17 +1172,11 @@
         const runningInWave = children.filter((c) => c.status === 'running').length
         const errorInWave = children.filter((c) => c.status === 'error').length
         const doneInWave = children.filter((c) => c.status === 'done').length
+        const pendingInWave = children.filter((c) => c.status === 'pending').length
         const tokensInWave = children.reduce((acc, c) => acc + (Number(c.tokens) || 0), 0)
-        const progressPct = children.length > 0
+        const progressPct = children.length > 0 && (doneInWave > 0 || runningInWave > 0)
           ? Math.max(8, Math.min(100, Math.round(((doneInWave + runningInWave * 0.5) / children.length) * 100)))
           : 0
-        const topPriority = errorInWave > 0
-          ? 'P0'
-          : children.reduce((best, c) => {
-              const rBest = (PRIORITY_BADGE_META[best] && PRIORITY_BADGE_META[best].rank) ?? 2
-              const rCur = (PRIORITY_BADGE_META[c.uiPriority] && PRIORITY_BADGE_META[c.uiPriority].rank) ?? 2
-              return rCur < rBest ? c.uiPriority : best
-            }, children.length > 0 ? (children[0].uiPriority || 'P2') : 'P2')
         return {
           id: wm.wave,
           wave: wm.wave,
@@ -835,10 +1188,10 @@
           runningInWave: runningInWave,
           errorInWave: errorInWave,
           doneInWave: doneInWave,
+          pendingInWave: pendingInWave,
           tokensInWave: tokensInWave,
           tokenLabel: fmtTokNum(tokensInWave) + ' tok',
           progressPct: progressPct,
-          topPriority: topPriority,
         }
       })
 
@@ -853,8 +1206,8 @@
           return Boolean(expandedWaves[wg.wave])
         }
         if (wg.runningInWave > 0 || wg.errorInWave > 0) return true
-        if (canvasFilteredChildren.length <= 4 && wg.children.length > 0) return true
-        if (wg.children.length > 3) return false
+        if (canvasFilteredChildren.length <= 6 && wg.children.length > 0) return true
+        if (wg.children.length > 4) return false
         const anyRunningWave = activeWaveGroups.some((g) => g.runningInWave > 0)
         if (!anyRunningWave && activeWaveGroups[activeWaveGroups.length - 1] && activeWaveGroups[activeWaveGroups.length - 1].wave === wg.wave) {
           return true
@@ -873,88 +1226,84 @@
       const autoFoldWaves = () => setExpandedWaves({})
       const allWavesExpanded = activeWaveGroups.length > 0 && activeWaveGroups.every((wg) => isWaveExpanded(wg))
 
-      const [fanoutGeom, setFanoutGeom] = React.useState(null)
-      const fanoutGeomRef = React.useRef(null)
+      const expandedMap = {}
+      const visibleChildrenByWave = {}
+      activeWaveGroups.forEach((wg) => {
+        const exp = isWaveExpanded(wg)
+        expandedMap[wg.wave] = exp
+        const pageLimit = Math.max(WAVE_PAGE_SIZE, Number(wavePageLimits[wg.wave]) || WAVE_PAGE_SIZE)
+        visibleChildrenByWave[wg.wave] = exp ? wg.children.slice(0, pageLimit) : []
+      })
 
-      const measureHorizontalFanout = React.useCallback(() => {
-        try {
-          const colEl = fanoutColDomRef.current || wavesStackDomRef.current
-          if (!colEl || typeof colEl.getBoundingClientRect !== 'function') return
-          const colRect = colEl.getBoundingClientRect()
-          if (!colRect || !(colRect.height > 0)) return
-          const curScale = Math.max(0.2, Number(panRef.current.scale) || 1)
-          const stackEl = wavesStackDomRef.current
-          const rootEl = rootCardDomRef.current
-          const stackRect = (stackEl && typeof stackEl.getBoundingClientRect === 'function')
-            ? stackEl.getBoundingClientRect()
-            : null
-          const rootRect = (rootEl && typeof rootEl.getBoundingClientRect === 'function')
-            ? rootEl.getBoundingClientRect()
-            : null
-          const rawHeight = Math.max(
-            stackRect && stackRect.height > 0 ? stackRect.height : 0,
-            rootRect && rootRect.height > 0 ? rootRect.height : 0,
-            colRect.height
+      const treeLayoutSig = [
+        treeDirection,
+        canvasFilter,
+        canvasSearch.trim(),
+        selAgentId || '',
+        activeWaveGroups.map((g) => g.wave + ':' + g.children.length + ':' + (expandedMap[g.wave] ? 1 : 0) + ':' + (visibleChildrenByWave[g.wave] ? visibleChildrenByWave[g.wave].length : 0)).join('|'),
+      ].join('::')
+
+      const p4TreeVisible = Boolean(eng && (isClusterVariant ? mode === 'p4' : true) && activeWaveGroups.length > 0)
+      const edgeGeom = useStageEdgePaths({
+        enabled: p4TreeVisible,
+        treeDirection: treeDirection,
+        stageRef: treeStageDomRef,
+        nodeLayerRef: treeNodeLayerDomRef,
+        rootRef: rootCardDomRef,
+        waveCardRefsObj: waveCardDomRefs,
+        childCardRefsObj: childCardDomRefs,
+        waveGroups: activeWaveGroups,
+        expandedMap: expandedMap,
+        visibleChildrenByWave: visibleChildrenByWave,
+        selAgentId: selAgentId,
+        animatingSpawnIds: animatingSpawnIds,
+        layoutSignature: treeLayoutSig,
+      })
+
+      const activeEdgeGeom = (edgeGeom && edgeGeom.direction === treeDirection) ? edgeGeom : null
+      const treeEdgesSvg = activeEdgeGeom && activeEdgeGeom.width > 0 && activeEdgeGeom.height > 0
+        ? h('svg', {
+            className: 'rt-tree-edges-svg',
+            viewBox: '0 0 ' + activeEdgeGeom.width + ' ' + activeEdgeGeom.height,
+            preserveAspectRatio: 'xMinYMin meet',
+            'aria-hidden': 'true',
+            style: {
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              width: '100%',
+              height: '100%',
+              pointerEvents: 'none',
+              zIndex: 1,
+              overflow: 'visible',
+              display: 'block',
+            },
+          },
+            activeEdgeGeom.edges.map((ed) => {
+              const strokeW = ed.selected ? 2.4 : (ed.active ? 2 : 1.55)
+              const strokeOp = !ed.focused ? 0.28 : (ed.selected ? 0.96 : (ed.active ? 0.9 : 0.68))
+              return h('g', { key: ed.key },
+                h('path', {
+                  d: ed.d,
+                  fill: 'none',
+                  stroke: ed.color,
+                  strokeWidth: strokeW,
+                  strokeLinecap: 'round',
+                  strokeLinejoin: 'round',
+                  strokeOpacity: strokeOp,
+                  className: ed.wireClass || undefined,
+                }),
+                h('circle', {
+                  cx: ed.endX,
+                  cy: ed.endY,
+                  r: ed.selected ? 3.5 : 2.6,
+                  fill: ed.color,
+                  fillOpacity: Math.min(1, strokeOp + 0.15),
+                })
+              )
+            })
           )
-          const totalH = Math.max(140, Math.round(rawHeight / curScale))
-          let yRoot = Math.round(totalH / 2)
-          if (rootRect && rootRect.height > 0) {
-            yRoot = Math.round(((rootRect.top + rootRect.height / 2) - colRect.top) / curScale)
-          }
-          const waveYs = {}
-          const cardsMap = waveCardDomRefs.current || {}
-          const waveKeys = Object.keys(cardsMap)
-          for (let i = 0; i < waveKeys.length; i += 1) {
-            const wk = waveKeys[i]
-            const cEl = cardsMap[wk]
-            if (cEl && typeof cEl.getBoundingClientRect === 'function') {
-              const cRect = cEl.getBoundingClientRect()
-              if (cRect && cRect.height > 0) {
-                waveYs[wk] = Math.round(((cRect.top + cRect.height / 2) - colRect.top) / curScale)
-              }
-            }
-          }
-          const prev = fanoutGeomRef.current
-          if (prev && Math.abs(prev.height - totalH) <= 1 && Math.abs(prev.yRoot - yRoot) <= 1) {
-            const prevKeys = Object.keys(prev.waveYs || {})
-            const nextKeys = Object.keys(waveYs)
-            if (
-              prevKeys.length === nextKeys.length
-              && nextKeys.every((k) => typeof prev.waveYs[k] === 'number' && Math.abs(prev.waveYs[k] - waveYs[k]) <= 1)
-            ) {
-              return
-            }
-          }
-          const nextGeom = { height: totalH, yRoot: yRoot, waveYs: waveYs }
-          fanoutGeomRef.current = nextGeom
-          setFanoutGeom(nextGeom)
-        } catch { /* SSR / stub safe no-op */ }
-      }, [])
-
-      const waveLayoutSig = activeWaveGroups.map((g) => g.wave + ':' + g.children.length + ':' + (isWaveExpanded(g) ? 1 : 0) + ':' + (wavePageLimits[g.wave] || WAVE_PAGE_SIZE)).join('|')
-
-      React.useEffect(() => {
-        if (!eng || treeDirection !== 'horizontal' || activeWaveGroups.length === 0) return undefined
-        measureHorizontalFanout()
-        if (typeof ResizeObserver !== 'function') return undefined
-        let ro = null
-        try {
-          ro = new ResizeObserver(() => {
-            measureHorizontalFanout()
-          })
-          if (wavesStackDomRef.current) ro.observe(wavesStackDomRef.current)
-          if (rootCardDomRef.current) ro.observe(rootCardDomRef.current)
-          const cardsMap = waveCardDomRefs.current || {}
-          Object.keys(cardsMap).forEach((k) => {
-            if (cardsMap[k]) ro.observe(cardsMap[k])
-          })
-        } catch { ro = null }
-        return () => {
-          if (ro && typeof ro.disconnect === 'function') {
-            try { ro.disconnect() } catch { /* ignore */ }
-          }
-        }
-      }, [eng, treeDirection, waveLayoutSig, measureHorizontalFanout])
+        : null
 
       const childLifecycleSignature = fusedChildren.map((c) => c.id + ':' + c.status).join('|')
       React.useEffect(() => {
@@ -994,17 +1343,6 @@
         }
       }, [childLifecycleSignature])
 
-      const triggerLifecycleDemo = () => {
-        const allIdsMap = {}
-        fusedChildren.forEach((c) => { allIdsMap[c.id] = true })
-        setAnimatingSpawnIds(allIdsMap)
-        setAnimatingCompleteIds(allIdsMap)
-        setHubAbsorbing(true)
-        setToast('✨ 正在演练子智能体派生与回传收尾动效：连线生长 → 弹性派生 → 能量流转 → 产物回传主控')
-        setTimeout(() => { setAnimatingSpawnIds({}) }, 520)
-        setTimeout(() => { setAnimatingCompleteIds({}); setHubAbsorbing(false) }, 1100)
-      }
-
       const [swimWaveFilter, setSwimWaveFilter] = React.useState('all')
       const [inspectorAgentId, setInspectorAgentId] = React.useState(null)
       const [inspectorDetailCache, setInspectorDetailCache] = React.useState({})
@@ -1037,6 +1375,37 @@
         }, () => {})
       }, [inspectorAgentId, selAgentId, eng])
 
+      const handleDispatchWorkerTask = (targetAgent) => {
+        if (!targetAgent || targetAgent.isRoot || dispatchingId) return
+        const targetId = targetAgent.id
+        setDispatchingId(targetId)
+        setToast('正在拉起子代理分片：' + (targetAgent.title || targetId) + '…')
+        api({
+          op: 'dispatchWorkerTask',
+          engagement_id: activeEngagementId,
+          engagement: eng || undefined,
+          session: activeSid || undefined,
+          worker_id: targetId,
+          session_id: targetAgent.sessionId || undefined,
+          role: targetAgent.role,
+          wave: targetAgent.wave,
+          assigned_goal: targetAgent.assignedGoal || targetAgent.prompt,
+          files_owned: Array.isArray(targetAgent.filesOwned) ? targetAgent.filesOwned : [],
+        }).then((res) => {
+          setDispatchingId(null)
+          if (!res || res.ok === false) {
+            setToast('拉起子代理失败：' + ((res && (res.message || res.error)) || '后端返回异常'))
+            return
+          }
+          const sid = res.session_id || res.sessionId || (res.child && (res.child.session_id || res.child.id)) || (res.worker && res.worker.session_id) || ''
+          setToast(res.note || ('已拉起执行：' + (targetAgent.title || targetId) + (sid ? ('（子会话 ' + sid + '）') : '')))
+          reloadDag()
+        }, () => {
+          setDispatchingId(null)
+          setToast('拉起子代理失败：请求异常')
+        })
+      }
+
       const handleCreateCustomShard = () => {
         const titleStr = String(newShardTitle || '').trim()
         if (!titleStr) { setToast('请填写新增分片节点的标题'); return }
@@ -1047,6 +1416,7 @@
           op: 'addCustomWorkerTask',
           engagement_id: activeEngagementId,
           engagement: eng || undefined,
+          session: activeSid || undefined,
           title: titleStr,
           role: newShardRole,
           wave: Number(newShardWave) || 3,
@@ -1059,13 +1429,14 @@
             return
           }
           const createdId = (res && (res.worker_id || res.id)) || ('custom-worker-' + (customWorkerNodes.length + 1))
+          const createdSid = (res && (res.session_id || res.sessionId)) || ''
           setCustomWorkerNodes((prev) => prev.concat([{
-            id: createdId, wave: Number(newShardWave) || 3, role: newShardRole,
+            id: createdId, session_id: createdSid || undefined, wave: Number(newShardWave) || 3, role: newShardRole,
             title: titleStr, assigned_goal: goalStr, files_owned: filesArr, status: (res && res.status) || 'pending',
           }]))
           setNewShardTitle(''); setNewShardGoal(''); setNewShardFiles('')
           setShowAddShardForm(false)
-          setToast('✓ 已新增分片节点：' + titleStr)
+          setToast('已新增分片节点：' + titleStr + (createdSid ? ('（子会话 ' + createdSid + '）') : ''))
           reloadDag()
         })
       }
@@ -1080,6 +1451,7 @@
           op: 'updateWorkerGoal',
           engagement_id: activeEngagementId,
           engagement: eng || undefined,
+          session: activeSid || undefined,
           worker_id: targetAgent.id,
           assigned_goal: goalStr,
           files_owned: filesArr,
@@ -1093,7 +1465,7 @@
             [targetAgent.id]: { assignedGoal: goalStr, filesOwned: filesArr },
           }))
           setEditingGoalOpen(false)
-          setToast('💾 已更新分片目标与独占文件：' + (targetAgent.title || targetAgent.id))
+          setToast((res && res.note) || ('已更新分片目标与独占文件：' + (targetAgent.title || targetAgent.id)))
           reloadDag()
         })
       }
@@ -1108,6 +1480,7 @@
           op: 'planApproveWorker',
           engagement_id: activeEngagementId,
           engagement: eng || undefined,
+          session: activeSid || undefined,
           worker_id: detailTarget.id,
           session_id: detailTarget.sessionId || detailTarget.id,
           worker_name: detailTarget.name || detailTarget.title,
@@ -1129,9 +1502,15 @@
               ts: Date.now(),
             },
           }))
+          const dispatchedList = Array.isArray(res && res.dispatched_sessions)
+            ? res.dispatched_sessions.map((s) => (typeof s === 'string' ? s : (s && (s.session_id || s.id)))).filter(Boolean)
+            : []
+          const sidSuffix = dispatchedList.length > 0
+            ? ('，已联动派发：' + dispatchedList.join(', '))
+            : ((res && (res.session_id || res.sessionId)) ? ('（子会话 ' + (res.session_id || res.sessionId) + '）') : '')
           setToast(decision === 'revision_requested'
-            ? ('↩ 已驳回重做 ' + (detailTarget.name || detailTarget.title) + '：' + nextGoalStr)
-            : ('✓ Plan 已审批通过 ' + (detailTarget.name || detailTarget.title) + ' 并下达新目标：' + ((res && res.next_goal) || nextGoalStr)))
+            ? ('已驳回重做 ' + (detailTarget.name || detailTarget.title) + '：' + nextGoalStr)
+            : ('已审批通过 ' + (detailTarget.name || detailTarget.title) + '，下达目标：' + ((res && res.next_goal) || nextGoalStr) + sidSuffix))
           reloadDag()
         })
       }
@@ -1143,6 +1522,7 @@
           op: 'retryWorkerTask',
           engagement_id: activeEngagementId,
           engagement: eng || undefined,
+          session: activeSid || undefined,
           worker_id: detailTarget.id,
         }).then((res) => {
           setRetryingBusy(false)
@@ -1150,65 +1530,21 @@
             setToast('重跑分片失败：' + (res.error || '请稍后重试'))
             return
           }
-          setToast('🔄 已触发单分片重跑：' + (detailTarget.title || detailTarget.id))
+          const sid = res && (res.session_id || res.sessionId || (res.worker && res.worker.session_id))
+          setToast((res && res.note) || ('已触发单分片重跑：' + (detailTarget.title || detailTarget.id) + (sid ? ('（子会话 ' + sid + '）') : '')))
           reloadDag()
         })
       }
 
-      const openAgentSessionInHostChat = (agent) => {
-        const candidateSid = (agent && (agent.sessionId || agent.id)) || ''
-        const fallbackRealSid = isRealHostSessionId(sessionId, hostSessions)
-          ? sessionId
-          : (isRealHostSessionId(domTel.sessionId, hostSessions) ? domTel.sessionId : '')
-        const targetSid = isRealHostSessionId(candidateSid, hostSessions) ? candidateSid : fallbackRealSid
-        const targetTitle = (agent && agent.title) ? agent.title : (sessionTitle || targetSid || '当前会话')
-
-        if (targetSid) {
-          setSessionId(targetSid, targetTitle)
-          try {
-            if (typeof window !== 'undefined' && window.localStorage) {
-              window.localStorage.setItem('dsh.sessions.current', targetSid)
-            }
-          } catch (e) { /* ignore */ }
-        }
-
-        api({
-          op: 'activateAgentSession',
-          sessionId: targetSid || candidateSid || undefined,
-          agentId: agent && agent.id,
-          engagement: eng || undefined,
-        }).catch(() => {})
-
-        try {
-          if (targetSid && typeof document !== 'undefined' && typeof document.querySelectorAll === 'function') {
-            const candidates = document.querySelectorAll(
-              '[data-session-id],[data-id],a[href*="session"],[role="treeitem"],[role="option"],li'
-            )
-            const normTitle = String(targetTitle || '').trim().toLowerCase()
-            for (let i = 0; i < candidates.length; i += 1) {
-              const el = candidates[i]
-              if (!el || typeof el.click !== 'function') continue
-              if (typeof el.closest === 'function' && el.closest('.rt-dock, .rt-full, .rt-embed')) continue
-              const dsId = (typeof el.getAttribute === 'function')
-                ? (el.getAttribute('data-session-id') || el.getAttribute('data-id') || el.getAttribute('href') || '')
-                : ''
-              const txt = String(el.textContent || '').trim().toLowerCase()
-              if (
-                (dsId && dsId.includes(targetSid)) ||
-                (txt && txt.includes(String(targetSid).toLowerCase())) ||
-                (normTitle && txt && (txt === normTitle || txt.includes(normTitle)))
-              ) {
-                el.click()
-                break
-              }
-            }
-          }
-        } catch (e) { /* ignore */ }
-
-        exitFullInPlace()
-        setToast(targetSid
-          ? ('已切换侧边聊天框至 Agent 会话：' + targetTitle)
-          : ('已返回宿主聊天窗口（当前节点尚未绑定独立子会话）：' + targetTitle))
+      const handleOpenAgentChat = (agent) => {
+        const res = openAgentSessionInHostChat(agent, {
+          engagement: eng,
+          hostSessions: hostSessions,
+          fallbackSessionId: domTel.sessionId,
+        })
+        setToast(res.targetSid
+          ? ('已切换侧边聊天框至 Agent 会话：' + res.targetTitle)
+          : ('已返回宿主聊天窗口（当前节点尚未绑定独立子会话）：' + res.targetTitle))
       }
 
       const resolveInspectorAgent = () => {
@@ -1216,15 +1552,13 @@
         const targetId = inspectorAgentId || selAgentId || (primaryTreeChild && primaryTreeChild.id) || 'root'
         const rootObj = {
           id: 'root',
-          sessionId: sessionId || domTel.sessionId || 'root',
+          sessionId: activeSid || sessionId || domTel.sessionId || 'root',
           name: workspaceDisplayTitle,
           wave: 0,
           role: 'plan',
           avatar: '主控',
           color: '#3b82f6',
           title: workspaceDisplayTitle,
-          uiPriority: 'P0',
-          workerTags: ['#plan-orchestrator', '#lmtex-loop'],
           rawTokens: rootTokens,
           compressedTokens: rootTokens > 0 ? Math.round(rootTokens * 0.14) : 0,
           compressionPct: fusedChildren.length > 0 ? 85 : 0,
@@ -1234,7 +1568,7 @@
           compressedDigest: {
             whatWasDone: fusedChildren.length > 0
               ? ('已统筹 ' + fusedChildren.length + ' 个子智能体分片目标、摘要压缩与阶段审批派发。')
-              : '主控编排器就绪 —— 可在上方许愿拆解向导输入需求一键立项并生成并行分片。',
+              : '主控编排器就绪 —— 可在协同与审批页输入需求一键立项并生成并行分片。',
             filesTouched: [],
           },
           nextGoal: '继续推进下一波次契约验证与回归闭环',
@@ -1298,19 +1632,23 @@
       }
 
       const swimFilteredLanes = (() => {
-        const sortByPriority = (list) => list.slice().sort((a, b) => {
+        const statusOrder = { error: 0, running: 1, pending: 2, done: 3 }
+        const sortByWave = (list) => list.slice().sort((a, b) => {
           if (a.isRoot && !b.isRoot) return -1
           if (!a.isRoot && b.isRoot) return 1
-          const rA = (PRIORITY_BADGE_META[a.uiPriority] && PRIORITY_BADGE_META[a.uiPriority].rank) ?? 2
-          const rB = (PRIORITY_BADGE_META[b.uiPriority] && PRIORITY_BADGE_META[b.uiPriority].rank) ?? 2
-          return rA - rB
+          const wDiff = (Number(a.wave) || 0) - (Number(b.wave) || 0)
+          if (wDiff !== 0) return wDiff
+          const sA = statusOrder[a.status] !== undefined ? statusOrder[a.status] : 9
+          const sB = statusOrder[b.status] !== undefined ? statusOrder[b.status] : 9
+          if (sA !== sB) return sA - sB
+          return String(a.title || a.id || '').localeCompare(String(b.title || b.id || ''))
         })
-        if (swimWaveFilter === 'all') return sortByPriority(visibleLanes)
+        if (swimWaveFilter === 'all') return sortByWave(visibleLanes)
         if (swimWaveFilter === 'running') {
-          return sortByPriority(visibleLanes.filter((ln) => ln.status === 'running' || (ln.isRoot && runningCount > 0)))
+          return sortByWave(visibleLanes.filter((ln) => ln.status === 'running' || (ln.isRoot && runningCount > 0)))
         }
         const waveNum = Number(swimWaveFilter)
-        return sortByPriority(visibleLanes.filter((ln) => !ln.isRoot && Number(ln.wave || 1) === waveNum))
+        return sortByWave(visibleLanes.filter((ln) => !ln.isRoot && Number(ln.wave || 1) === waveNum))
       })()
 
       const activeInspectorAgent = resolveInspectorAgent()
@@ -1344,81 +1682,25 @@
         })
       }
 
-      const triggerFeishuPush = () => {
-        setToast('正在向飞书群聊推送工作流状态…')
-        api({ op: 'feishuNotify', engagement: eng || undefined, webhook: webhook, node: selected.id }).then((r) => {
-          if (r && r.ok === false) {
-            setToast('飞书推送失败：' + (r.error || '请检查 Webhook 地址'))
-            return
-          }
-          setToast((r && r.note) || ('飞书机器人推送成功：已发送「' + selected.name + '」节点简报'))
-        }, () => {
-          setToast('飞书机器人推送请求失败，请检查网络连接')
-        })
-      }
-
-      const saveFeishuConfig = () => {
-        setFeishuSaving(true)
-        api({
-          op: 'feishuConfig',
-          engagement_id: activeEngagementId,
-          engagement: eng || undefined,
-          webhook_url: webhook,
-          webhook: webhook,
-          events: { on_node: feishuOnNode, on_gate: feishuOnGate, on_ship: feishuOnShip },
-        }).then((r) => {
-          setFeishuSaving(false)
-          if (!r || r.ok === false) {
-            setToast('保存飞书推送配置失败：' + ((r && r.error) || '后端拒绝或未就绪'))
-            return
-          }
-          setToast((r && r.note) || '✓ 已保存飞书推送配置至当前工作区')
-        })
-      }
-
-      const addQuickTask = () => {
-        const idx = customTasks.length + 1
-        const nextTask = {
-          id: 'task-custom-' + idx,
-          agentId: primaryTreeChild ? primaryTreeChild.id : 'root',
-          avatar: 'W' + Math.min(4, idx + 2),
-          color: '#3b82f6',
-          title: 'Wave3 exploit 增量分片任务 #' + idx,
-          role: 'exploit',
-          wave: 3,
-          uiPriority: 'P1',
-          workerTags: ['#ui-canvas', '#pg-store'],
-          compressionPct: 0,
-          approvalState: 'pending_approval',
-          status: 'wait',
-          statusBadge: '○ 待执行',
-          prompt: '执行增量模块分片构建与自动化验证，完成后回传主控并写入事实库。',
-          output: '待分配并发槽位…',
-          tokenLabel: '0 tok',
-          durationLabel: '待调度',
-          steps: 0,
-        }
-        setCustomTasks((prev) => [nextTask].concat(prev))
-        setToast('已新建团队协作任务：' + nextTask.title)
-      }
-
-      const fallbackSvgH = Math.max(180, activeWaveGroups.length * 112)
-      const svgHeight = (fanoutGeom && fanoutGeom.height > 0) ? fanoutGeom.height : fallbackSvgH
-      const svgYRoot = (fanoutGeom && typeof fanoutGeom.yRoot === 'number') ? fanoutGeom.yRoot : Math.round(svgHeight / 2)
       const effectiveMode = isClusterVariant ? mode : 'p4'
 
       if (!eng) {
         return h('div', { className: 'rt-bento-card rt-p4-workbench' },
           h('div', { className: 'rt-bento-head' },
-            h('span', { className: 'rt-bento-title' }, '实时角色决策流 & DAG 工作流画布'),
+            h('span', { className: 'rt-bento-title' }, '派生树状图 & 多维协同工作台'),
             h('span', { className: 'rt-tag' }, '待初始化'),
             h('div', { className: 'rt-spacer' }),
+            h('button', {
+              type: 'button',
+              className: 'rt-btn',
+              onClick: () => setUI({ tab: 'settings' }),
+            }, '设置'),
             (props.onOpenCollab || props.onOpenWishWizard)
               ? h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                }, '✨ 前往「协同与审批」启动立项 →')
+                }, '前往协同与审批立项 →')
               : null),
           h('div', {
             className: 'rt-empty',
@@ -1436,21 +1718,173 @@
             },
           },
             h('div', { style: { fontWeight: 700, fontSize: 13.5, color: 'var(--dsw-alias-label-primary)' } },
-              '当前会话尚未初始化研发任务 · 前往「协同与审批」启动立项'),
-            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', maxWidth: 540, lineHeight: 1.55 } },
-              '为当前会话建立独立工作台并确认拆解蓝图后，此处将实时呈现 4-Wave 并发派生树与角色协同状态。'),
+              '当前会话尚未初始化研发任务'),
+            h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', maxWidth: 520, lineHeight: 1.55 } },
+              '请前往「协同与审批」通过 AI 澄清与拆解立项，确认后此处将实时呈现派生树与子代理协同状态。'),
             (props.onOpenCollab || props.onOpenWishWizard)
               ? h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                }, '✨ 前往「协同与审批」初始化工作台')
+                }, '前往「协同与审批」启动立项')
               : null))
+      }
+
+      const renderTreeChildCard = (c, portSide) => {
+        const isSel = selAgentId === c.id
+        const isErrCard = c.status === 'error'
+        const isRunCard = c.status === 'running'
+        const isPendCard = c.status === 'pending'
+        const isSpawning = Boolean(animatingSpawnIds[c.id])
+        const isCompleting = Boolean(animatingCompleteIds[c.id])
+        const isApproved = c.approvalState === 'approved'
+        const isRevReq = c.approvalState === 'revision_required'
+        const isBusyDispatch = dispatchingId === c.id
+        const accentColor = isErrCard ? '#ef4444' : (c.color || '#3b82f6')
+        const statusColor = isErrCard ? '#ef4444' : (isRunCard ? '#3b82f6' : (isPendCard ? '#f59e0b' : '#10b981'))
+        const statusText = isErrCard ? '异常' : (isRunCard ? '运行中' : (isPendCard ? '待执行' : '已完成'))
+        const summaryText = (c.compressedDigest && c.compressedDigest.whatWasDone) || c.output || c.assignedGoal || '等待分片执行'
+        const portClass = portSide === 'top' ? 'rt-tree-port rt-tree-port-top' : 'rt-tree-port rt-tree-port-left'
+        const portStyle = portSide === 'top'
+          ? {
+              position: 'absolute',
+              top: -5,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: 'var(--dsw-alias-bg-layer-1)',
+              border: '2px solid ' + accentColor,
+              pointerEvents: 'none',
+              zIndex: 3,
+            }
+          : {
+              position: 'absolute',
+              left: -5,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: 'var(--dsw-alias-bg-layer-1)',
+              border: '2px solid ' + accentColor,
+              pointerEvents: 'none',
+              zIndex: 3,
+            }
+        const cardStyle = Object.assign({
+          position: 'relative',
+          width: '100%',
+          boxSizing: 'border-box',
+          border: isErrCard
+            ? '1.5px solid #ef4444'
+            : (isSel ? ('1.5px solid ' + accentColor) : '1px solid var(--dsw-alias-border-l1)'),
+          borderRadius: 10,
+          padding: '9px 10px 8px',
+          background: isErrCard ? 'rgba(239,68,68,0.05)' : 'var(--dsw-alias-bg-layer-1)',
+          cursor: 'pointer',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 5,
+          minWidth: 0,
+          boxShadow: isSel ? ('0 0 0 3px ' + accentColor + '26') : '0 2px 6px rgba(15,23,42,0.04)',
+        }, portSide === 'top'
+          ? { borderTop: '3.5px solid ' + accentColor }
+          : { borderLeft: '3.5px solid ' + accentColor })
+
+        return h('div', Object.assign({
+          key: c.id,
+          ref: (el) => {
+            if (!childCardDomRefs.current) childCardDomRefs.current = {}
+            if (el) childCardDomRefs.current[c.id] = el
+            else delete childCardDomRefs.current[c.id]
+          },
+          className: 'rt-p4-node-card'
+            + (isSel ? ' on' : '')
+            + (isErrCard ? ' is-error' : '')
+            + (isSpawning ? ' rt-anim-spawn' : '')
+            + (isCompleting ? ' rt-anim-complete' : ''),
+          style: cardStyle,
+        }, clickable(() => openAgentInspector(c.id), {
+          label: '检视子智能体 ' + c.title + ' 环节细节',
+          expanded: isSel,
+        })),
+          h('span', { className: portClass, 'aria-hidden': 'true', style: portStyle }),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 } },
+            h('span', {
+              style: {
+                background: accentColor,
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: 700,
+                padding: '1px 6px',
+                borderRadius: 5,
+                flex: 'none',
+                fontFamily: 'ui-monospace,Menlo,monospace',
+              },
+            }, c.avatar),
+            h('span', {
+              style: {
+                fontWeight: 700,
+                fontSize: 11.5,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                flex: 1,
+                minWidth: 0,
+              },
+              title: c.title,
+            }, c.title),
+            h('span', {
+              style: {
+                fontSize: 10,
+                fontWeight: 700,
+                color: statusColor,
+                flex: 'none',
+              },
+            }, statusText)),
+          h('div', {
+            style: {
+              fontSize: 10.5,
+              color: isErrCard ? '#ef4444' : 'var(--dsw-alias-label-secondary)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            },
+            title: summaryText,
+          }, summaryText),
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, fontSize: 9.5, flexWrap: 'wrap' } },
+            h('span', { className: 'rt-mono', style: { color: 'var(--dsw-alias-label-secondary)' } },
+              c.tokenLabel + ' · ' + (c.durationLabel || '待命') + ' · ' + (c.steps || 0) + ' 步'),
+            h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+              (isRevReq || !isApproved)
+                ? h('span', {
+                    style: {
+                      padding: '1px 5px',
+                      borderRadius: 4,
+                      background: isRevReq ? 'rgba(239,68,68,0.14)' : 'rgba(245,158,11,0.16)',
+                      color: isRevReq ? '#ef4444' : '#d97706',
+                      fontWeight: 700,
+                    },
+                  }, isRevReq ? '待重做' : '待审批')
+                : null,
+              (isPendCard && isClusterVariant)
+                ? h('button', {
+                    type: 'button',
+                    className: 'rt-btn rt-btn-primary',
+                    disabled: isBusyDispatch,
+                    style: { padding: '1px 7px', fontSize: 9.5, lineHeight: '15px' },
+                    onClick: (e) => {
+                      if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+                      handleDispatchWorkerTask(c)
+                    },
+                  }, isBusyDispatch ? '拉起中…' : '拉起执行')
+                : null)))
       }
 
       return h('div', { className: 'rt-bento-card rt-p4-workbench' },
         h('div', { className: 'rt-bento-head' },
-          h('span', { className: 'rt-bento-title' }, isClusterVariant ? '实时角色决策流 & DAG 工作流画布' : '研发路线图 & 实时工作流画布'),
+          h('span', { className: 'rt-bento-title' }, isClusterVariant ? '派生树状图 & 多维协同工作台' : '派生树状图 & 实时工作流'),
           h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent · ' + allTasks.length + ' 协作任务'),
           pendingApprovalCount > 0
             ? h('span', { className: 'rt-tag rt-tag-warn' }, '待审批 ' + pendingApprovalCount)
@@ -1459,7 +1893,7 @@
             ? h('span', {
                 className: 'rt-tag',
                 style: { background: 'rgba(239,68,68,0.14)', color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)', fontWeight: 700 },
-              }, '⚠ ' + errorCount + ' 异常待修复')
+              }, errorCount + ' 异常待修复')
             : null,
           selAgentId
             ? h('button', {
@@ -1467,31 +1901,40 @@
                 className: 'rt-btn',
                 style: { padding: '1px 7px', fontSize: 10.5 },
                 onClick: () => setSelAgentId(null),
-              }, '已高亮筛选 · 点击重置 ✕')
+              }, '清除节点筛选')
             : null,
           h('div', { className: 'rt-spacer' }),
           isClusterVariant
-            ? h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': '工作流视图切换' },
+            ? h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': '工作流视图切换', style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' } },
                 h('button', {
                   type: 'button',
                   className: 'rt-harness-modebtn' + (mode === 'p4' ? ' on' : ''),
                   onClick: () => setMode('p4'),
-                }, 'Agent 网络与跨 Agent 协作'),
+                }, '派生树'),
                 h('button', {
                   type: 'button',
-                  className: 'rt-harness-modebtn' + (mode === 'p5' ? ' on' : ''),
-                  onClick: () => setMode('p5'),
-                }, '树状图画布 (团队任务板)'),
+                  className: 'rt-harness-modebtn' + (mode === 'swim' ? ' on' : ''),
+                  onClick: () => setMode('swim'),
+                }, '泳道矩阵'),
                 h('button', {
                   type: 'button',
                   className: 'rt-harness-modebtn' + (mode === 'docwall' ? ' on' : ''),
                   onClick: () => setMode('docwall'),
-                }, '文稿视图 (Doc Wall)'),
+                }, '角色文稿'),
+                (props.onOpenCollab || props.onOpenWishWizard)
+                  ? h('button', {
+                      type: 'button',
+                      className: 'rt-btn',
+                      style: { padding: '2px 8px', fontSize: 11 },
+                      onClick: props.onOpenCollab || props.onOpenWishWizard,
+                    }, '协同与审批' + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
+                  : null,
                 h('button', {
                   type: 'button',
-                  className: 'rt-harness-modebtn' + (mode === 'feishu' ? ' on' : ''),
-                  onClick: () => setMode('feishu'),
-                }, '飞书通知 (Feishu Push)'))
+                  className: 'rt-btn',
+                  style: { padding: '2px 8px', fontSize: 11 },
+                  onClick: () => setUI({ tab: 'settings' }),
+                }, '设置'))
             : h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                 props.onOpenCollab
                   ? h('button', {
@@ -1506,7 +1949,12 @@
                       className: 'rt-btn',
                       onClick: props.onOpenAgents,
                     }, '完整拓扑与泳道 →')
-                  : null)),
+                  : null,
+                h('button', {
+                  type: 'button',
+                  className: 'rt-btn',
+                  onClick: () => setUI({ tab: 'settings' }),
+                }, '设置'))),
 
         toast
           ? h('div', {
@@ -1530,10 +1978,10 @@
                 className: 'rt-btn',
                 style: { padding: '0 6px', fontSize: 10.5 },
                 onClick: () => setToast(null),
-              }, '✕'))
+              }, '关闭'))
           : null,
 
-        /* ── 模式 1: p4 工作流树画布 + (cluster 模式下展示过滤创作栏与下方全宽流程舱) ── */
+        /* ── 模式 1: p4 派生树画布 + 检视器 / 泳道协同 ── */
         effectiveMode === 'p4'
           ? h('div', {
               className: 'rt-p4-split-grid rt-p4-vertical-stack rt-p4-split',
@@ -1555,18 +2003,18 @@
               },
                 h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, 'Agent 网络 · 1 Plan + N Workers 闭环派生树'),
+                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, 'Agent 网络 · 派生树状图'),
                     h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
                       isClusterVariant
-                        ? '点击节点在下方检视器审阅压缩摘要、修改分片目标或一键审批放行'
-                        : '点击任意节点预览阶段进展，前往「协同与审批」处理蓝图立项或人工决策')),
+                        ? '点击节点检视执行细节、编辑目标、拉起执行或审批放行'
+                        : '点击任意节点预览阶段进展')),
                   h('div', { style: { display: 'inline-flex', flexWrap: 'wrap', gap: 6, fontSize: 11 } },
                     h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent'),
-                    h('span', { className: 'rt-tag rt-tag-active' }, runningCount + ' 个运行中'),
-                    errorCount > 0 ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' } }, errorCount + ' 异常阻塞') : null,
-                    h('span', { className: 'rt-tag' }, '上下文合计 ' + ctxSumLabel))),
+                    h('span', { className: 'rt-tag rt-tag-active' }, runningCount + ' 运行中'),
+                    errorCount > 0 ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' } }, errorCount + ' 异常') : null,
+                    h('span', { className: 'rt-tag' }, '上下文 ' + ctxSumLabel))),
 
-                /* 画布搜索/过滤与交互式新增分片工具栏（仅在「集群」完整模式下展开，保持「总览」清爽低密度） */
+                /* 画布搜索/过滤与交互式新增分片工具栏 */
                 isClusterVariant
                   ? h('div', {
                       className: 'rt-canvas-filter-bar',
@@ -1590,14 +2038,13 @@
                       }),
                       [
                         { k: 'all', lbl: '全部 (' + fusedChildren.length + ')' },
-                        { k: 'p0', lbl: 'P0 焦点' },
                         { k: 'running', lbl: '运行中' },
                         { k: 'pending', lbl: '待审批' + (pendingApprovalCount > 0 ? ' (' + pendingApprovalCount + ')' : '') },
                         { k: 'error', lbl: '异常阻塞' + (errorCount > 0 ? ' (' + errorCount + ')' : '') },
                       ].map((fp) => h('button', {
                         key: 'cf-' + fp.k,
                         type: 'button',
-                        className: 'rt-p3-pill' + (canvasFilter === fp.k ? ' on' : ''),
+                        className: 'rt-btn' + (canvasFilter === fp.k ? ' rt-btn-primary' : ''),
                         style: { fontSize: 10.5, padding: '2px 8px' },
                         onClick: () => setCanvasFilter(fp.k),
                       }, fp.lbl)),
@@ -1608,14 +2055,14 @@
                             className: 'rt-btn',
                             style: { padding: '2px 8px', fontSize: 11, fontWeight: 600 },
                             onClick: props.onOpenCollab || props.onOpenWishWizard,
-                          }, '✨ 需求拆解与审批')
+                          }, '需求拆解与审批')
                         : null,
                       h('button', {
                         type: 'button',
                         className: 'rt-btn' + (showAddShardForm ? ' rt-btn-primary' : ''),
                         style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                         onClick: () => setShowAddShardForm((v) => !v),
-                      }, showAddShardForm ? '收起新增分片 ✕' : '➕ 新增分片节点'))
+                      }, showAddShardForm ? '收起新增分片' : '+ 新增分片节点'))
                   : null,
 
                 isClusterVariant && showAddShardForm
@@ -1754,398 +2201,246 @@
                   },
                     treeDirection === 'horizontal'
                       ? h('div', {
-                          ref: horizStageDomRef,
-                          className: 'rt-tree-layout-horizontal',
+                          ref: treeStageDomRef,
+                          className: 'rt-tree-layout-horizontal rt-tree-stage',
                           style: {
-                            display: 'grid',
-                            gridTemplateColumns: activeWaveGroups.length > 0 ? '270px 68px minmax(0, 1fr)' : '270px minmax(0, 1fr)',
-                            alignItems: 'center',
-                            gap: activeWaveGroups.length > 0 ? 0 : 16,
+                            display: 'block',
+                            position: 'relative',
+                            minWidth: 'max-content',
                             width: '100%',
+                            padding: '24px 28px',
+                            boxSizing: 'border-box',
                           },
                         },
-                          /* 1. 左列 (.rt-h-root-col): Level 0 主控 Plan 编排器 */
+                          treeEdgesSvg,
                           h('div', {
-                            className: 'rt-h-root-col',
-                            style: { display: 'flex', alignItems: 'center', justifyContent: 'center' },
+                            ref: treeNodeLayerDomRef,
+                            className: 'rt-tree-node-layer',
+                            style: {
+                              position: 'relative',
+                              zIndex: 2,
+                              display: 'flex',
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 68,
+                              width: 'max-content',
+                              minWidth: '100%',
+                            },
                           },
-                            h('div', Object.assign({
-                              ref: rootCardDomRef,
-                              className: 'rt-p4-node-card rt-p4-root-card'
-                                + (selAgentId === 'root' ? ' on' : '')
-                                + (hubAbsorbing ? ' rt-anim-hub-absorb' : ''),
-                              style: {
-                                width: '100%',
-                                position: 'relative',
-                                border: selAgentId === 'root' ? '1.5px solid #3b82f6' : '1px solid var(--dsw-alias-border-l1)',
-                                borderLeft: '4px solid #3b82f6',
-                                borderRadius: 10,
-                                padding: '10px 12px',
-                                background: 'var(--dsw-alias-bg-layer-1)',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 6,
-                                boxShadow: selAgentId === 'root' ? '0 0 0 3px rgba(59,130,246,0.16)' : '0 2px 6px rgba(0,0,0,0.06)',
-                              },
-                            }, clickable(() => openAgentInspector('root'), {
-                              label: '检视主控节点 ' + workspaceDisplayTitle + ' 环节细节',
-                              expanded: selAgentId === 'root',
-                            })),
-                              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
-                                h('span', { style: { fontSize: 10, fontWeight: 700, color: '#3b82f6' } }, 'Level 0 · 主控 Plan 编排器'),
-                                h('span', {
-                                  className: 'rt-pri-badge rt-pri-badge-p0',
-                                  style: { fontSize: 9.5, padding: '1px 6px', borderRadius: 4, background: 'rgba(239,68,68,0.14)', color: '#ef4444', fontWeight: 700 },
-                                }, 'P0 主控中枢')),
-                              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                                h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '主控'),
-                                h('span', {
-                                  style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                                  title: workspaceDisplayTitle,
-                                }, workspaceDisplayTitle),
-                                h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, fusedChildren.length > 0 ? '协同中' : '就绪')),
-                              h('div', { style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.4 } },
-                                '1 Plan + N Workers · 自动拆分目标 / 摘要压缩 / 审批派发'),
-                              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
-                                h('span', { className: 'rt-mono' }, rootTokensLabel + ' · ' + rootCostLabel),
-                                h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
-                                h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
-                              h('span', {
-                                className: 'rt-n8n-diamond-pin rt-node-handle rt-node-handle-out',
+                            h('div', {
+                              className: 'rt-h-root-col',
+                              style: { width: 256, flex: 'none', display: 'flex', alignItems: 'center' },
+                            },
+                              h('div', Object.assign({
+                                ref: rootCardDomRef,
+                                className: 'rt-p4-node-card rt-p4-root-card'
+                                  + (selAgentId === 'root' ? ' on' : '')
+                                  + (hubAbsorbing ? ' rt-anim-hub-absorb' : ''),
                                 style: {
-                                  position: 'absolute',
-                                  right: -6,
-                                  top: '50%',
-                                  transform: 'translateY(-50%) rotate(45deg)',
+                                  width: '100%',
+                                  position: 'relative',
+                                  border: selAgentId === 'root' ? '1.5px solid #3b82f6' : '1px solid var(--dsw-alias-border-l1)',
+                                  borderLeft: '4px solid #3b82f6',
+                                  borderRadius: 10,
+                                  padding: '10px 12px',
+                                  background: 'var(--dsw-alias-bg-layer-1)',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 6,
+                                  boxShadow: selAgentId === 'root' ? '0 0 0 3px rgba(59,130,246,0.16)' : '0 2px 6px rgba(0,0,0,0.06)',
                                 },
-                              }))),
-
-                          /* 2. 中列 (.rt-h-fanout-col): 绝对定位 SVG 连线层，对 Grid 行高产生零布局反馈 */
-                          activeWaveGroups.length > 0
-                            ? h('div', {
-                                ref: fanoutColDomRef,
-                                className: 'rt-h-fanout-col',
-                                style: { position: 'relative', width: 68, alignSelf: 'stretch', minHeight: 0 },
-                              },
-                                h('svg', {
-                                  className: 'rt-h-root-fanout-svg rt-p4-bezier-svg',
-                                  viewBox: '0 0 68 ' + svgHeight,
-                                  preserveAspectRatio: 'none',
-                                  style: {
-                                    position: 'absolute',
-                                    inset: 0,
-                                    width: '100%',
-                                    height: '100%',
-                                    pointerEvents: 'none',
-                                    overflow: 'visible',
-                                    display: 'block',
-                                  },
-                                  'aria-label': '主控向右扇出至各 Wave 分支连线',
-                                },
-                                  activeWaveGroups.map((wg, idx) => {
-                                    const n = activeWaveGroups.length
-                                    const measuredWaveY = (fanoutGeom && fanoutGeom.waveYs && typeof fanoutGeom.waveYs[String(wg.wave)] === 'number')
-                                      ? fanoutGeom.waveYs[String(wg.wave)]
-                                      : null
-                                    const yWave = measuredWaveY !== null
-                                      ? measuredWaveY
-                                      : (n === 1 ? Math.round(svgHeight / 2) : Math.round(((idx + 0.5) / n) * svgHeight))
-                                    const dCurve = 'M 0,' + svgYRoot + ' C 34,' + svgYRoot + ' 34,' + yWave + ' 68,' + yWave
-                                    const isWaveSelected = wg.children.some((c) => c.id === selAgentId)
-                                    const isFocused = !selAgentId || selAgentId === 'root' || isWaveSelected
-                                    const isSpawningWave = wg.children.some((c) => Boolean(animatingSpawnIds[c.id]))
-                                    const wireClass = (isSpawningWave ? 'rt-wire-growing ' : '')
-                                      + ((wg.runningInWave > 0 || isSpawningWave) ? 'rt-wire-flowing' : '')
-                                    return h('g', { key: 'h-bz-wave-' + wg.wave },
-                                      h('path', {
-                                        d: dCurve,
-                                        fill: 'none',
-                                        stroke: wg.color,
-                                        strokeWidth: isWaveSelected ? '3.2' : '2.0',
-                                        opacity: isFocused ? '0.24' : '0.1',
-                                      }),
-                                      h('path', {
-                                        className: wireClass || undefined,
-                                        d: dCurve,
-                                        fill: 'none',
-                                        stroke: wg.color,
-                                        strokeWidth: isWaveSelected ? '2.6' : '1.8',
-                                        strokeDasharray: (wg.runningInWave > 0 && !wireClass) ? '5 3' : undefined,
-                                        opacity: isFocused ? '0.92' : '0.32',
-                                      }),
-                                      h('circle', {
-                                        cx: '66',
-                                        cy: String(yWave),
-                                        r: '3.5',
-                                        fill: wg.color,
-                                        opacity: isFocused ? '1' : '0.35',
-                                      }))
-                                  }),
-                                  h('circle', { cx: '2', cy: String(svgYRoot), r: '4', fill: '#3b82f6' })))
-                            : null,
-
-                          /* 3. 右列 (.rt-h-waves-stack): 有真实任务时展示 Wave 泳道，真实空态时展示引导提示 */
-                          activeWaveGroups.length > 0
-                            ? h('div', {
-                                ref: wavesStackDomRef,
-                                className: 'rt-h-waves-stack rt-tree-wave-row rt-tree-wave-grid',
-                                style: { display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 },
-                              },
-                                activeWaveGroups.map((wg) => {
-                                  const expanded = isWaveExpanded(wg)
-                                  const hasSelectedChild = wg.children.some((c) => c.id === selAgentId)
-                                  const isSpawningWave = wg.children.some((c) => Boolean(animatingSpawnIds[c.id]))
-                                  const isCompletingWave = wg.children.some((c) => Boolean(animatingCompleteIds[c.id]))
-                                  const statusSummary = wg.errorInWave > 0
-                                    ? ('⚠ ' + wg.errorInWave + ' 异常待修复')
-                                    : (wg.runningInWave > 0
-                                      ? ('● ' + wg.runningInWave + ' 运行中')
-                                      : ('✓ ' + wg.doneInWave + ' 已完成'))
-                                  const wavePriMeta = PRIORITY_BADGE_META[wg.topPriority] || PRIORITY_BADGE_META.P2
-                                  const pageCap = wavePageLimits[wg.wave] || WAVE_PAGE_SIZE
-                                  const visibleWaveChildren = wg.children.slice(0, pageCap)
-                                  const hiddenWaveCount = Math.max(0, wg.children.length - visibleWaveChildren.length)
-
-                                  return h('div', {
-                                    key: 'h-wave-lane-' + wg.wave,
-                                    className: 'rt-wave-horizontal-lane',
-                                    style: { display: 'flex', alignItems: 'center', gap: 0, minWidth: 0 },
-                                  },
-                                    h('div', Object.assign({
-                                      ref: (el) => {
-                                        if (!waveCardDomRefs.current) waveCardDomRefs.current = {}
-                                        if (el) waveCardDomRefs.current[String(wg.wave)] = el
-                                        else delete waveCardDomRefs.current[String(wg.wave)]
-                                      },
-                                      className: 'rt-tree-wave-group rt-tree-wave-card'
-                                        + (expanded ? ' expanded active' : '')
-                                        + (hasSelectedChild ? ' on' : '')
-                                        + (wg.errorInWave > 0 ? ' is-error' : '')
-                                        + (isSpawningWave ? ' rt-anim-spawn' : '')
-                                        + (isCompletingWave ? ' rt-anim-complete' : ''),
+                              }, clickable(() => openAgentInspector('root'), {
+                                label: '检视主控节点 ' + workspaceDisplayTitle + ' 环节细节',
+                                expanded: selAgentId === 'root',
+                              })),
+                                h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                                  h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6, flex: 'none' } }, '主控'),
+                                  h('span', {
+                                    style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                                    title: workspaceDisplayTitle,
+                                  }, workspaceDisplayTitle),
+                                  h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0, flex: 'none' } }, runningCount > 0 ? '运行中' : (fusedChildren.length > 0 ? '协同中' : '就绪'))),
+                                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)', gap: 6 } },
+                                  h('span', { className: 'rt-mono' }, rootTokensLabel + ' · ' + rootCostLabel),
+                                  h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
+                                  h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
+                                activeWaveGroups.length > 0
+                                  ? h('span', {
+                                      className: 'rt-tree-port rt-tree-port-right',
+                                      'aria-hidden': 'true',
                                       style: {
-                                        width: 248,
-                                        flex: 'none',
-                                        position: 'relative',
-                                        borderLeft: '3.5px solid ' + wg.color,
-                                        borderColor: (expanded || hasSelectedChild || wg.errorInWave > 0) ? wg.color : 'var(--dsw-alias-border-l1)',
+                                        position: 'absolute',
+                                        right: -5,
+                                        top: '50%',
+                                        transform: 'translateY(-50%)',
+                                        width: 9,
+                                        height: 9,
+                                        borderRadius: '50%',
+                                        background: 'var(--dsw-alias-bg-layer-1)',
+                                        border: '2px solid #3b82f6',
+                                        pointerEvents: 'none',
+                                        zIndex: 3,
                                       },
-                                    }, clickable(() => toggleWaveExpand(wg.wave), {
-                                      label: (expanded ? '收起 ' : '展开 ') + wg.title + ' (' + wg.children.length + ' 个节点)',
-                                      expanded: expanded,
-                                    })),
-                                      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, flexWrap: 'wrap' } },
+                                    })
+                                  : null)),
+
+                            activeWaveGroups.length > 0
+                              ? h('div', {
+                                  className: 'rt-h-waves-stack rt-tree-wave-row',
+                                  style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 22, flex: 1, minWidth: 0 },
+                                },
+                                  activeWaveGroups.map((wg) => {
+                                    const expanded = Boolean(expandedMap[wg.wave])
+                                    const hasSelectedChild = wg.children.some((c) => c.id === selAgentId)
+                                    const isSpawningWave = wg.children.some((c) => Boolean(animatingSpawnIds[c.id]))
+                                    const isCompletingWave = wg.children.some((c) => Boolean(animatingCompleteIds[c.id]))
+                                    const statusSummary = wg.errorInWave > 0
+                                      ? (wg.errorInWave + ' 异常')
+                                      : (wg.runningInWave > 0
+                                        ? (wg.runningInWave + ' 运行中')
+                                        : (wg.pendingInWave > 0 && wg.doneInWave === 0
+                                          ? (wg.pendingInWave + ' 待执行')
+                                          : (wg.doneInWave + '/' + wg.children.length + ' 完成')))
+                                    const visibleWaveChildren = visibleChildrenByWave[wg.wave] || []
+                                    const hiddenWaveCount = Math.max(0, wg.children.length - visibleWaveChildren.length)
+
+                                    return h('div', {
+                                      key: 'h-wave-lane-' + wg.wave,
+                                      className: 'rt-wave-horizontal-lane',
+                                      style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 38, minWidth: 0 },
+                                    },
+                                      h('div', Object.assign({
+                                        ref: (el) => {
+                                          if (!waveCardDomRefs.current) waveCardDomRefs.current = {}
+                                          if (el) waveCardDomRefs.current[String(wg.wave)] = el
+                                          else delete waveCardDomRefs.current[String(wg.wave)]
+                                        },
+                                        className: 'rt-tree-wave-group rt-tree-wave-card'
+                                          + (expanded ? ' expanded active' : '')
+                                          + (hasSelectedChild ? ' on' : '')
+                                          + (wg.errorInWave > 0 ? ' is-error' : '')
+                                          + (isSpawningWave ? ' rt-anim-spawn' : '')
+                                          + (isCompletingWave ? ' rt-anim-complete' : ''),
+                                        style: {
+                                          width: 236,
+                                          flex: 'none',
+                                          position: 'relative',
+                                          borderLeft: '3.5px solid ' + wg.color,
+                                          borderColor: (expanded || hasSelectedChild || wg.errorInWave > 0) ? wg.color : 'var(--dsw-alias-border-l1)',
+                                        },
+                                      }, clickable(() => toggleWaveExpand(wg.wave), {
+                                        label: (expanded ? '收起 ' : '展开 ') + wg.title + ' (' + wg.children.length + ' 个节点)',
+                                        expanded: expanded,
+                                      })),
                                         h('span', {
-                                          className: 'rt-tree-wave-card-badge',
-                                          style: { color: wg.color, borderColor: wg.color + '55', background: wg.color + '18' },
-                                        }, wg.shortLabel + ' · ' + wg.children.length + ' 个节点'),
-                                        h('span', {
-                                          className: wavePriMeta.cls,
-                                          style: { fontSize: 9.5, fontWeight: 700, padding: '0 5px', borderRadius: 4 },
-                                        }, wg.topPriority),
-                                        h('span', {
+                                          className: 'rt-tree-port rt-tree-port-left',
+                                          'aria-hidden': 'true',
+                                          style: {
+                                            position: 'absolute',
+                                            left: -5,
+                                            top: '50%',
+                                            transform: 'translateY(-50%)',
+                                            width: 8,
+                                            height: 8,
+                                            borderRadius: '50%',
+                                            background: 'var(--dsw-alias-bg-layer-1)',
+                                            border: '2px solid ' + wg.color,
+                                            pointerEvents: 'none',
+                                            zIndex: 3,
+                                          },
+                                        }),
+                                        expanded
+                                          ? h('span', {
+                                              className: 'rt-tree-port rt-tree-port-right',
+                                              'aria-hidden': 'true',
+                                              style: {
+                                                position: 'absolute',
+                                                right: -5,
+                                                top: '50%',
+                                                transform: 'translateY(-50%)',
+                                                width: 8,
+                                                height: 8,
+                                                borderRadius: '50%',
+                                                background: 'var(--dsw-alias-bg-layer-1)',
+                                                border: '2px solid ' + wg.color,
+                                                pointerEvents: 'none',
+                                                zIndex: 3,
+                                              },
+                                            })
+                                          : null,
+                                        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, flexWrap: 'wrap' } },
+                                          h('span', {
+                                            className: 'rt-tree-wave-card-badge',
+                                            style: { color: wg.color, borderColor: wg.color + '55', background: wg.color + '18' },
+                                          }, wg.shortLabel + ' · ' + wg.children.length + ' 节点'),
+                                          h('span', {
+                                            className: 'rt-mono',
+                                            style: {
+                                              fontSize: 10,
+                                              fontWeight: 700,
+                                              color: wg.errorInWave > 0 ? '#ef4444' : (wg.runningInWave > 0 ? '#3b82f6' : (wg.pendingInWave > 0 && wg.doneInWave === 0 ? '#d97706' : '#10b981')),
+                                            },
+                                          }, statusSummary)),
+                                        h('div', {
+                                          style: {
+                                            fontWeight: 700,
+                                            fontSize: 11.5,
+                                            color: 'var(--dsw-alias-label-primary)',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap',
+                                          },
+                                          title: wg.title,
+                                        }, wg.title),
+                                        h('div', {
                                           className: 'rt-mono',
                                           style: {
                                             fontSize: 10,
-                                            fontWeight: 700,
-                                            color: wg.errorInWave > 0 ? '#ef4444' : (wg.runningInWave > 0 ? '#3b82f6' : '#10b981'),
+                                            color: 'var(--dsw-alias-label-secondary)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            gap: 4,
                                           },
-                                        }, statusSummary)),
-                                      h('div', {
-                                        style: {
-                                          fontWeight: 700,
-                                          fontSize: 11.5,
-                                          color: 'var(--dsw-alias-label-primary)',
-                                          overflow: 'hidden',
-                                          textOverflow: 'ellipsis',
-                                          whiteSpace: 'nowrap',
                                         },
-                                        title: wg.title,
-                                      }, wg.title),
-                                      h('div', {
-                                        className: 'rt-mono',
-                                        style: {
-                                          fontSize: 10,
-                                          color: 'var(--dsw-alias-label-secondary)',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'space-between',
-                                          gap: 4,
-                                        },
-                                      },
-                                        h('span', null, wg.children.length + ' 子代理 · ' + wg.runningInWave + ' 运行 / ' + wg.doneInWave + ' 完成'),
-                                        h('span', null, wg.tokenLabel)),
-                                      h('div', {
-                                        style: { height: 4, borderRadius: 99, background: 'var(--dsw-alias-bg-layer-2)', overflow: 'hidden' },
-                                      },
+                                          h('span', null, wg.runningInWave + ' 运行 · ' + wg.doneInWave + ' 完成' + (wg.pendingInWave > 0 ? (' · ' + wg.pendingInWave + ' 待执行') : '')),
+                                          h('span', null, wg.tokenLabel)),
                                         h('div', {
-                                          style: { width: wg.progressPct + '%', height: '100%', background: wg.color, borderRadius: 99 },
-                                        })),
-                                      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 } },
-                                        h('span', {
-                                          style: { fontSize: 9.5, color: 'var(--dsw-alias-label-secondary)', fontWeight: 600 },
-                                        }, expanded ? '点击收起分片 ⬅' : '点击向右展开分片 ➔'),
-                                        h('button', {
-                                          type: 'button',
-                                          className: 'rt-btn',
-                                          style: { padding: '0 6px', fontSize: 10, lineHeight: '16px' },
-                                          onClick: (e) => {
-                                            if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
-                                            toggleWaveExpand(wg.wave)
-                                          },
-                                        }, expanded ? '[收起 ⌃]' : '[展开 ⌄]')),
-                                      h('span', {
-                                        className: 'rt-n8n-diamond-pin rt-n8n-diamond-pin-right',
-                                        style: { borderColor: wg.color },
-                                      })),
-
-                                    expanded
-                                      ? h('div', { style: { display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 } },
+                                          style: { height: 4, borderRadius: 99, background: 'var(--dsw-alias-bg-layer-2)', overflow: 'hidden' },
+                                        },
                                           h('div', {
-                                            className: 'rt-h-wave-branch-line',
-                                            style: { width: 44, flex: 'none', display: 'flex', alignItems: 'center', background: 'none' },
-                                          },
-                                            h('svg', {
-                                              viewBox: '0 0 44 48',
-                                              style: { width: 44, height: 48, display: 'block', overflow: 'visible', background: 'none' },
+                                            style: { width: wg.progressPct + '%', height: '100%', background: wg.color, borderRadius: 99 },
+                                          })),
+                                        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginTop: 2 } },
+                                          h('button', {
+                                            type: 'button',
+                                            className: 'rt-btn',
+                                            style: { padding: '0 7px', fontSize: 10, lineHeight: '17px' },
+                                            onClick: (e) => {
+                                              if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+                                              toggleWaveExpand(wg.wave)
                                             },
-                                              h('path', {
-                                                d: 'M 0,24 L 44,24',
-                                                fill: 'none',
-                                                stroke: wg.color,
-                                                strokeWidth: '2',
-                                              }),
-                                              h('circle', { cx: '42', cy: '24', r: '3', fill: wg.color }))),
-                                          h('div', {
+                                          }, expanded ? '收起分片' : '展开分片'))),
+
+                                      expanded
+                                        ? h('div', {
                                             className: 'rt-wave-right-children rt-tree-expanded-grid rt-p4-children-grid',
                                             style: {
                                               display: 'grid',
-                                              gridTemplateColumns: 'repeat(auto-fill, minmax(225px, 1fr))',
-                                              gap: 10,
-                                              flex: 1,
+                                              gridTemplateColumns: visibleWaveChildren.length > 3 ? 'repeat(2, 236px)' : '248px',
+                                              rowGap: 16,
+                                              columnGap: 34,
+                                              alignItems: 'stretch',
+                                              border: 'none',
+                                              margin: 0,
+                                              padding: visibleWaveChildren.length > 3 ? '12px 0 4px' : 0,
+                                              background: 'transparent',
+                                              flex: 'none',
                                               minWidth: 0,
                                             },
                                           },
-                                            visibleWaveChildren.map((c) => {
-                                              const isSel = selAgentId === c.id
-                                              const isErrCard = c.status === 'error'
-                                              const isSpawning = Boolean(animatingSpawnIds[c.id])
-                                              const isCompleting = Boolean(animatingCompleteIds[c.id])
-                                              const priMeta = PRIORITY_BADGE_META[c.uiPriority] || PRIORITY_BADGE_META.P2
-                                              const isApproved = c.approvalState === 'approved'
-                                              const isRevReq = c.approvalState === 'revision_required'
-                                              return h('div', Object.assign({
-                                                key: c.id,
-                                                className: 'rt-p4-node-card'
-                                                  + (isSel ? ' on' : '')
-                                                  + (isErrCard ? ' is-error' : '')
-                                                  + (isSpawning ? ' rt-anim-spawn' : '')
-                                                  + (isCompleting ? ' rt-anim-complete' : ''),
-                                                style: {
-                                                  position: 'relative',
-                                                  border: isErrCard
-                                                    ? '1.5px solid #ef4444'
-                                                    : (isSel ? ('1.5px solid ' + c.color) : '1px solid var(--dsw-alias-border-l1)'),
-                                                  borderLeft: '3.5px solid ' + (isErrCard ? '#ef4444' : c.color),
-                                                  borderRadius: 10,
-                                                  padding: '9px 10px 8px',
-                                                  background: isErrCard ? 'rgba(239,68,68,0.05)' : 'var(--dsw-alias-bg-layer-1)',
-                                                  cursor: 'pointer',
-                                                  display: 'flex',
-                                                  flexDirection: 'column',
-                                                  gap: 5,
-                                                  minWidth: 0,
-                                                  boxShadow: isSel ? ('0 0 0 3px ' + c.color + '26') : '0 2px 6px rgba(15,23,42,0.04)',
-                                                },
-                                              }, clickable(() => openAgentInspector(c.id), {
-                                                label: '梳理子智能体 ' + c.title + ' 环节细节',
-                                                expanded: isSel,
-                                              })),
-                                                h('span', {
-                                                  className: 'rt-n8n-port-left rt-node-handle',
-                                                  style: {
-                                                    position: 'absolute',
-                                                    left: -5,
-                                                    top: '50%',
-                                                    transform: 'translateY(-50%)',
-                                                    width: 8,
-                                                    height: 8,
-                                                    borderRadius: '50%',
-                                                    background: 'var(--dsw-alias-bg-layer-1)',
-                                                    border: '2px solid ' + (isErrCard ? '#ef4444' : c.color),
-                                                  },
-                                                }),
-                                                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, flexWrap: 'wrap' } },
-                                                  h('span', {
-                                                    className: priMeta.cls,
-                                                    style: { fontSize: 9.5, fontWeight: 700, padding: '1px 5px', borderRadius: 4 },
-                                                  }, priMeta.label),
-                                                  h('div', { style: { display: 'inline-flex', gap: 3, flexWrap: 'wrap' } },
-                                                    (c.workerTags || []).slice(0, 2).map((tg) => h('span', {
-                                                      key: tg,
-                                                      className: 'rt-mono',
-                                                      style: { fontSize: 9, padding: '0 4px', borderRadius: 3, background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)' },
-                                                    }, tg)))),
-                                                h('div', { style: { display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 } },
-                                                  h('span', {
-                                                    style: {
-                                                      background: isErrCard ? '#ef4444' : c.color,
-                                                      color: '#fff',
-                                                      fontSize: 10,
-                                                      fontWeight: 700,
-                                                      padding: '1px 6px',
-                                                      borderRadius: 5,
-                                                      flex: 'none',
-                                                      fontFamily: 'ui-monospace,Menlo,monospace',
-                                                    },
-                                                  }, c.avatar),
-                                                  h('span', {
-                                                    style: {
-                                                      fontWeight: 700,
-                                                      fontSize: 11.5,
-                                                      overflow: 'hidden',
-                                                      textOverflow: 'ellipsis',
-                                                      whiteSpace: 'nowrap',
-                                                      flex: 1,
-                                                    },
-                                                    title: c.title,
-                                                  }, c.title),
-                                                  h('span', {
-                                                    style: {
-                                                      fontSize: 10,
-                                                      fontWeight: 700,
-                                                      color: isErrCard ? '#ef4444' : (c.status === 'running' ? '#3b82f6' : (c.status === 'pending' ? '#f59e0b' : '#10b981')),
-                                                    },
-                                                  }, isErrCard ? '⚠ 异常待修复' : (c.status === 'running' ? '●' : (c.status === 'pending' ? '○' : '✓')))),
-                                                h('div', {
-                                                  style: {
-                                                    fontSize: 10,
-                                                    color: isErrCard ? '#ef4444' : 'var(--dsw-alias-label-secondary)',
-                                                    overflow: 'hidden',
-                                                    textOverflow: 'ellipsis',
-                                                    whiteSpace: 'nowrap',
-                                                  },
-                                                  title: c.compressedDigest && c.compressedDigest.whatWasDone,
-                                                }, (c.compressedDigest && c.compressedDigest.whatWasDone) || c.output),
-                                                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, fontSize: 9.5 } },
-                                                  c.compressionPct > 0
-                                                    ? h('span', {
-                                                        className: 'rt-mono',
-                                                        style: { padding: '1px 5px', borderRadius: 4, background: 'rgba(59,130,246,0.12)', color: '#3b82f6', fontWeight: 600 },
-                                                      }, '压缩 -' + c.compressionPct + '%')
-                                                    : h('span', { className: 'rt-mono', style: { color: 'var(--dsw-alias-label-secondary)' } }, c.statusLabel),
-                                                  h('span', {
-                                                    style: {
-                                                      padding: '1px 5px',
-                                                      borderRadius: 4,
-                                                      background: isRevReq ? 'rgba(239,68,68,0.14)' : (isApproved ? 'rgba(16,185,129,0.14)' : 'rgba(245,158,11,0.16)'),
-                                                      color: isRevReq ? '#ef4444' : (isApproved ? '#10b981' : '#f59e0b'),
-                                                      fontWeight: 700,
-                                                    },
-                                                  }, isRevReq ? '↩ 待重做' : (isApproved ? '✓ 已审批' : '⏳ 待 Plan 审批')),
-                                                  h('span', { className: 'rt-mono', style: { color: 'var(--dsw-alias-label-secondary)' } }, c.tokenLabel)))
-                                            }),
+                                            visibleWaveChildren.map((c) => renderTreeChildCard(c, 'left')),
                                             hiddenWaveCount > 0
                                               ? h('button', {
                                                   key: 'more-' + wg.wave,
@@ -2159,203 +2454,261 @@
                                                     }))
                                                   },
                                                 }, '展开更多 (+' + hiddenWaveCount + ' 个节点)')
-                                              : null))
-                                      : null)
-                                }))
-                            : h('div', {
-                                className: 'rt-empty',
-                                style: {
-                                  border: '1.5px dashed rgba(77,107,254,0.35)',
-                                  borderRadius: 12,
-                                  padding: '22px 18px',
-                                  background: 'rgba(77,107,254,0.03)',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  alignItems: 'flex-start',
-                                  gap: 8,
+                                              : null)
+                                        : null)
+                                  }))
+                              : h('div', {
+                                  className: 'rt-empty',
+                                  style: {
+                                    border: '1.5px dashed rgba(77,107,254,0.35)',
+                                    borderRadius: 12,
+                                    padding: '22px 18px',
+                                    background: 'rgba(77,107,254,0.03)',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'flex-start',
+                                    gap: 8,
+                                    flex: 1,
+                                  },
                                 },
-                              },
-                                h('div', { style: { fontWeight: 700, fontSize: 13, color: 'var(--dsw-alias-label-primary)' } },
+                                  h('div', { style: { fontWeight: 700, fontSize: 13, color: 'var(--dsw-alias-label-primary)' } },
+                                    fusedChildren.length > 0
+                                      ? '当前过滤条件下没有匹配的节点'
+                                      : '当前工作台尚无研发分片'),
+                                  h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
+                                    fusedChildren.length > 0
+                                      ? '点击上方「全部」筛选或清空搜索词即可恢复显示。'
+                                      : '请前往「协同与审批」通过 AI 澄清与拆解立项生成分片，或在工具栏点击「+ 新增分片节点」。'),
                                   fusedChildren.length > 0
-                                    ? '当前过滤条件下没有匹配的节点'
-                                    : '当前工作台尚无研发分片 — 前往「协同与审批」澄清需求并立项拆解'),
-                                h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
-                                  fusedChildren.length > 0
-                                    ? '点击上方「全部」胶囊或清空搜索词即可恢复显示全部节点。'
-                                    : '主控 Plan 编排器已就绪：前往「协同与审批」页面通过需求澄清卡片自动拆解分片目标，或在「集群」页手动挂载分片。'),
-                                fusedChildren.length > 0
-                                  ? h('button', {
-                                      type: 'button',
-                                      className: 'rt-btn',
-                                      onClick: () => { setCanvasFilter('all'); setCanvasSearch('') },
-                                    }, '重置筛选条件')
-                                  : ((props.onOpenCollab || props.onOpenWishWizard)
                                     ? h('button', {
                                         type: 'button',
-                                        className: 'rt-btn rt-btn-primary',
-                                        onClick: props.onOpenCollab || props.onOpenWishWizard,
-                                      }, '✨ 前往「协同与审批」拆解需求')
-                                    : null)))
+                                        className: 'rt-btn',
+                                        onClick: () => { setCanvasFilter('all'); setCanvasSearch('') },
+                                      }, '重置筛选条件')
+                                    : ((props.onOpenCollab || props.onOpenWishWizard)
+                                      ? h('button', {
+                                          type: 'button',
+                                          className: 'rt-btn rt-btn-primary',
+                                          onClick: props.onOpenCollab || props.onOpenWishWizard,
+                                        }, '前往「协同与审批」立项拆解')
+                                      : null))))
                       : /* ── 备选布局：纵向向下派生树 (.rt-p5-tree-stage.rt-tree-layout-vertical) ── */
                         h('div', {
-                          className: 'rt-p5-tree-stage rt-tree-layout-vertical',
-                          style: { display: 'flex', flexDirection: 'column', alignItems: 'stretch' },
+                          ref: treeStageDomRef,
+                          className: 'rt-p5-tree-stage rt-tree-layout-vertical rt-tree-stage',
+                          style: {
+                            display: 'block',
+                            position: 'relative',
+                            width: '100%',
+                            padding: '24px 20px',
+                            boxSizing: 'border-box',
+                          },
                         },
-                          h('div', Object.assign({
-                            className: 'rt-p4-node-card rt-p4-root-card'
-                              + (selAgentId === 'root' ? ' on' : '')
-                              + (hubAbsorbing ? ' rt-anim-hub-absorb' : ''),
+                          treeEdgesSvg,
+                          h('div', {
+                            ref: treeNodeLayerDomRef,
+                            className: 'rt-tree-node-layer',
                             style: {
-                              width: 'min(360px, 94%)',
-                              margin: '0 auto',
                               position: 'relative',
-                              border: selAgentId === 'root' ? '1.5px solid #3b82f6' : '1px solid var(--dsw-alias-border-l1)',
-                              borderTop: '3px solid #3b82f6',
-                              borderRadius: 10,
-                              padding: '10px 12px',
-                              background: 'var(--dsw-alias-bg-layer-1)',
-                              cursor: 'pointer',
+                              zIndex: 2,
                               display: 'flex',
                               flexDirection: 'column',
-                              gap: 6,
+                              alignItems: 'stretch',
+                              gap: 52,
+                              width: '100%',
                             },
-                          }, clickable(() => openAgentInspector('root'), {
-                            label: '检视主控节点 ' + workspaceDisplayTitle + ' 环节细节',
-                            expanded: selAgentId === 'root',
-                          })),
-                            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                              h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '主控'),
-                              h('span', { style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, workspaceDisplayTitle),
-                              h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, 'Level 0 · Plan'),
-                              h('span', { className: 'rt-mono', style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, rootTokensLabel + ' · ' + rootCostLabel)),
-                            h('div', { style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                              '1 Plan + N Workers · 自动拆分目标 / 摘要压缩 / 审批派发'),
-                            h('span', { className: 'rt-n8n-diamond-pin rt-node-handle rt-node-handle-bottom' })),
-
-                          activeWaveGroups.length > 0
-                            ? h('svg', {
-                                className: 'rt-p4-bezier-svg',
-                                viewBox: '0 0 600 56',
-                                preserveAspectRatio: 'none',
-                                style: { width: '100%', height: 54, display: 'block', overflow: 'visible' },
-                                'aria-label': '主控向下扇出至子智能体拓扑连线',
+                          },
+                            h('div', Object.assign({
+                              ref: rootCardDomRef,
+                              className: 'rt-p4-node-card rt-p4-root-card'
+                                + (selAgentId === 'root' ? ' on' : '')
+                                + (hubAbsorbing ? ' rt-anim-hub-absorb' : ''),
+                              style: {
+                                width: 'min(340px, 94%)',
+                                margin: '0 auto',
+                                position: 'relative',
+                                border: selAgentId === 'root' ? '1.5px solid #3b82f6' : '1px solid var(--dsw-alias-border-l1)',
+                                borderTop: '3.5px solid #3b82f6',
+                                borderRadius: 10,
+                                padding: '10px 12px',
+                                background: 'var(--dsw-alias-bg-layer-1)',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 6,
+                                boxShadow: selAgentId === 'root' ? '0 0 0 3px rgba(59,130,246,0.16)' : '0 2px 6px rgba(0,0,0,0.06)',
                               },
-                                activeWaveGroups.map((wg, idx) => {
-                                  const n = activeWaveGroups.length
-                                  const x = n === 1 ? 300 : Math.round(((idx + 0.5) / n) * 600)
-                                  const dForward = 'M 300,0 C 300,28 ' + x + ',28 ' + x + ',56'
-                                  return h('g', { key: 'v-bz-wave-' + wg.wave },
-                                    h('path', {
-                                      d: dForward,
-                                      fill: 'none',
-                                      stroke: wg.color,
-                                      strokeWidth: '2.1',
-                                      opacity: '0.85',
-                                    }),
-                                    h('circle', { cx: String(x), cy: '54', r: '3.5', fill: wg.color }))
-                                }),
-                                h('circle', { cx: '300', cy: '2', r: '4', fill: '#3b82f6' }))
-                            : null,
+                            }, clickable(() => openAgentInspector('root'), {
+                              label: '检视主控节点 ' + workspaceDisplayTitle + ' 环节细节',
+                              expanded: selAgentId === 'root',
+                            })),
+                              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                                h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '主控'),
+                                h('span', { style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, workspaceDisplayTitle),
+                                h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? '运行中' : (fusedChildren.length > 0 ? '协同中' : '就绪'))),
+                              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)', gap: 6 } },
+                                h('span', { className: 'rt-mono' }, rootTokensLabel + ' · ' + rootCostLabel),
+                                h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
+                                h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
+                              activeWaveGroups.length > 0
+                                ? h('span', {
+                                    className: 'rt-tree-port rt-tree-port-bottom',
+                                    'aria-hidden': 'true',
+                                    style: {
+                                      position: 'absolute',
+                                      bottom: -5,
+                                      left: '50%',
+                                      transform: 'translateX(-50%)',
+                                      width: 9,
+                                      height: 9,
+                                      borderRadius: '50%',
+                                      background: 'var(--dsw-alias-bg-layer-1)',
+                                      border: '2px solid #3b82f6',
+                                      pointerEvents: 'none',
+                                      zIndex: 3,
+                                    },
+                                  })
+                                : null),
 
-                          activeWaveGroups.length > 0
-                            ? h('div', {
-                                className: 'rt-tree-wave-row rt-tree-wave-grid',
-                                style: {
-                                  display: 'grid',
-                                  gridTemplateColumns: 'repeat(' + Math.max(1, activeWaveGroups.length) + ', minmax(0, 1fr))',
-                                  gap: 10,
-                                  alignItems: 'start',
-                                },
-                              },
-                                activeWaveGroups.map((wg) => {
-                                  const expanded = isWaveExpanded(wg)
-                                  const pageCap = wavePageLimits[wg.wave] || WAVE_PAGE_SIZE
-                                  const visibleWaveChildren = wg.children.slice(0, pageCap)
-                                  const hiddenWaveCount = Math.max(0, wg.children.length - visibleWaveChildren.length)
-                                  return h('div', {
-                                    key: 'v-wave-col-' + wg.wave,
-                                    style: { display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 },
+                            activeWaveGroups.length > 0
+                              ? h('div', {
+                                  className: 'rt-tree-wave-row rt-tree-wave-grid',
+                                  style: {
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(' + Math.max(1, activeWaveGroups.length) + ', minmax(210px, 1fr))',
+                                    gap: 22,
+                                    alignItems: 'start',
                                   },
-                                    h('div', Object.assign({
-                                      className: 'rt-tree-wave-group rt-tree-wave-card' + (expanded ? ' expanded active' : '') + (wg.errorInWave > 0 ? ' is-error' : ''),
-                                      style: { borderTop: '3px solid ' + wg.color },
-                                    }, clickable(() => toggleWaveExpand(wg.wave), {
-                                      label: (expanded ? '收起 ' : '展开 ') + wg.title,
-                                      expanded: expanded,
-                                    })),
-                                      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
-                                        h('span', { className: 'rt-tree-wave-card-badge', style: { color: wg.color } }, wg.shortLabel + ' · ' + wg.children.length + ' 个节点'),
-                                        h('span', { className: 'rt-mono', style: { fontSize: 10, color: wg.color } }, wg.topPriority)),
-                                      h('div', { style: { fontWeight: 700, fontSize: 11.5 } }, wg.title),
-                                      h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10 } },
-                                        h('span', null, expanded ? '点击收起分片 ⬆' : '点击向下展开分片 ⬇'),
-                                        h('button', {
-                                          type: 'button',
-                                          className: 'rt-btn',
-                                          style: { padding: '0 6px', fontSize: 10 },
-                                          onClick: (e) => {
-                                            if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
-                                            toggleWaveExpand(wg.wave)
-                                          },
-                                        }, expanded ? '[收起 ⌃]' : '[展开 ⌄]'))),
-                                    expanded
-                                      ? h('div', {
-                                          className: 'rt-wave-subtree-children rt-tree-expanded-grid rt-p4-children-grid',
-                                          style: { display: 'flex', flexDirection: 'column', gap: 8 },
+                                },
+                                  activeWaveGroups.map((wg) => {
+                                    const expanded = Boolean(expandedMap[wg.wave])
+                                    const hasSelectedChild = wg.children.some((c) => c.id === selAgentId)
+                                    const statusSummary = wg.errorInWave > 0
+                                      ? (wg.errorInWave + ' 异常')
+                                      : (wg.runningInWave > 0
+                                        ? (wg.runningInWave + ' 运行中')
+                                        : (wg.pendingInWave > 0 && wg.doneInWave === 0
+                                          ? (wg.pendingInWave + ' 待执行')
+                                          : (wg.doneInWave + '/' + wg.children.length + ' 完成')))
+                                    const visibleWaveChildren = visibleChildrenByWave[wg.wave] || []
+                                    const hiddenWaveCount = Math.max(0, wg.children.length - visibleWaveChildren.length)
+                                    return h('div', {
+                                      key: 'v-wave-col-' + wg.wave,
+                                      style: { display: 'flex', flexDirection: 'column', gap: 28, minWidth: 0 },
+                                    },
+                                      h('div', Object.assign({
+                                        ref: (el) => {
+                                          if (!waveCardDomRefs.current) waveCardDomRefs.current = {}
+                                          if (el) waveCardDomRefs.current[String(wg.wave)] = el
+                                          else delete waveCardDomRefs.current[String(wg.wave)]
                                         },
-                                          visibleWaveChildren.map((c) => {
-                                            const isSel = selAgentId === c.id
-                                            const isErrCard = c.status === 'error'
-                                            const priMeta = PRIORITY_BADGE_META[c.uiPriority] || PRIORITY_BADGE_META.P2
-                                            return h('div', Object.assign({
-                                              key: c.id,
-                                              className: 'rt-p4-node-card' + (isSel ? ' on' : '') + (isErrCard ? ' is-error' : ''),
+                                        className: 'rt-tree-wave-group rt-tree-wave-card'
+                                          + (expanded ? ' expanded active' : '')
+                                          + (hasSelectedChild ? ' on' : '')
+                                          + (wg.errorInWave > 0 ? ' is-error' : ''),
+                                        style: {
+                                          position: 'relative',
+                                          borderTop: '3.5px solid ' + wg.color,
+                                          borderColor: (expanded || hasSelectedChild || wg.errorInWave > 0) ? wg.color : 'var(--dsw-alias-border-l1)',
+                                        },
+                                      }, clickable(() => toggleWaveExpand(wg.wave), {
+                                        label: (expanded ? '收起 ' : '展开 ') + wg.title,
+                                        expanded: expanded,
+                                      })),
+                                        h('span', {
+                                          className: 'rt-tree-port rt-tree-port-top',
+                                          'aria-hidden': 'true',
+                                          style: {
+                                            position: 'absolute',
+                                            top: -5,
+                                            left: '50%',
+                                            transform: 'translateX(-50%)',
+                                            width: 8,
+                                            height: 8,
+                                            borderRadius: '50%',
+                                            background: 'var(--dsw-alias-bg-layer-1)',
+                                            border: '2px solid ' + wg.color,
+                                            pointerEvents: 'none',
+                                            zIndex: 3,
+                                          },
+                                        }),
+                                        expanded
+                                          ? h('span', {
+                                              className: 'rt-tree-port rt-tree-port-bottom',
+                                              'aria-hidden': 'true',
                                               style: {
-                                                borderTop: '3px solid ' + (isErrCard ? '#ef4444' : c.color),
-                                                border: isErrCard ? '1.5px solid #ef4444' : undefined,
-                                                borderRadius: 10,
-                                                padding: '8px 10px',
-                                                background: isErrCard ? 'rgba(239,68,68,0.05)' : 'var(--dsw-alias-bg-layer-1)',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                flexDirection: 'column',
-                                                gap: 4,
+                                                position: 'absolute',
+                                                bottom: -5,
+                                                left: '50%',
+                                                transform: 'translateX(-50%)',
+                                                width: 8,
+                                                height: 8,
+                                                borderRadius: '50%',
+                                                background: 'var(--dsw-alias-bg-layer-1)',
+                                                border: '2px solid ' + wg.color,
+                                                pointerEvents: 'none',
+                                                zIndex: 3,
                                               },
-                                            }, clickable(() => openAgentInspector(c.id), {
-                                              label: '梳理子智能体 ' + c.title + ' 环节细节',
-                                              expanded: isSel,
-                                            })),
-                                              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
-                                                h('span', { className: priMeta.cls, style: { fontSize: 9.5, fontWeight: 700 } }, priMeta.label),
-                                                h('span', { className: 'rt-mono', style: { fontSize: 9.5, color: isErrCard ? '#ef4444' : '#3b82f6' } },
-                                                  isErrCard ? '⚠ 异常待修复' : (c.compressionPct > 0 ? ('压缩 -' + c.compressionPct + '%') : c.statusLabel))),
-                                              h('div', { style: { fontWeight: 700, fontSize: 11.5 } }, c.title),
-                                              h('div', { style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
-                                                (c.compressedDigest && c.compressedDigest.whatWasDone) || c.output))
-                                          }),
-                                          hiddenWaveCount > 0
-                                            ? h('button', {
-                                                key: 'v-more-' + wg.wave,
-                                                type: 'button',
-                                                className: 'rt-btn',
-                                                onClick: () => setWavePageLimits((prev) => Object.assign({}, prev, {
-                                                  [wg.wave]: (prev[wg.wave] || WAVE_PAGE_SIZE) + WAVE_PAGE_SIZE,
-                                                })),
-                                              }, '展开更多 (+' + hiddenWaveCount + ' 个节点)')
-                                            : null)
-                                      : null)
-                                }))
-                            : h('div', { className: 'rt-empty', style: { marginTop: 12 } },
-                                '当前工作台尚无研发分片 — 前往「协同与审批」澄清需求并立项拆解'))))),
+                                            })
+                                          : null,
+                                        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
+                                          h('span', { className: 'rt-tree-wave-card-badge', style: { color: wg.color, borderColor: wg.color + '55', background: wg.color + '18' } },
+                                            wg.shortLabel + ' · ' + wg.children.length + ' 节点'),
+                                          h('span', {
+                                            className: 'rt-mono',
+                                            style: {
+                                              fontSize: 10,
+                                              fontWeight: 700,
+                                              color: wg.errorInWave > 0 ? '#ef4444' : (wg.runningInWave > 0 ? '#3b82f6' : (wg.pendingInWave > 0 && wg.doneInWave === 0 ? '#d97706' : '#10b981')),
+                                            },
+                                          }, statusSummary)),
+                                        h('div', { style: { fontWeight: 700, fontSize: 11.5 } }, wg.title),
+                                        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, gap: 6 } },
+                                          h('span', { className: 'rt-mono', style: { color: 'var(--dsw-alias-label-secondary)' } }, wg.tokenLabel),
+                                          h('button', {
+                                            type: 'button',
+                                            className: 'rt-btn',
+                                            style: { padding: '0 7px', fontSize: 10, lineHeight: '17px' },
+                                            onClick: (e) => {
+                                              if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+                                              toggleWaveExpand(wg.wave)
+                                            },
+                                          }, expanded ? '收起分片' : '展开分片'))),
+                                      expanded
+                                        ? h('div', {
+                                            className: 'rt-wave-subtree-children rt-p4-children-grid',
+                                            style: { display: 'flex', flexDirection: 'column', gap: 14, paddingLeft: 18, minWidth: 0 },
+                                          },
+                                            visibleWaveChildren.map((c) => renderTreeChildCard(c, 'top')),
+                                            hiddenWaveCount > 0
+                                              ? h('button', {
+                                                  key: 'v-more-' + wg.wave,
+                                                  type: 'button',
+                                                  className: 'rt-btn',
+                                                  onClick: () => setWavePageLimits((prev) => Object.assign({}, prev, {
+                                                    [wg.wave]: (prev[wg.wave] || WAVE_PAGE_SIZE) + WAVE_PAGE_SIZE,
+                                                  })),
+                                                }, '展开更多 (+' + hiddenWaveCount + ' 个节点)')
+                                              : null)
+                                        : null)
+                                  }))
+                              : h('div', { className: 'rt-empty', style: { marginTop: 12 } },
+                                  fusedChildren.length > 0
+                                    ? '当前过滤条件下没有匹配的节点'
+                                    : '当前工作台尚无研发分片 — 前往「协同与审批」立项拆解')))))),
 
               /* 总览轻量摘要条 (!isClusterVariant) vs 集群下方全宽流程舱 (isClusterVariant) */
               !isClusterVariant
                 ? (selAgentId && activeInspectorAgent
                     ? (() => {
-                        const ovPri = PRIORITY_BADGE_META[activeInspectorAgent.uiPriority] || PRIORITY_BADGE_META.P2
                         const ovSummary = (activeInspectorAgent.compressedDigest && activeInspectorAgent.compressedDigest.whatWasDone)
                           || activeInspectorAgent.output
                           || '节点已就绪，点击右侧入口可前往审批或展开完整泳道。'
+                        const ovStatusLabel = activeInspectorAgent.status === 'error'
+                          ? '异常待修复'
+                          : (activeInspectorAgent.status === 'running'
+                            ? '运行中'
+                            : (activeInspectorAgent.status === 'pending' ? '待执行' : '已完成'))
                         return h('div', { className: 'rt-ov-node-strip' },
                           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 } },
                             h('span', {
@@ -2370,9 +2723,9 @@
                               },
                             }, activeInspectorAgent.avatar),
                             h('span', { style: { fontWeight: 700, fontSize: 12.5, color: 'var(--dsw-alias-label-primary)' } }, activeInspectorAgent.title),
-                            h('span', { className: ovPri.cls, style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4 } }, ovPri.label),
+                            h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } }, ovStatusLabel),
                             h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                              (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.steps || 0) + ' 步'),
+                              (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || '待命') + ' · ' + (activeInspectorAgent.steps || 0) + ' 步'),
                             h('div', { className: 'rt-spacer' }),
                             (props.onOpenCollab || props.onOpenWishWizard)
                               ? h('button', {
@@ -2380,7 +2733,7 @@
                                   className: 'rt-btn rt-btn-primary',
                                   style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                                }, '前往「协同与审批」审批/调整 →')
+                                }, '前往「协同与审批」 →')
                               : null,
                             props.onOpenAgents
                               ? h('button', {
@@ -2388,7 +2741,7 @@
                                   className: 'rt-btn',
                                   style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                                   onClick: props.onOpenAgents,
-                                }, '在「集群」查看完整拓扑与泳道 →')
+                                }, '查看完整泳道与检视器 →')
                               : null,
                             h('button', {
                               type: 'button',
@@ -2396,7 +2749,7 @@
                               style: { padding: '1px 6px', fontSize: 11 },
                               title: '收起节点摘要',
                               onClick: () => openAgentInspector('__closed__'),
-                            }, '✕')),
+                            }, '收起')),
                           h('div', {
                             style: {
                               fontSize: 11.5,
@@ -2409,929 +2762,722 @@
                           }, ovSummary))
                       })()
                     : null)
-                : h('div', {
-                    className: 'rt-lower-process-deck',
-                    style: { display: 'flex', flexDirection: 'column', gap: 12, width: '100%', minWidth: 0 },
-                  },
-                    /* Section 1: Agent 环节执行轨迹与交互式创作/审批抽屉 (.rt-agent-inspector-drawer) */
-                    activeInspectorAgent
-                      ? (() => {
-                          const inspPriMeta = PRIORITY_BADGE_META[activeInspectorAgent.uiPriority] || PRIORITY_BADGE_META.P2
-                          const inspDigest = activeInspectorAgent.compressedDigest || {
-                            whatWasDone: activeInspectorAgent.output || '已完成阶段任务并生成压缩摘要。',
-                            filesTouched: activeInspectorAgent.filesOwned || [],
-                          }
-                          const rawTokNum = Number(activeInspectorAgent.rawTokens) || Number(activeInspectorAgent.tokens) || 0
-                          const compTokNum = Number(activeInspectorAgent.compressedTokens) || (rawTokNum > 0 ? Math.round(rawTokNum * 0.15) : 0)
-                          const compPctNum = Number(activeInspectorAgent.compressionPct) || (rawTokNum > 0 ? 85 : 0)
-                          const overrideRec = approvedWorkerMap[activeInspectorAgent.id]
-                          const isInspApproved = overrideRec
-                            ? overrideRec.approved
-                            : (activeInspectorAgent.approvalState === 'approved')
-                          const isInspRevReq = (overrideRec && overrideRec.decisionState === 'revision_required')
-                            || activeInspectorAgent.approvalState === 'revision_required'
+                : null)
+          : null,
 
-                          return h('div', {
-                            className: 'rt-agent-inspector-drawer',
+        /* ── 下方全宽流程舱：检视器 + 协作泳道 + 协作任务（p4 下方与 swim 专屏复用，无重复代码） ── */
+        (isClusterVariant && (effectiveMode === 'p4' || effectiveMode === 'swim'))
+          ? h('div', {
+              className: 'rt-lower-process-deck',
+              style: { display: 'flex', flexDirection: 'column', gap: 12, width: '100%', minWidth: 0 },
+            },
+              /* Section 1: Agent 环节执行轨迹与交互式创作/审批抽屉 (.rt-agent-inspector-drawer) */
+              activeInspectorAgent
+                ? (() => {
+                    const inspDigest = activeInspectorAgent.compressedDigest || {
+                      whatWasDone: activeInspectorAgent.output || '已完成阶段任务并生成压缩摘要。',
+                      filesTouched: activeInspectorAgent.filesOwned || [],
+                    }
+                    const rawTokNum = Number(activeInspectorAgent.rawTokens) || Number(activeInspectorAgent.tokens) || 0
+                    const compTokNum = Number(activeInspectorAgent.compressedTokens) || (rawTokNum > 0 ? Math.round(rawTokNum * 0.15) : 0)
+                    const compPctNum = Number(activeInspectorAgent.compressionPct) || (rawTokNum > 0 ? 85 : 0)
+                    const overrideRec = approvedWorkerMap[activeInspectorAgent.id]
+                    const isInspApproved = overrideRec
+                      ? overrideRec.approved
+                      : (activeInspectorAgent.approvalState === 'approved')
+                    const isInspRevReq = (overrideRec && overrideRec.decisionState === 'revision_required')
+                      || activeInspectorAgent.approvalState === 'revision_required'
+                    const isInspPendingExec = !activeInspectorAgent.isRoot && activeInspectorAgent.status === 'pending'
+                    const isInspDispatchBusy = dispatchingId === activeInspectorAgent.id
+
+                    return h('div', {
+                      className: 'rt-agent-inspector-drawer',
+                      style: {
+                        border: '1.5px solid ' + (activeInspectorAgent.color || '#3b82f6'),
+                        borderRadius: 12,
+                        padding: 12,
+                        background: 'var(--dsw-alias-bg-base)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                        boxShadow: '0 4px 14px rgba(0,0,0,0.06)',
+                      },
+                    },
+                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                        h('span', {
+                          style: {
+                            background: activeInspectorAgent.color || '#3b82f6',
+                            color: '#fff',
+                            fontSize: 10.5,
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 6,
+                            fontFamily: 'ui-monospace,Menlo,monospace',
+                          },
+                        }, activeInspectorAgent.avatar),
+                        h('span', { style: { fontWeight: 700, fontSize: 13, color: 'var(--dsw-alias-label-primary)' } },
+                          activeInspectorAgent.title),
+                        h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } },
+                          activeInspectorAgent.isRoot
+                            ? 'Wave 0 · 主控'
+                            : ('Wave ' + (activeInspectorAgent.wave || 1) + ' · ' + activeInspectorAgent.role)),
+                        h('span', { className: 'rt-tag rt-mono', style: { margin: 0, fontSize: 10 } },
+                          'session: ' + ((activeInspectorDetail && activeInspectorDetail.sessionId) || activeInspectorAgent.sessionId || activeInspectorAgent.id)),
+                        h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
+                          (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || '实时') + ' · ' + (activeInspectorAgent.steps || 0) + ' 步'),
+                        h('div', { className: 'rt-spacer' }),
+                        isInspPendingExec
+                          ? h('button', {
+                              type: 'button',
+                              className: 'rt-btn rt-btn-primary',
+                              disabled: isInspDispatchBusy,
+                              style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
+                              onClick: () => handleDispatchWorkerTask(activeInspectorAgent),
+                            }, isInspDispatchBusy ? '拉起中…' : '拉起执行')
+                          : null,
+                        !activeInspectorAgent.isRoot
+                          ? h('button', {
+                              type: 'button',
+                              className: 'rt-btn',
+                              style: { padding: '3px 9px', fontSize: 11, fontWeight: 600 },
+                              onClick: () => setEditingGoalOpen((v) => !v),
+                            }, editingGoalOpen ? '收起目标编辑' : '编辑分片目标')
+                          : null,
+                        !activeInspectorAgent.isRoot
+                          ? h('button', {
+                              type: 'button',
+                              className: 'rt-btn',
+                              disabled: retryingBusy,
+                              style: { padding: '3px 9px', fontSize: 11, fontWeight: 600 },
+                              onClick: () => handleRetryWorkerTask(activeInspectorAgent),
+                            }, retryingBusy ? '重跑中…' : '重跑该分片')
+                          : null,
+                        h('button', {
+                          type: 'button',
+                          className: 'rt-btn rt-btn-primary rt-jump-chat-btn',
+                          style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
+                          onClick: () => handleOpenAgentChat(activeInspectorAgent),
+                        }, '跳转会话聊天 ↗'),
+                        h('button', {
+                          type: 'button',
+                          className: 'rt-btn',
+                          style: { padding: '2px 7px', fontSize: 11 },
+                          title: '收起检视抽屉',
+                          onClick: () => openAgentInspector('__closed__'),
+                        }, '收起')),
+
+                      editingGoalOpen && !activeInspectorAgent.isRoot
+                        ? h('div', {
                             style: {
-                              border: '1.5px solid ' + (activeInspectorAgent.color || '#3b82f6'),
-                              borderRadius: 12,
-                              padding: 12,
+                              padding: '9px 11px',
+                              borderRadius: 8,
+                              border: '1px dashed #3b82f6',
+                              background: 'var(--dsw-alias-bg-layer-1)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 6,
+                            },
+                          },
+                            h('div', { style: { fontSize: 11, fontWeight: 700 } }, '编辑该子智能体的委派目标与独占文件分片'),
+                            h('textarea', {
+                              className: 'rt-textarea',
+                              rows: 2,
+                              style: { minHeight: 48, fontSize: 11.5 },
+                              value: editGoalDraft,
+                              onChange: (e) => setEditGoalDraft(e.target.value),
+                              placeholder: '输入调整后的分片目标说明...',
+                            }),
+                            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                              h('input', {
+                                className: 'rt-input rt-mono',
+                                style: { flex: 1, minWidth: 200, fontSize: 11 },
+                                value: editFilesDraft,
+                                onChange: (e) => setEditFilesDraft(e.target.value),
+                                placeholder: '独占文件分片（逗号分隔）',
+                              }),
+                              h('button', {
+                                type: 'button',
+                                className: 'rt-btn rt-btn-primary',
+                                disabled: savingGoalBusy,
+                                onClick: () => handleSaveWorkerGoal(activeInspectorAgent),
+                              }, savingGoalBusy ? '保存中…' : '保存目标'),
+                              h('button', {
+                                type: 'button',
+                                className: 'rt-btn',
+                                onClick: () => setEditingGoalOpen(false),
+                              }, '取消')))
+                        : null,
+
+                      /* 3-Step Horizontal Chain */
+                      h('div', {
+                        className: 'rt-step-chain',
+                        style: {
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                          gap: 10,
+                          alignItems: 'stretch',
+                        },
+                      },
+                        h('div', {
+                          className: 'rt-step-node',
+                          style: {
+                            padding: '8px 10px',
+                            borderRadius: 8,
+                            border: '1px solid var(--dsw-alias-border-l1)',
+                            borderTop: '3px solid ' + (activeInspectorAgent.color || '#3b82f6'),
+                            background: 'var(--dsw-alias-bg-layer-1)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 5,
+                          },
+                        },
+                          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
+                            h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
+                              'Step 1 · 委派目标'),
+                            h('span', { className: 'rt-mono', style: { fontSize: 10, color: activeInspectorAgent.color || '#3b82f6', fontWeight: 700 } },
+                              'Wave ' + (activeInspectorAgent.wave || 0) + ' · ' + activeInspectorAgent.role)),
+                          h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
+                            (activeInspectorDetail && activeInspectorDetail.prompt) || activeInspectorAgent.assignedGoal || activeInspectorAgent.inputPrompt || activeInspectorAgent.prompt)),
+
+                        h('div', {
+                          className: 'rt-step-node',
+                          style: {
+                            padding: '8px 10px',
+                            borderRadius: 8,
+                            border: '1px solid var(--dsw-alias-border-l1)',
+                            borderTop: '3px solid #8b5cf6',
+                            background: 'var(--dsw-alias-bg-layer-1)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 6,
+                          },
+                        },
+                          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
+                            h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
+                              'Step 2 · 核心执行'),
+                            h('span', { className: 'rt-mono', style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
+                              activeStepTimeline.length + ' 步 · ' + (inspDigest.filesTouched || []).length + ' 文件')),
+                          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
+                            (inspDigest.filesTouched || []).map((fp) => h('span', {
+                              key: 'ft-' + fp,
+                              className: 'rt-mono',
+                              style: { fontSize: 9.5, padding: '1px 5px', borderRadius: 4, background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)' },
+                            }, fp))),
+                          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
+                            activeStepTimeline.map((st, sIdx) => h('div', {
+                              key: 'traj-' + sIdx,
+                              style: {
+                                display: 'grid',
+                                gridTemplateColumns: 'auto auto minmax(0, 1fr) auto',
+                                alignItems: 'center',
+                                gap: 5,
+                                padding: '4px 7px',
+                                borderRadius: 6,
+                                background: 'var(--dsw-alias-bg-base)',
+                                border: '1px solid var(--dsw-alias-border-l1)',
+                                fontSize: 10.5,
+                              },
+                            },
+                              h('span', { className: 'rt-mono', style: { fontWeight: 700, color: activeInspectorAgent.color || '#3b82f6' } },
+                                '#' + st.step),
+                              h('span', {
+                                className: 'rt-mono',
+                                style: { fontSize: 9.5, padding: '1px 5px', borderRadius: 4, background: 'var(--dsw-alias-bg-layer-2)', fontWeight: 600 },
+                              }, st.tool),
+                              h('span', {
+                                style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary)' },
+                                title: st.input + ' -> ' + st.output,
+                              }, st.input),
+                              h('span', {
+                                className: 'rt-mono',
+                                style: {
+                                  fontSize: 9.5,
+                                  color: st.status === 'error' ? '#ef4444' : (st.status === 'running' ? '#3b82f6' : (st.status === 'pending' ? '#d97706' : '#10b981')),
+                                  fontWeight: 600,
+                                },
+                              }, st.status === 'error' ? '异常' : (st.status === 'running' ? '执行中' : (st.status === 'pending' ? '待执行' : '完成'))))))),
+
+                        h('div', {
+                          className: 'rt-step-node',
+                          style: {
+                            padding: '8px 10px',
+                            borderRadius: 8,
+                            border: '1px solid var(--dsw-alias-border-l1)',
+                            borderTop: '3px solid #10b981',
+                            background: 'var(--dsw-alias-bg-layer-1)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 6,
+                          },
+                        },
+                          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
+                            h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
+                              'Step 3 · 阶段结论与审批'),
+                            h('span', {
+                              style: {
+                                fontSize: 9.5,
+                                fontWeight: 700,
+                                padding: '1px 6px',
+                                borderRadius: 99,
+                                background: isInspRevReq ? 'rgba(239,68,68,0.14)' : (isInspApproved ? 'rgba(16,185,129,0.14)' : 'rgba(245,158,11,0.16)'),
+                                color: isInspRevReq ? '#ef4444' : (isInspApproved ? '#10b981' : '#d97706'),
+                              },
+                            }, isInspRevReq ? '已驳回重做' : (isInspApproved ? '已审批' : '待审批'))),
+                          h('div', {
+                            className: 'rt-digest-box',
+                            style: {
+                              padding: '7px 9px',
+                              borderRadius: 7,
+                              border: '1px dashed var(--dsw-alias-border-l1)',
                               background: 'var(--dsw-alias-bg-base)',
                               display: 'flex',
                               flexDirection: 'column',
-                              gap: 10,
-                              boxShadow: '0 4px 14px rgba(0,0,0,0.06)',
+                              gap: 4,
                             },
                           },
-                            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                              h('span', {
-                                style: {
-                                  background: activeInspectorAgent.color || '#3b82f6',
-                                  color: '#fff',
-                                  fontSize: 10.5,
-                                  fontWeight: 700,
-                                  padding: '2px 7px',
-                                  borderRadius: 6,
-                                  fontFamily: 'ui-monospace,Menlo,monospace',
-                                },
-                              }, activeInspectorAgent.avatar),
-                              h('span', { style: { fontWeight: 700, fontSize: 13, color: 'var(--dsw-alias-label-primary)' } },
-                                activeInspectorAgent.title),
-                              h('span', {
-                                className: inspPriMeta.cls,
-                                style: { fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 4 },
-                              }, inspPriMeta.label),
-                              (activeInspectorAgent.workerTags || []).map((tg) => h('span', {
-                                key: 'insp-tg-' + tg,
-                                className: 'rt-tag rt-mono',
-                                style: { margin: 0, fontSize: 10 },
-                              }, tg)),
-                              h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } },
-                                activeInspectorAgent.isRoot
-                                  ? 'Wave 0 · 主控 Orchestrator'
-                                  : ('Wave ' + (activeInspectorAgent.wave || 1) + ' · ' + activeInspectorAgent.role)),
-                              h('span', { className: 'rt-tag rt-mono', style: { margin: 0, fontSize: 10 } },
-                                'session: ' + ((activeInspectorDetail && activeInspectorDetail.sessionId) || activeInspectorAgent.sessionId || activeInspectorAgent.id)),
-                              h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                                (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || '实时') + ' · ' + (activeInspectorAgent.steps || 0) + ' 步'),
-                              h('div', { className: 'rt-spacer' }),
-                          !activeInspectorAgent.isRoot
-                            ? h('button', {
-                                type: 'button',
-                                className: 'rt-btn',
-                                style: { padding: '3px 9px', fontSize: 11, fontWeight: 600 },
-                                onClick: () => setEditingGoalOpen((v) => !v),
-                              }, editingGoalOpen ? '收起目标编辑' : '✏️ 编辑分片目标')
-                            : null,
-                          !activeInspectorAgent.isRoot
-                            ? h('button', {
-                                type: 'button',
-                                className: 'rt-btn',
-                                disabled: retryingBusy,
-                                style: { padding: '3px 9px', fontSize: 11, fontWeight: 600 },
-                                onClick: () => handleRetryWorkerTask(activeInspectorAgent),
-                              }, retryingBusy ? '重跑中…' : '🔄 重跑该分片')
-                            : null,
-                          h('button', {
-                            type: 'button',
-                            className: 'rt-btn rt-btn-primary rt-jump-chat-btn',
-                            style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
-                            onClick: () => openAgentSessionInHostChat(activeInspectorAgent),
-                          }, '💬 跳转侧边聊天框打开该 Agent 会话 ↗'),
-                          h('button', {
-                            type: 'button',
-                            className: 'rt-btn',
-                            style: { padding: '2px 7px', fontSize: 11 },
-                            title: '收起环节轨迹抽屉',
-                            onClick: () => openAgentInspector('__closed__'),
-                          }, '✕')),
+                            h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-primary)', lineHeight: 1.5 } },
+                              inspDigest.whatWasDone || (activeInspectorDetail && activeInspectorDetail.output) || activeInspectorAgent.output),
+                            rawTokNum > 0
+                              ? h('div', { className: 'rt-mono', style: { fontSize: 10, color: '#3b82f6', fontWeight: 600 } },
+                                  `原始 ${rawTokNum} tok → 压缩后 ${compTokNum} tok (-${compPctNum}%)`)
+                              : null))),
 
-                        editingGoalOpen && !activeInspectorAgent.isRoot
-                          ? h('div', {
-                              style: {
-                                padding: '9px 11px',
-                                borderRadius: 8,
-                                border: '1px dashed #3b82f6',
-                                background: 'var(--dsw-alias-bg-layer-1)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: 6,
-                              },
-                            },
-                              h('div', { style: { fontSize: 11, fontWeight: 700 } }, '✏️ 在线编辑该子智能体的委派目标与独占文件分片'),
-                              h('textarea', {
-                                className: 'rt-textarea',
-                                rows: 2,
-                                style: { minHeight: 48, fontSize: 11.5 },
-                                value: editGoalDraft,
-                                onChange: (e) => setEditGoalDraft(e.target.value),
-                                placeholder: '输入调整后的分片目标说明...',
-                              }),
-                              h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                                h('input', {
-                                  className: 'rt-input rt-mono',
-                                  style: { flex: 1, minWidth: 200, fontSize: 11 },
-                                  value: editFilesDraft,
-                                  onChange: (e) => setEditFilesDraft(e.target.value),
-                                  placeholder: '独占文件分片（逗号分隔）',
-                                }),
-                                h('button', {
-                                  type: 'button',
-                                  className: 'rt-btn rt-btn-primary',
-                                  disabled: savingGoalBusy,
-                                  onClick: () => handleSaveWorkerGoal(activeInspectorAgent),
-                                }, savingGoalBusy ? '保存中…' : '💾 保存目标'),
-                                h('button', {
-                                  type: 'button',
-                                  className: 'rt-btn',
-                                  onClick: () => setEditingGoalOpen(false),
-                                }, '取消')))
+                      h('div', {
+                        style: {
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          flexWrap: 'wrap',
+                          paddingTop: 6,
+                          borderTop: '1px dashed var(--dsw-alias-border-l1)',
+                        },
+                      },
+                        h('span', { style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, '下一阶段目标：'),
+                        h('input', {
+                          className: 'rt-input',
+                          style: { flex: '1 1 220px', height: 26, fontSize: 11.5 },
+                          value: customNextGoal,
+                          onChange: (e) => setCustomNextGoal(e.target.value),
+                          placeholder: '输入审批通过后下达给下一波次的新目标...',
+                        }),
+                        h('input', {
+                          className: 'rt-input',
+                          style: { width: 150, height: 26, fontSize: 11 },
+                          value: reviewNote,
+                          onChange: (e) => setReviewNote(e.target.value),
+                          placeholder: '审批备注（选填）',
+                        }),
+                        h('button', {
+                          type: 'button',
+                          disabled: approvingBusy,
+                          className: 'rt-btn rt-plan-approve-btn' + (isInspApproved ? '' : ' rt-btn-primary'),
+                          style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
+                          onClick: () => handlePlanApproveWorker(activeInspectorAgent, 'approved'),
+                        }, approvingBusy ? '提交中…' : '审批通过并下达目标'),
+                        !activeInspectorAgent.isRoot
+                          ? h('button', {
+                              type: 'button',
+                              disabled: approvingBusy,
+                              className: 'rt-btn',
+                              style: { padding: '3px 9px', fontSize: 11, color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' },
+                              onClick: () => handlePlanApproveWorker(activeInspectorAgent, 'revision_requested'),
+                            }, '驳回重做')
                           : null,
+                        h('button', {
+                          type: 'button',
+                          className: 'rt-btn',
+                          style: { padding: '3px 8px', fontSize: 10.5 },
+                          onClick: () => { setSelId(activeInspectorAgent.role || 'plan'); setMode('docwall') },
+                        }, '查看角色文稿 →')))
+                  })()
+                : h('div', {
+                    className: 'rt-agent-inspector-drawer',
+                    style: {
+                      border: '1px dashed var(--dsw-alias-border-l1)',
+                      borderRadius: 10,
+                      padding: '8px 12px',
+                      background: 'var(--dsw-alias-bg-base)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      fontSize: 11.5,
+                      color: 'var(--dsw-alias-label-secondary)',
+                    },
+                  },
+                    h('span', null, '点击派生树节点或泳道行可展开环节执行轨迹与审批抽屉'),
+                    h('button', {
+                      type: 'button',
+                      className: 'rt-btn',
+                      style: { padding: '2px 8px', fontSize: 11 },
+                      onClick: () => openAgentInspector('root'),
+                    }, '展开主控预览')),
 
-                        /* 3-Step Horizontal Chain */
+              /* Section 2: 全宽跨 Agent 协作 3 段式泳道 (.rt-swim-pane) */
+              h('div', {
+                className: 'rt-swim-pane rt-p4-swimlane-pane',
+                style: {
+                  border: '1px solid var(--dsw-alias-border-l1)',
+                  borderRadius: 12,
+                  padding: 12,
+                  background: 'var(--dsw-alias-bg-base)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                },
+              },
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, '跨 Agent 协作泳道'),
+                  h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
+                    filteredCollabCount + '/' + totalCollabEvents + ' 条记录 · ' + swimFilteredLanes.length + ' 条泳道'),
+                  h('div', { className: 'rt-spacer' }),
+                  h('input', {
+                    className: 'rt-input',
+                    style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
+                    placeholder: '搜索 Agent...',
+                    value: collabSearch,
+                    onChange: (e) => setCollabSearch(e.target.value),
+                  }),
+                  h('button', {
+                    type: 'button',
+                    className: 'rt-btn' + (collabSort === 'asc' ? ' rt-btn-primary' : ''),
+                    style: { padding: '1px 7px', fontSize: 11 },
+                    onClick: () => setCollabSort('asc'),
+                  }, '最早'),
+                  h('button', {
+                    type: 'button',
+                    className: 'rt-btn' + (collabSort === 'desc' ? ' rt-btn-primary' : ''),
+                    style: { padding: '1px 7px', fontSize: 11 },
+                    onClick: () => setCollabSort('desc'),
+                  }, '最新')),
+
+                h('div', { className: 'rt-swim-wave-filter', style: { display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
+                  [
+                    { k: 'all', lbl: '全部' },
+                    { k: 'running', lbl: '运行中' },
+                    { k: '1', lbl: 'Wave 1 立项' },
+                    { k: '2', lbl: 'Wave 2 架构' },
+                    { k: '3', lbl: 'Wave 3 构建' },
+                    { k: '4', lbl: 'Wave 4 审查' },
+                  ].map((wf) => h('button', {
+                    key: 'swf-' + wf.k,
+                    type: 'button',
+                    className: 'rt-btn' + (swimWaveFilter === wf.k ? ' rt-btn-primary' : ''),
+                    style: { fontSize: 10.5, padding: '2px 8px' },
+                    onClick: () => setSwimWaveFilter(wf.k),
+                  }, wf.lbl))),
+
+                h('div', {
+                  className: 'rt-swim-matrix-wrap',
+                  style: {
+                    position: 'relative',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    border: '1px solid var(--dsw-alias-border-l1)',
+                    borderRadius: 10,
+                    background: 'var(--dsw-alias-bg-layer-1)',
+                    overflow: 'hidden',
+                  },
+                },
+                  swimFilteredLanes.map((lane, lIdx) => {
+                    const isLaneSel = (activeInspectorAgent && activeInspectorAgent.id === lane.id) || selAgentId === lane.id
+                    const laneSteps = lane.steps || (lane.isRoot ? rootSteps : 0)
+                    const laneTok = lane.tokenLabel || rootTokensLabel
+                    const laneDur = lane.durationLabel || (lane.isRoot ? rootDuration : '待命')
+                    const laneStatus = lane.isRoot ? (runningCount > 0 ? 'running' : 'done') : (lane.status || 'done')
+                    const laneCompPct = lane.compressionPct || 0
+                    const laneApproved = (approvedWorkerMap[lane.id] && approvedWorkerMap[lane.id].approved) || lane.approvalState === 'approved'
+                    const step1Text = lane.isRoot ? '全局需求拆解与多波次并发调度' : (lane.prompt || lane.title)
+                    const step2Text = laneSteps + ' 步工具调用 · ' + laneTok + ' · ' + laneDur
+                    const step3Text = lane.isRoot
+                      ? (fusedChildren.length > 0 ? ('已统筹 ' + fusedChildren.length + ' 个子代理压缩摘要与审批') : '主控编排器就绪，等待拆解任务')
+                      : ((lane.output || '等待同步产物') + (laneCompPct > 0 ? (' · 压缩 -' + laneCompPct + '%') : ''))
+                    const orderedStages = collabSort === 'desc'
+                      ? [
+                          { key: 's3', tag: '阶段结论', text: step3Text, isConclusion: true },
+                          { key: 's2', tag: '核心执行', text: step2Text, isConclusion: false },
+                          { key: 's1', tag: '委派目标', text: step1Text, isConclusion: false },
+                        ]
+                      : [
+                          { key: 's1', tag: '委派目标', text: step1Text, isConclusion: false },
+                          { key: 's2', tag: '核心执行', text: step2Text, isConclusion: false },
+                          { key: 's3', tag: '阶段结论', text: step3Text, isConclusion: true },
+                        ]
+
+                    return h('div', Object.assign({
+                      key: 'lane-' + lane.id,
+                      className: 'rt-swim-row' + (isLaneSel ? ' on' : ''),
+                      style: {
+                        display: 'grid',
+                        gridTemplateColumns: '210px minmax(0, 1fr)',
+                        alignItems: 'stretch',
+                        minHeight: 58,
+                        borderBottom: lIdx < swimFilteredLanes.length - 1 ? '1px solid var(--dsw-alias-border-l1)' : 'none',
+                        background: isLaneSel ? 'rgba(59,130,246,0.08)' : 'transparent',
+                        cursor: 'pointer',
+                        position: 'relative',
+                      },
+                    }, clickable(() => openAgentInspector(lane.id), { label: '梳理 Agent 环节详情 ' + lane.title, expanded: isLaneSel })),
+                      h('div', {
+                        className: 'rt-swim-meta',
+                        style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRight: '1px solid var(--dsw-alias-border-l1)', minWidth: 0 },
+                      },
+                        h('span', {
+                          style: {
+                            background: lane.color,
+                            color: '#fff',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            width: lane.isRoot ? 32 : 26,
+                            height: 24,
+                            borderRadius: 7,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flex: 'none',
+                            fontFamily: 'ui-monospace,Menlo,monospace',
+                          },
+                        }, lane.avatar),
+                        h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 } },
+                          h('span', {
+                            style: {
+                              fontSize: 11.5,
+                              fontWeight: 700,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              color: 'var(--dsw-alias-label-primary)',
+                            },
+                            title: lane.title,
+                          }, lane.isRoot ? ('主控 · ' + lane.title) : lane.title),
+                          h('span', {
+                            className: 'rt-mono',
+                            style: { fontSize: 9.5, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                          }, (lane.isRoot ? 'Wave 0' : ('Wave ' + (lane.wave || 1) + ' · ' + lane.role))
+                            + (laneCompPct > 0 ? (' · -' + laneCompPct + '%') : '')
+                            + ' · ' + (laneApproved ? '已审' : '待审')))),
+                      h('div', {
+                        className: 'rt-swim-track',
+                        style: { position: 'relative', display: 'flex', alignItems: 'center', padding: '6px 10px', minWidth: 0 },
+                      },
+                        h('div', {
+                          style: { position: 'absolute', left: 12, right: 12, top: '50%', height: 1.5, background: 'var(--dsw-alias-border-l1)', zIndex: 0 },
+                        }),
                         h('div', {
                           className: 'rt-step-chain',
                           style: {
+                            position: 'relative',
+                            zIndex: 1,
                             display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                            gap: 10,
-                            alignItems: 'stretch',
+                            gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.08fr)',
+                            alignItems: 'center',
+                            gap: 5,
+                            width: '100%',
+                            minWidth: 0,
                           },
                         },
-                          /* Step 1 · 委派目标 */
-                          h('div', {
-                            className: 'rt-step-node',
-                            style: {
-                              padding: '8px 10px',
-                              borderRadius: 8,
-                              border: '1px solid var(--dsw-alias-border-l1)',
-                              borderTop: '3px solid ' + (activeInspectorAgent.color || '#3b82f6'),
-                              background: 'var(--dsw-alias-bg-layer-1)',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 5,
-                            },
-                          },
-                            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
-                              h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                                'Step 1 · 📥 委派目标 (Prompt 拆分)'),
-                              h('span', { className: 'rt-mono', style: { fontSize: 10, color: activeInspectorAgent.color || '#3b82f6', fontWeight: 700 } },
-                                'Wave ' + (activeInspectorAgent.wave || 0) + ' / ' + (activeInspectorAgent.uiPriority || 'P1'))),
-                            h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
-                              (activeInspectorDetail && activeInspectorDetail.prompt) || activeInspectorAgent.assignedGoal || activeInspectorAgent.inputPrompt || activeInspectorAgent.prompt)),
-
-                          /* Step 2 · 核心执行 */
-                          h('div', {
-                            className: 'rt-step-node',
-                            style: {
-                              padding: '8px 10px',
-                              borderRadius: 8,
-                              border: '1px solid var(--dsw-alias-border-l1)',
-                              borderTop: '3px solid #8b5cf6',
-                              background: 'var(--dsw-alias-bg-layer-1)',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 6,
-                            },
-                          },
-                            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
-                              h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                                'Step 2 · ⚙️ 核心执行 (工具轨迹)'),
-                              h('span', { className: 'rt-mono', style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
-                                activeStepTimeline.length + ' 步 · ' + (inspDigest.filesTouched || []).length + ' 文件')),
-                            h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
-                              (inspDigest.filesTouched || []).map((fp) => h('span', {
-                                key: 'ft-' + fp,
-                                className: 'rt-mono',
-                                style: { fontSize: 9.5, padding: '1px 5px', borderRadius: 4, background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)' },
-                              }, fp))),
-                            h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
-                              activeStepTimeline.map((st, sIdx) => h('div', {
-                                key: 'traj-' + sIdx,
-                                style: {
-                                  display: 'grid',
-                                  gridTemplateColumns: 'auto auto minmax(0, 1fr) auto',
-                                  alignItems: 'center',
-                                  gap: 5,
-                                  padding: '4px 7px',
-                                  borderRadius: 6,
-                                  background: 'var(--dsw-alias-bg-base)',
-                                  border: '1px solid var(--dsw-alias-border-l1)',
-                                  fontSize: 10.5,
-                                },
-                              },
-                                h('span', { className: 'rt-mono', style: { fontWeight: 700, color: activeInspectorAgent.color || '#3b82f6' } },
-                                  '#' + st.step),
-                                h('span', {
-                                  className: 'rt-mono',
-                                  style: { fontSize: 9.5, padding: '1px 5px', borderRadius: 4, background: 'var(--dsw-alias-bg-layer-2)', fontWeight: 600 },
-                                }, st.tool),
-                                h('span', {
-                                  style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--dsw-alias-label-primary)' },
-                                  title: st.input + ' -> ' + st.output,
-                                }, st.input),
-                                h('span', {
-                                  className: 'rt-mono',
-                                  style: {
-                                    fontSize: 9.5,
-                                    color: st.status === 'error' ? '#ef4444' : (st.status === 'running' ? '#3b82f6' : (st.status === 'pending' ? '#f59e0b' : '#10b981')),
-                                    fontWeight: 600,
-                                  },
-                                }, st.status === 'error' ? '⚠ 异常' : (st.status === 'running' ? '● 执行中' : (st.status === 'pending' ? '○ 待执行' : '✓ 完成'))))))),
-
-                          /* Step 3 · 阶段结论与 Plan 审批闭环 */
-                          h('div', {
-                            className: 'rt-step-node',
-                            style: {
-                              padding: '8px 10px',
-                              borderRadius: 8,
-                              border: '1px solid var(--dsw-alias-border-l1)',
-                              borderTop: '3px solid #10b981',
-                              background: 'var(--dsw-alias-bg-layer-1)',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 6,
-                            },
-                          },
-                            h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
-                              h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                                'Step 3 · 📤 阶段结论与 Plan 审批'),
-                              h('span', {
-                                style: {
-                                  fontSize: 9.5,
-                                  fontWeight: 700,
-                                  padding: '1px 6px',
-                                  borderRadius: 99,
-                                  background: isInspRevReq ? 'rgba(239,68,68,0.14)' : (isInspApproved ? 'rgba(16,185,129,0.14)' : 'rgba(245,158,11,0.16)'),
-                                  color: isInspRevReq ? '#ef4444' : (isInspApproved ? '#10b981' : '#f59e0b'),
-                                },
-                              }, isInspRevReq ? '↩ 已驳回重做' : (isInspApproved ? '✓ 已审批' : '⏳ 待 Plan 审批'))),
-                            h('div', {
-                              className: 'rt-digest-box',
+                          orderedStages.reduce((acc, stg, sIdx) => {
+                            if (sIdx > 0) {
+                              acc.push(h('span', {
+                                key: 'arr-' + lane.id + '-' + sIdx,
+                                className: 'rt-step-arrow rt-mono',
+                                style: { fontSize: 10, color: lane.color, fontWeight: 700, padding: '0 1px', userSelect: 'none' },
+                              }, collabSort === 'desc' ? '◄──' : '──►'))
+                            }
+                            acc.push(h('div', Object.assign({
+                              key: 'pill-' + lane.id + '-' + stg.key,
+                              className: 'rt-step-node rt-step-pill' + (isLaneSel ? ' on' : ''),
+                              title: stg.tag + '：' + stg.text,
                               style: {
-                                padding: '7px 9px',
-                                borderRadius: 7,
-                                border: '1px dashed var(--dsw-alias-border-l1)',
-                                background: 'var(--dsw-alias-bg-base)',
                                 display: 'flex',
                                 flexDirection: 'column',
-                                gap: 4,
+                                gap: 2,
+                                padding: '4px 8px',
+                                borderRadius: 8,
+                                border: isLaneSel ? ('1px solid ' + lane.color) : '1px solid var(--dsw-alias-border-l1)',
+                                borderLeft: '3px solid ' + lane.color,
+                                background: 'var(--dsw-alias-bg-base)',
+                                minWidth: 0,
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
                               },
-                            },
-                              h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-primary)', lineHeight: 1.5 } },
-                                inspDigest.whatWasDone || (activeInspectorDetail && activeInspectorDetail.output) || activeInspectorAgent.output),
-                              rawTokNum > 0
-                                ? h('div', { className: 'rt-mono', style: { fontSize: 10, color: '#3b82f6', fontWeight: 600 } },
-                                    `原始 ${rawTokNum} tok ➔ 压缩后 ${compTokNum} tok (-${compPctNum}%)`)
-                                : null))),
-
-                        /* 底部可编辑 nextGoal + Plan 审批通过 / 驳回重做栏 */
-                        h('div', {
-                          style: {
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            flexWrap: 'wrap',
-                            paddingTop: 6,
-                            borderTop: '1px dashed var(--dsw-alias-border-l1)',
-                          },
-                        },
-                          h('span', { style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, '下一阶段目标：'),
-                          h('input', {
-                            className: 'rt-input',
-                            style: { flex: '1 1 220px', height: 26, fontSize: 11.5 },
-                            value: customNextGoal,
-                            onChange: (e) => setCustomNextGoal(e.target.value),
-                            placeholder: '输入审批通过后下达给下一波次的新目标...',
-                          }),
-                          h('input', {
-                            className: 'rt-input',
-                            style: { width: 150, height: 26, fontSize: 11 },
-                            value: reviewNote,
-                            onChange: (e) => setReviewNote(e.target.value),
-                            placeholder: '审批备注（选填）',
-                          }),
-                          h('button', {
-                            type: 'button',
-                            disabled: approvingBusy,
-                            className: 'rt-btn rt-plan-approve-btn' + (isInspApproved ? '' : ' rt-btn-primary'),
-                            style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
-                            onClick: () => handlePlanApproveWorker(activeInspectorAgent, 'approved'),
-                          }, approvingBusy ? '提交中…' : '✓ Plan 审批通过并下达新目标'),
-                          !activeInspectorAgent.isRoot
-                            ? h('button', {
-                                type: 'button',
-                                disabled: approvingBusy,
-                                className: 'rt-btn',
-                                style: { padding: '3px 9px', fontSize: 11, color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' },
-                                onClick: () => handlePlanApproveWorker(activeInspectorAgent, 'revision_requested'),
-                              }, '↩ 驳回重做')
-                            : null,
-                          h('button', {
-                            type: 'button',
-                            className: 'rt-btn',
-                            style: { padding: '3px 8px', fontSize: 10.5 },
-                            onClick: () => { setSelId(activeInspectorAgent.role || 'plan'); setMode('docwall') },
-                          }, '查看角色文稿 →')))
-                    })()
-                  : h('div', {
-                      className: 'rt-agent-inspector-drawer',
-                      style: {
-                        border: '1px dashed var(--dsw-alias-border-l1)',
-                        borderRadius: 10,
-                        padding: '8px 12px',
-                        background: 'var(--dsw-alias-bg-base)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                        fontSize: 11.5,
-                        color: 'var(--dsw-alias-label-secondary)',
-                      },
-                    },
-                      h('span', null, '🔍 点击上方开发树任意节点或下方泳道行，即可展开「Agent 环节执行轨迹与 Plan 审批抽屉」梳理细节并按需跳转聊天框'),
-                      h('button', {
-                        type: 'button',
-                        className: 'rt-btn',
-                        style: { padding: '2px 8px', fontSize: 11 },
-                        onClick: () => openAgentInspector('root'),
-                      }, '展开主控环节预览')),
-
-                /* Section 2: 全宽跨 Agent 协作 3 段式泳道 (.rt-swim-pane) */
-                h('div', {
-                  className: 'rt-swim-pane rt-p4-swimlane-pane',
-                  style: {
-                    border: '1px solid var(--dsw-alias-border-l1)',
-                    borderRadius: 12,
-                    padding: 12,
-                    background: 'var(--dsw-alias-bg-base)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                  },
-                },
-                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, '跨 Agent 协作 (P0 → P3 优先级泳道)'),
-                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                      filteredEvents.length + '/' + allCollabEvents.length + ' 条记录 · ' + swimFilteredLanes.length + ' 条泳道 · 点击环节胶囊定位上方轨迹抽屉'),
-                    h('div', { className: 'rt-spacer' }),
-                    h('input', {
-                      className: 'rt-input',
-                      style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
-                      placeholder: '搜索 Agent...',
-                      value: collabSearch,
-                      onChange: (e) => setCollabSearch(e.target.value),
-                    }),
-                    h('button', {
-                      type: 'button',
-                      className: 'rt-btn' + (collabSort === 'asc' ? ' rt-btn-primary' : ''),
-                      style: { padding: '1px 7px', fontSize: 11 },
-                      onClick: () => setCollabSort('asc'),
-                    }, '最早'),
-                    h('button', {
-                      type: 'button',
-                      className: 'rt-btn' + (collabSort === 'desc' ? ' rt-btn-primary' : ''),
-                      style: { padding: '1px 7px', fontSize: 11 },
-                      onClick: () => setCollabSort('desc'),
-                    }, '最新')),
-
-                  h('div', { className: 'rt-swim-wave-filter', style: { display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
-                    [
-                      { k: 'all', lbl: '全部' },
-                      { k: 'running', lbl: '运行中' },
-                      { k: '1', lbl: 'Wave 1 立项' },
-                      { k: '2', lbl: 'Wave 2 架构' },
-                      { k: '3', lbl: 'Wave 3 构建' },
-                      { k: '4', lbl: 'Wave 4 审查' },
-                    ].map((wf) => h('button', {
-                      key: 'swf-' + wf.k,
-                      type: 'button',
-                      className: 'rt-p3-pill' + (swimWaveFilter === wf.k ? ' on' : ''),
-                      style: { fontSize: 10.5, padding: '2px 8px' },
-                      onClick: () => setSwimWaveFilter(wf.k),
-                    }, wf.lbl))),
-
-                  h('div', {
-                    className: 'rt-swim-matrix-wrap',
-                    style: {
-                      position: 'relative',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      border: '1px solid var(--dsw-alias-border-l1)',
-                      borderRadius: 10,
-                      background: 'var(--dsw-alias-bg-layer-1)',
-                      overflow: 'hidden',
-                    },
-                  },
-                    swimFilteredLanes.map((lane, lIdx) => {
-                      const isLaneSel = (activeInspectorAgent && activeInspectorAgent.id === lane.id) || selAgentId === lane.id
-                      const laneSteps = lane.steps || (lane.isRoot ? rootSteps : 0)
-                      const laneTok = lane.tokenLabel || rootTokensLabel
-                      const laneDur = lane.durationLabel || (lane.isRoot ? rootDuration : '待命')
-                      const laneStatus = lane.isRoot ? (runningCount > 0 ? 'running' : 'done') : (lane.status || 'done')
-                      const lanePriMeta = PRIORITY_BADGE_META[lane.uiPriority] || PRIORITY_BADGE_META.P2
-                      const laneCompPct = lane.compressionPct || 0
-                      const laneApproved = (approvedWorkerMap[lane.id] && approvedWorkerMap[lane.id].approved) || lane.approvalState === 'approved'
-                      const step1Text = lane.isRoot ? '全局需求拆解与 4-Wave 并发调度' : (lane.prompt || lane.title)
-                      const step2Text = laneSteps + ' 步工具调用 · ' + laneTok + ' · ' + laneDur
-                      const step3Text = lane.isRoot
-                        ? (fusedChildren.length > 0 ? ('已统筹 ' + fusedChildren.length + ' 个子代理压缩摘要与 Plan 审批') : '主控编排器就绪，等待拆解任务')
-                        : ((lane.output || '等待同步产物') + (laneCompPct > 0 ? (' · 压缩 -' + laneCompPct + '%') : ''))
-                      const orderedStages = collabSort === 'desc'
-                        ? [
-                            { key: 's3', tag: '📤 阶段结论', text: step3Text, isConclusion: true },
-                            { key: 's2', tag: '⚙️ 核心执行', text: step2Text, isConclusion: false },
-                            { key: 's1', tag: '📥 委派目标', text: step1Text, isConclusion: false },
-                          ]
-                        : [
-                            { key: 's1', tag: '📥 委派目标', text: step1Text, isConclusion: false },
-                            { key: 's2', tag: '⚙️ 核心执行', text: step2Text, isConclusion: false },
-                            { key: 's3', tag: '📤 阶段结论', text: step3Text, isConclusion: true },
-                          ]
-
-                      return h('div', Object.assign({
-                        key: 'lane-' + lane.id,
-                        className: 'rt-swim-row' + (isLaneSel ? ' on' : ''),
-                        style: {
-                          display: 'grid',
-                          gridTemplateColumns: '210px minmax(0, 1fr)',
-                          alignItems: 'stretch',
-                          minHeight: 58,
-                          borderBottom: lIdx < swimFilteredLanes.length - 1 ? '1px solid var(--dsw-alias-border-l1)' : 'none',
-                          background: isLaneSel ? 'rgba(59,130,246,0.08)' : 'transparent',
-                          cursor: 'pointer',
-                          position: 'relative',
-                        },
-                      }, clickable(() => openAgentInspector(lane.id), { label: '梳理 Agent 环节详情 ' + lane.title, expanded: isLaneSel })),
-                        h('div', {
-                          className: 'rt-swim-meta',
-                          style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRight: '1px solid var(--dsw-alias-border-l1)', minWidth: 0 },
-                        },
-                          h('span', {
-                            style: {
-                              background: lane.color,
-                              color: '#fff',
-                              fontSize: 10,
-                              fontWeight: 700,
-                              width: lane.isRoot ? 32 : 26,
-                              height: 24,
-                              borderRadius: 7,
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              flex: 'none',
-                              fontFamily: 'ui-monospace,Menlo,monospace',
-                            },
-                          }, lane.avatar),
-                          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 } },
-                            h('div', { style: { display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 } },
+                            }, clickable((e) => {
+                              if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+                              openAgentInspector(lane.id)
+                            }, { label: '展开 ' + lane.title + ' ' + stg.tag + ' 详情', expanded: isLaneSel })),
+                              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
+                                h('span', { style: { fontSize: 10, fontWeight: 700, color: lane.color, whiteSpace: 'nowrap' } }, stg.tag),
+                                stg.isConclusion
+                                  ? h('span', {
+                                      style: {
+                                        fontSize: 9.5,
+                                        fontWeight: 700,
+                                        padding: '0 5px',
+                                        borderRadius: 99,
+                                        whiteSpace: 'nowrap',
+                                        background: laneStatus === 'error'
+                                          ? 'rgba(239,68,68,0.14)'
+                                          : (laneStatus === 'running' ? 'rgba(59,130,246,0.14)' : (laneStatus === 'pending' ? 'rgba(245,158,11,0.14)' : 'rgba(16,185,129,0.14)')),
+                                        color: laneStatus === 'error' ? '#ef4444' : (laneStatus === 'running' ? '#3b82f6' : (laneStatus === 'pending' ? '#d97706' : '#10b981')),
+                                      },
+                                    }, laneStatus === 'error' ? '异常待修复' : (laneStatus === 'running' ? '运行中' : (laneStatus === 'pending' ? '待执行' : '已完成')))
+                                  : null),
                               h('span', {
-                                className: lanePriMeta.cls,
-                                style: { fontSize: 9, fontWeight: 700, padding: '0 4px', borderRadius: 3, flex: 'none' },
-                              }, lane.uiPriority || 'P2'),
-                              h('span', {
-                                style: {
-                                  fontSize: 11.5,
-                                  fontWeight: 700,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                  color: 'var(--dsw-alias-label-primary)',
-                                  flex: 1,
-                                },
-                                title: lane.title,
-                              }, lane.isRoot ? ('主控 · ' + lane.title) : lane.title)),
-                            h('span', {
-                              className: 'rt-mono',
-                              style: { fontSize: 9.5, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                            }, ((lane.workerTags && lane.workerTags[0]) || '#lmtex') + (laneCompPct > 0 ? (' · 压缩 -' + laneCompPct + '%') : '') + ' · ' + (laneApproved ? '✓已审' : '⏳待审')))),
-                        h('div', {
-                          className: 'rt-swim-track',
-                          style: { position: 'relative', display: 'flex', alignItems: 'center', padding: '6px 10px', minWidth: 0 },
-                        },
-                          h('div', {
-                            style: { position: 'absolute', left: 12, right: 12, top: '50%', height: 1.5, background: 'var(--dsw-alias-border-l1)', zIndex: 0 },
-                          }),
-                          h('div', {
-                            className: 'rt-step-chain',
-                            style: {
-                              position: 'relative',
-                              zIndex: 1,
-                              display: 'grid',
-                              gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.08fr)',
-                              alignItems: 'center',
-                              gap: 5,
-                              width: '100%',
-                              minWidth: 0,
-                            },
-                          },
-                            orderedStages.reduce((acc, stg, sIdx) => {
-                              if (sIdx > 0) {
-                                acc.push(h('span', {
-                                  key: 'arr-' + lane.id + '-' + sIdx,
-                                  className: 'rt-step-arrow rt-mono',
-                                  style: { fontSize: 10, color: lane.color, fontWeight: 700, padding: '0 1px', userSelect: 'none' },
-                                }, collabSort === 'desc' ? '◄──' : '──►'))
-                              }
-                              acc.push(h('div', Object.assign({
-                                key: 'pill-' + lane.id + '-' + stg.key,
-                                className: 'rt-step-node rt-step-pill' + (isLaneSel ? ' on' : ''),
-                                title: stg.tag + '：' + stg.text,
-                                style: {
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: 2,
-                                  padding: '4px 8px',
-                                  borderRadius: 8,
-                                  border: isLaneSel ? ('1px solid ' + lane.color) : '1px solid var(--dsw-alias-border-l1)',
-                                  borderLeft: '3px solid ' + lane.color,
-                                  background: 'var(--dsw-alias-bg-base)',
-                                  minWidth: 0,
-                                  boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                                },
-                              }, clickable((e) => {
-                                if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
-                                openAgentInspector(lane.id)
-                              }, { label: '展开 ' + lane.title + ' ' + stg.tag + ' 详情', expanded: isLaneSel })),
-                                h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
-                                  h('span', { style: { fontSize: 10, fontWeight: 700, color: lane.color, whiteSpace: 'nowrap' } }, stg.tag),
-                                  stg.isConclusion
-                                    ? h('span', {
-                                        style: {
-                                          fontSize: 9.5,
-                                          fontWeight: 700,
-                                          padding: '0 5px',
-                                          borderRadius: 99,
-                                          whiteSpace: 'nowrap',
-                                          background: laneStatus === 'error'
-                                            ? 'rgba(239,68,68,0.14)'
-                                            : (laneStatus === 'running' ? 'rgba(59,130,246,0.14)' : 'rgba(16,185,129,0.14)'),
-                                          color: laneStatus === 'error' ? '#ef4444' : (laneStatus === 'running' ? '#3b82f6' : '#10b981'),
-                                        },
-                                      }, laneStatus === 'error' ? '⚠ 异常待修复' : (laneStatus === 'running' ? '● 运行中' : (laneStatus === 'pending' ? '○ 待执行' : '✓ 已完成')))
-                                    : null),
-                                h('span', {
-                                  style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                                }, stg.text)))
-                              return acc
-                            }, []))))
-                    }))),
+                                style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                              }, stg.text)))
+                            return acc
+                          }, []))))
+                  }))),
 
-                /* Section 3: 响应式多列协作任务网格 (.rt-collab-pane) */
-                h('div', {
-                  className: 'rt-collab-pane rt-p4-tasks-pane',
-                  style: {
-                    border: '1px solid var(--dsw-alias-border-l1)',
-                    borderRadius: 12,
-                    padding: 12,
-                    background: 'var(--dsw-alias-bg-base)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                  },
-                },
-                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, '协作任务'),
-                    h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                      filteredTasks.length + '/' + allTasks.length + ' 个工作项'),
-                    h('div', { className: 'rt-spacer' }),
-                    h('input', {
-                      className: 'rt-input',
-                      style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
-                      placeholder: '搜索工作项...',
-                      value: taskSearch,
-                      onChange: (e) => setTaskSearch(e.target.value),
-                    })),
-                  h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
-                    [
-                      { k: 'all', lbl: '全部 ' + allTasks.length },
-                      { k: 'run', lbl: '进行中 ' + runTaskCount },
-                      { k: 'wait', lbl: '待处理 ' + waitTaskCount },
-                      { k: 'done', lbl: '已完成 ' + doneTaskCount },
-                    ].map((fp) => h('button', {
-                      key: fp.k,
-                      type: 'button',
-                      className: 'rt-p3-pill' + (taskFilter === fp.k ? ' on' : ''),
-                      onClick: () => setTaskFilter(fp.k),
-                    }, fp.lbl))),
-                  filteredTasks.length === 0
-                    ? h('div', { className: 'rt-empty' }, '当前暂无协作工作项 —— 在上方拆解需求或新增分片后将自动生成卡片。')
-                    : h('div', {
-                        style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 },
-                      },
-                        filteredTasks.map((tk) => {
-                          const isExp = expandedTaskId === tk.id
-                          return h('div', Object.assign({
-                            key: tk.id,
-                            className: 'rt-p4-task-card' + (isExp ? ' open' : '') + (tk.rawStatus === 'error' ? ' is-error' : ''),
-                            style: {
-                              border: '1px solid var(--dsw-alias-border-l1)',
-                              borderLeft: '3.5px solid ' + tk.color,
-                              borderRadius: 9,
-                              padding: '8px 10px',
-                              background: tk.color + '10',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 5,
-                            },
-                          }, clickable(() => setExpandedTaskId(isExp ? null : tk.id), { label: '展开协作任务详情 ' + tk.title, expanded: isExp })),
-                            h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                              h('span', {
-                                style: { background: tk.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 5, fontFamily: 'ui-monospace,Menlo,monospace' },
-                              }, tk.avatar),
-                              h('span', { style: { fontWeight: 700, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, tk.title),
-                              h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } }, '子 Agent'),
-                              h('span', {
-                                style: {
-                                  fontSize: 10.5,
-                                  fontWeight: 600,
-                                  padding: '1px 7px',
-                                  borderRadius: 99,
-                                  background: tk.rawStatus === 'error' ? 'rgba(239,68,68,0.14)' : (tk.status === 'run' ? 'rgba(59,130,246,0.14)' : 'rgba(16,185,129,0.14)'),
-                                  color: tk.rawStatus === 'error' ? '#ef4444' : (tk.status === 'run' ? '#3b82f6' : '#10b981'),
-                                },
-                              }, tk.statusBadge)),
-                            h('div', {
-                              style: {
-                                fontSize: 11.5,
-                                color: 'var(--dsw-alias-label-secondary)',
-                                overflow: isExp ? 'visible' : 'hidden',
-                                textOverflow: isExp ? 'clip' : 'ellipsis',
-                                whiteSpace: isExp ? 'normal' : 'nowrap',
-                                lineHeight: 1.5,
-                              },
-                            }, '委派: ' + tk.prompt),
-                            isExp
-                              ? h('div', {
-                                  style: { marginTop: 4, paddingTop: 6, borderTop: '1px dashed var(--dsw-alias-border-l1)', display: 'flex', flexDirection: 'column', gap: 5, fontSize: 11.5 },
-                                },
-                                  h('div', { style: { color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55 } },
-                                    h('b', null, '产出摘要：'), tk.output),
-                                  h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                                    h('span', { className: 'rt-mono' }, '用量 ' + tk.tokenLabel),
-                                    h('span', { className: 'rt-mono' }, '耗时 ' + tk.durationLabel),
-                                    h('span', { className: 'rt-mono' }, tk.steps + ' 步'),
-                                    h('div', { className: 'rt-spacer' }),
-                                    h('button', {
-                                      type: 'button',
-                                      className: 'rt-btn',
-                                      style: { padding: '1px 7px', fontSize: 10.5 },
-                                      onClick: (e) => { e.stopPropagation(); openAgentInspector(tk.agentId) },
-                                    }, '🔍 梳理环节细节'),
-                                    h('button', {
-                                      type: 'button',
-                                      className: 'rt-btn rt-jump-chat-btn',
-                                      style: { padding: '1px 7px', fontSize: 10.5 },
-                                      onClick: (e) => { e.stopPropagation(); openAgentSessionInHostChat(tk) },
-                                    }, '💬 跳转侧边聊天框打开该 Agent 会话 ↗'),
-                                    h('button', {
-                                      type: 'button',
-                                      className: 'rt-btn',
-                                      style: { padding: '1px 7px', fontSize: 10.5 },
-                                      onClick: (e) => { e.stopPropagation(); setSelId(tk.role); setMode('docwall') },
-                                    }, '查看角色文稿 →'),
-                                    h('button', {
-                                      type: 'button',
-                                      className: 'rt-btn rt-btn-primary',
-                                      style: { padding: '1px 7px', fontSize: 10.5 },
-                                      onClick: (e) => { e.stopPropagation(); triggerCheckpoint('断点续跑', 'resume', tk.agentId || tk.role) },
-                                    }, '断点续跑')))
-                              : null)
-                        })))))
-          : null,
-
-        /* ── 模式 2: p5 树状图画布 · 团队任务板 ── */
-        effectiveMode === 'p5'
-          ? h('div', { className: 'rt-p5-board', style: { display: 'flex', flexDirection: 'column', gap: 10 } },
+              /* Section 3: 响应式多列协作任务网格 (.rt-collab-pane) */
               h('div', {
-                className: 'rt-p5-topbar',
+                className: 'rt-collab-pane rt-p4-tasks-pane',
                 style: {
-                  display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-                  padding: '9px 14px', borderRadius: 10, border: '1px solid var(--dsw-alias-border-l1)',
-                  background: 'var(--dsw-alias-bg-layer-2)',
-                },
-              },
-                h('span', { style: { fontWeight: 700, fontSize: 12.5 } },
-                  '团队任务板 · 团队 ' + totalAgents + ' 成员 · ' + allTasks.length + ' 任务 · ' + doneTaskCount + ' 已完成'),
-                h('div', { className: 'rt-p5-filters', style: { display: 'inline-flex', gap: 5, marginLeft: 4 } },
-                  h('button', {
-                    type: 'button',
-                    className: 'rt-p3-pill' + (p5Filter === 'all' ? ' on' : ''),
-                    onClick: () => setP5Filter('all'),
-                  }, '全部'),
-                  h('button', {
-                    type: 'button',
-                    className: 'rt-p3-pill' + (p5Filter === 'lead' ? ' on' : ''),
-                    onClick: () => setP5Filter('lead'),
-                  }, '主代理 lead'),
-                  h('button', {
-                    type: 'button',
-                    className: 'rt-p3-pill' + (p5Filter === 'sub' ? ' on' : ''),
-                    onClick: () => setP5Filter('sub'),
-                  }, '子代理')),
-                h('div', { className: 'rt-spacer' }),
-                h('button', {
-                  type: 'button',
-                  className: 'rt-btn rt-btn-primary',
-                  onClick: addQuickTask,
-                }, '+ 新建任务')),
-
-              h('div', {
-                className: 'rt-p5-canvas-wrap',
-                style: {
-                  position: 'relative',
                   border: '1px solid var(--dsw-alias-border-l1)',
                   borderRadius: 12,
-                  padding: '28px 24px 64px',
-                  background: 'radial-gradient(circle at 12px 12px, rgba(77,107,254,0.14) 1.2px, transparent 1.2px), var(--dsw-alias-bg-base)',
-                  backgroundSize: '18px 18px',
-                  overflow: 'auto',
-                  minHeight: 380,
+                  padding: 12,
+                  background: 'var(--dsw-alias-bg-base)',
                   display: 'flex',
-                  justifyContent: 'center',
+                  flexDirection: 'column',
+                  gap: 8,
                 },
               },
-                h('div', {
-                  className: 'rt-p5-tree-stage rt-p5-tree',
-                  style: {
-                    width: 760,
-                    maxWidth: '100%',
-                    transform: 'scale(' + (zoom / 100) + ')',
-                    transformOrigin: 'top center',
-                    transition: 'transform 0.16s cubic-bezier(0.22, 1, 0.36, 1)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                  },
-                },
-                  h('div', {
-                    className: 'rt-p5-root-wrap',
-                    style: {
-                      width: 360, maxWidth: '92%', position: 'relative',
-                      display: 'flex', flexDirection: 'column', alignItems: 'center',
-                      opacity: p5Filter === 'sub' ? 0.72 : 1,
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, '协作任务'),
+                  h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
+                    filteredTasks.length + '/' + allTasks.length + ' 个工作项'),
+                  h('div', { className: 'rt-spacer' }),
+                  h('input', {
+                    className: 'rt-input',
+                    style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
+                    placeholder: '搜索工作项...',
+                    value: taskSearch,
+                    onChange: (e) => setTaskSearch(e.target.value),
+                  })),
+                h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
+                  [
+                    { k: 'all', lbl: '全部 ' + allTasks.length },
+                    { k: 'run', lbl: '进行中 ' + runTaskCount },
+                    { k: 'wait', lbl: '待处理 ' + waitTaskCount },
+                    { k: 'done', lbl: '已完成 ' + doneTaskCount },
+                  ].map((fp) => h('button', {
+                    key: fp.k,
+                    type: 'button',
+                    className: 'rt-btn' + (taskFilter === fp.k ? ' rt-btn-primary' : ''),
+                    style: { padding: '2px 8px', fontSize: 11 },
+                    onClick: () => setTaskFilter(fp.k),
+                  }, fp.lbl))),
+                filteredTasks.length === 0
+                  ? h('div', { className: 'rt-empty' }, '当前暂无协作工作项 —— 在「协同与审批」拆解需求或新增分片后将自动生成。')
+                  : h('div', {
+                      style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 },
                     },
-                  },
-                    h('div', Object.assign({
-                      className: 'rt-p5-node rt-p5-root' + (selAgentId === 'root' ? ' on' : ''),
-                      style: {
-                        width: 360, maxWidth: '100%', boxSizing: 'border-box', position: 'relative',
-                        border: '1.5px solid #3b82f6', borderRadius: 12, padding: '12px 14px',
-                        background: 'linear-gradient(180deg, rgba(59,130,246,0.08) 0%, transparent 48%), var(--dsw-alias-bg-layer-1)',
-                        boxShadow: '0 6px 20px -4px rgba(59,130,246,0.16)',
-                        display: 'flex', flexDirection: 'column', gap: 7, cursor: 'pointer',
-                      },
-                    }, clickable(() => setSelAgentId(selAgentId === 'root' ? null : 'root'), { label: '主代理节点 ' + workspaceDisplayTitle, expanded: selAgentId === 'root' })),
-                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                        h('span', { className: 'rt-p5-pill', style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999 } }, '主代理'),
-                        h('span', { className: 'rt-p5-pill rt-tag rt-tag-live', style: { margin: 0, background: 'rgba(14,165,233,0.14)', color: '#0284c7', borderColor: 'rgba(14,165,233,0.35)', borderRadius: 999, padding: '1px 8px', fontSize: 10.5, fontWeight: 700 } }, 'lead'),
-                        h('span', { className: 'rt-p5-pill rt-tag rt-tag-active', style: { margin: 0, borderRadius: 999, padding: '1px 8px', fontSize: 10, fontWeight: 700 } }, '可续接'),
-                        h('div', { className: 'rt-spacer' }),
-                        h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } }, rootTokensLabel + ' · ' + rootSteps + ' 步')),
-                      h('div', { style: { fontSize: 13.5, fontWeight: 700, color: 'var(--dsw-alias-label-primary)', lineHeight: 1.4 } }, workspaceDisplayTitle),
-                      h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
-                        '主控架构师 (Captain) 统筹需求拆解、架构分片契约与并发子代理执行，持续将结构化成果同步至事实库。'),
-                      h('div', {
-                        style: { marginTop: 2, paddingTop: 7, borderTop: '1px solid var(--dsw-alias-border-l1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, fontWeight: 600, color: '#3b82f6' },
-                      },
-                        h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
-                          h('span', { className: 'rt-p5-spin' }, '●'),
-                          h('span', null, runningCount > 0 ? '正在协调并发子代理' : '主控就绪')),
-                        h('span', { className: 'rt-mono', style: { fontSize: 10.5 } }, rootCtxPct)),
-                      h('span', { className: 'rt-node-handle rt-node-handle-bottom', style: { borderColor: '#3b82f6' } }))),
-
-                  p5Filter === 'lead' || fusedChildren.length === 0
-                    ? (fusedChildren.length === 0
-                      ? h('div', { className: 'rt-empty', style: { marginTop: 18 } }, '暂无已派发的子代理任务 —— 点击右上角「+ 新建任务」或前往「协同与审批」拆解。')
-                      : null)
-                    : h(React.Fragment, null,
-                        h('svg', {
-                          className: 'rt-p5-branch-svg rt-p5-connector-svg',
-                          viewBox: '0 0 760 68',
-                          preserveAspectRatio: 'none',
-                          style: { width: 760, maxWidth: '100%', height: 68, display: 'block', overflow: 'visible', margin: '0 auto' },
-                          'aria-label': '主代理到子代理分支连线',
-                        },
-                          h('path', {
-                            d: 'M 380,0 C 380,34 180,34 180,68',
-                            fill: 'none',
-                            stroke: (primaryTreeChild && primaryTreeChild.color) || '#8b5cf6',
-                            strokeWidth: '2.4',
-                          }),
-                          h('path', {
-                            d: 'M 380,0 C 380,34 580,34 580,68',
-                            fill: 'none',
-                            stroke: '#10b981',
-                            strokeWidth: '2.2',
-                            strokeDasharray: '6 4',
-                          }),
-                          h('circle', { cx: '380', cy: '2', r: '4', fill: '#3b82f6' }),
-                          h('circle', { cx: '180', cy: '66', r: '3.8', fill: (primaryTreeChild && primaryTreeChild.color) || '#8b5cf6' }),
-                          h('circle', { cx: '580', cy: '66', r: '3.8', fill: '#10b981' })),
-                        h('div', {
-                          className: 'rt-p5-branches-grid rt-p5-branches',
+                      filteredTasks.map((tk) => {
+                        const isExp = expandedTaskId === tk.id
+                        const isPendingTask = tk.rawStatus === 'pending'
+                        const isTaskBusy = dispatchingId === tk.agentId
+                        return h('div', Object.assign({
+                          key: tk.id,
+                          className: 'rt-p4-task-card' + (isExp ? ' open' : '') + (tk.rawStatus === 'error' ? ' is-error' : ''),
                           style: {
-                            width: 760, maxWidth: '100%', display: 'grid',
-                            gridTemplateColumns: 'repeat(2, minmax(0, 360px))',
-                            justifyContent: 'space-between', gap: 40, alignItems: 'start',
+                            border: '1px solid var(--dsw-alias-border-l1)',
+                            borderLeft: '3.5px solid ' + tk.color,
+                            borderRadius: 9,
+                            padding: '8px 10px',
+                            background: tk.color + '10',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 5,
                           },
-                        },
-                          primaryTreeChild
-                            ? h('div', Object.assign({
-                                className: 'rt-p5-node rt-p5-child-active' + (selAgentId === primaryTreeChild.id ? ' on' : ''),
-                                style: {
-                                  position: 'relative', width: '100%', boxSizing: 'border-box',
-                                  border: '1.5px solid ' + primaryTreeChild.color, borderRadius: 12, padding: '12px 14px',
-                                  background: 'var(--dsw-alias-bg-layer-1)', boxShadow: '0 4px 16px -4px rgba(15,23,42,0.1)',
-                                  display: 'flex', flexDirection: 'column', gap: 7, cursor: 'pointer',
-                                },
-                              }, clickable(() => setSelAgentId(selAgentId === primaryTreeChild.id ? null : primaryTreeChild.id), { label: '子代理节点 ' + primaryTreeChild.title, expanded: selAgentId === primaryTreeChild.id })),
-                                h('span', { className: 'rt-node-handle rt-node-handle-top', style: { borderColor: primaryTreeChild.color } }),
-                                h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                                  h('span', { className: 'rt-p5-pill', style: { background: primaryTreeChild.color, color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999 } }, '子代理'),
-                                  h('span', { className: 'rt-p5-pill rt-tag rt-tag-active', style: { margin: 0, borderRadius: 999, padding: '1px 8px', fontSize: 10.5, fontWeight: 700 } }, '可续接'),
-                                  h('span', { className: 'rt-mono', style: { fontSize: 10.5, fontWeight: 700, color: primaryTreeChild.color } }, primaryTreeChild.avatar),
-                                  h('div', { className: 'rt-spacer' }),
-                                  h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } }, primaryTreeChild.tokenLabel)),
-                                h('div', { style: { fontWeight: 700, fontSize: 13, color: 'var(--dsw-alias-label-primary)', lineHeight: 1.4 } }, primaryTreeChild.title),
-                                h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } }, primaryTreeChild.output),
-                                h('div', {
-                                  style: { marginTop: 2, paddingTop: 7, borderTop: '1px solid var(--dsw-alias-border-l1)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11, fontWeight: 600, color: primaryTreeChild.color },
-                                },
-                                  h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
-                                    h('span', { className: 'rt-p5-spin' }, '●'),
-                                    h('span', null, primaryTreeChild.statusLabel || '运行中')),
-                                  h('span', { className: 'rt-mono', style: { fontSize: 10.5 } }, primaryTreeChild.durationLabel)))
-                            : null,
-                          h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' } },
-                            h('div', {
-                              className: 'rt-p5-node rt-p5-done-group',
+                        }, clickable(() => setExpandedTaskId(isExp ? null : tk.id), { label: '展开协作任务详情 ' + tk.title, expanded: isExp })),
+                          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                            h('span', {
+                              style: { background: tk.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 5, fontFamily: 'ui-monospace,Menlo,monospace' },
+                            }, tk.avatar),
+                            h('span', { style: { fontWeight: 700, fontSize: 12, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, tk.title),
+                            h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } }, 'Wave ' + (tk.wave || 1)),
+                            h('span', {
                               style: {
-                                position: 'relative', width: '100%', boxSizing: 'border-box',
-                                border: '1.5px dashed #10b981', borderRadius: 12, padding: '12px 14px',
-                                background: 'linear-gradient(180deg, rgba(16,185,129,0.06) 0%, transparent 50%), var(--dsw-alias-bg-layer-1)',
-                                display: 'flex', flexDirection: 'column', gap: 7,
+                                fontSize: 10.5,
+                                fontWeight: 600,
+                                padding: '1px 7px',
+                                borderRadius: 99,
+                                background: tk.rawStatus === 'error'
+                                  ? 'rgba(239,68,68,0.14)'
+                                  : (tk.status === 'run' ? 'rgba(59,130,246,0.14)' : (isPendingTask ? 'rgba(245,158,11,0.14)' : 'rgba(16,185,129,0.14)')),
+                                color: tk.rawStatus === 'error' ? '#ef4444' : (tk.status === 'run' ? '#3b82f6' : (isPendingTask ? '#d97706' : '#10b981')),
                               },
-                            },
-                              h('span', { className: 'rt-node-handle rt-node-handle-top', style: { borderColor: '#10b981' } }),
-                              h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                                h('span', { className: 'rt-p5-pill', style: { background: 'rgba(16,185,129,0.16)', color: '#10b981', fontSize: 10.5, fontWeight: 700, padding: '2px 9px', borderRadius: 999, border: '1px solid rgba(16,185,129,0.35)' } }, '✓ ' + doneGroupList.length + ' 归档子代理'),
-                                h('span', { className: 'rt-tag', style: { margin: 0, borderRadius: 999, padding: '1px 8px' } }, '并行子代理归档'),
-                                h('div', { className: 'rt-spacer' }),
-                                h('button', {
+                            }, tk.statusBadge),
+                            isPendingTask
+                              ? h('button', {
                                   type: 'button',
-                                  className: 'rt-btn',
-                                  style: { padding: '2px 9px', fontSize: 11, fontWeight: 600, borderRadius: 999 },
-                                  onClick: () => setP5Expanded((v) => !v),
-                                }, p5Expanded ? '收起 ⌃' : '展开 ⌄')),
-                              h('div', { style: { fontWeight: 700, fontSize: 12.5, lineHeight: 1.45, color: 'var(--dsw-alias-label-primary)' } },
-                                doneGroupList.length > 0 ? doneGroupList.map((c) => c.title).join(' / ') : '等待更多子代理归档'),
-                              h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } },
-                                '累计消耗 ' + fmtTokNum(doneGroupList.reduce((s, c) => s + (c.tokens || 0), 0)) + ' tok')),
-                            p5Expanded && doneGroupList.length > 0
-                              ? h('div', {
-                                  style: { width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8, paddingLeft: 12, borderLeft: '2px dashed #10b981' },
-                                },
-                                  doneGroupList.map((dc) => h('div', Object.assign({
-                                    key: 'p5-exp-' + dc.id,
-                                    className: 'rt-p5-node rt-p5-done-item' + (selAgentId === dc.id ? ' on' : ''),
-                                    style: {
-                                      position: 'relative', border: '1px solid var(--dsw-alias-border-l1)', borderLeft: '3px solid ' + dc.color,
-                                      borderRadius: 10, padding: '9px 12px', background: 'var(--dsw-alias-bg-layer-2)',
-                                      display: 'flex', flexDirection: 'column', gap: 5, cursor: 'pointer',
-                                    },
-                                  }, clickable(() => setSelAgentId(selAgentId === dc.id ? null : dc.id), { label: '已完成子代理 ' + dc.title, expanded: selAgentId === dc.id })),
-                                    h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                                      h('span', { style: { background: dc.color, color: '#fff', fontSize: 9.5, fontWeight: 700, padding: '1px 6px', borderRadius: 999 } }, dc.avatar),
-                                      h('span', { style: { fontWeight: 700, fontSize: 11.5 } }, dc.title),
-                                      h('span', { className: 'rt-p5-pill rt-tag rt-tag-live', style: { margin: 0, fontSize: 9.5, borderRadius: 999, padding: '0 7px' } }, '可续接'),
-                                      h('div', { className: 'rt-spacer' }),
-                                      h('span', { className: 'rt-mono', style: { fontSize: 10 } }, dc.tokenLabel + ' · ' + dc.durationLabel)),
-                                    h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, dc.output))))
-                              : null)))),
-
-                h('div', {
-                  className: 'rt-p5-zoom-bar',
-                  style: {
-                    position: 'absolute', right: 14, bottom: 12,
-                    display: 'inline-flex', alignItems: 'center', gap: 4,
-                    padding: '4px 8px', borderRadius: 999,
-                    background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-1) 92%, transparent)',
-                    border: '1px solid var(--dsw-alias-border-l1)',
-                    boxShadow: '0 4px 14px rgba(15,23,42,0.14)',
-                    zIndex: 5,
-                  },
-                },
-                  h('span', { style: { padding: '1px 7px', fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)', borderRight: '1px solid var(--dsw-alias-border-l1)' } }, '树状图 ⌄'),
-                  h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11, borderRadius: 999 }, onClick: () => setZoom((z) => Math.max(60, z - 10)) }, '-'),
-                  h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11, fontFamily: 'ui-monospace,Menlo,monospace', borderRadius: 999 }, onClick: () => setZoom(100) }, zoom + '%'),
-                  h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11, borderRadius: 999 }, onClick: () => setZoom((z) => Math.min(140, z + 10)) }, '+'),
-                  h('button', { type: 'button', className: 'rt-btn' + (p5Expanded ? ' rt-btn-primary' : ''), style: { padding: '1px 9px', fontSize: 11, borderRadius: 999 }, onClick: () => setP5Expanded((v) => !v) }, p5Expanded ? '收起全部' : '展开全部'))))
+                                  className: 'rt-btn rt-btn-primary',
+                                  disabled: isTaskBusy,
+                                  style: { padding: '1px 7px', fontSize: 10 },
+                                  onClick: (e) => {
+                                    if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
+                                    handleDispatchWorkerTask({
+                                      id: tk.agentId,
+                                      sessionId: tk.sessionId,
+                                      role: tk.role,
+                                      wave: tk.wave,
+                                      title: tk.title,
+                                      assignedGoal: tk.assignedGoal || tk.prompt,
+                                      filesOwned: tk.filesOwned,
+                                    })
+                                  },
+                                }, isTaskBusy ? '拉起中…' : '拉起执行')
+                              : null),
+                          h('div', {
+                            style: {
+                              fontSize: 11.5,
+                              color: 'var(--dsw-alias-label-secondary)',
+                              overflow: isExp ? 'visible' : 'hidden',
+                              textOverflow: isExp ? 'clip' : 'ellipsis',
+                              whiteSpace: isExp ? 'normal' : 'nowrap',
+                              lineHeight: 1.5,
+                            },
+                          }, '委派: ' + tk.prompt),
+                          isExp
+                            ? h('div', {
+                                style: { marginTop: 4, paddingTop: 6, borderTop: '1px dashed var(--dsw-alias-border-l1)', display: 'flex', flexDirection: 'column', gap: 5, fontSize: 11.5 },
+                              },
+                                h('div', { style: { color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55 } },
+                                  h('b', null, '产出摘要：'), tk.output),
+                                h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
+                                  h('span', { className: 'rt-mono' }, '用量 ' + tk.tokenLabel),
+                                  h('span', { className: 'rt-mono' }, '耗时 ' + tk.durationLabel),
+                                  h('span', { className: 'rt-mono' }, tk.steps + ' 步'),
+                                  h('div', { className: 'rt-spacer' }),
+                                  h('button', {
+                                    type: 'button',
+                                    className: 'rt-btn',
+                                    style: { padding: '1px 7px', fontSize: 10.5 },
+                                    onClick: (e) => { e.stopPropagation(); openAgentInspector(tk.agentId) },
+                                  }, '检视环节细节'),
+                                  h('button', {
+                                    type: 'button',
+                                    className: 'rt-btn rt-jump-chat-btn',
+                                    style: { padding: '1px 7px', fontSize: 10.5 },
+                                    onClick: (e) => { e.stopPropagation(); handleOpenAgentChat(tk) },
+                                  }, '跳转会话聊天 ↗'),
+                                  h('button', {
+                                    type: 'button',
+                                    className: 'rt-btn',
+                                    style: { padding: '1px 7px', fontSize: 10.5 },
+                                    onClick: (e) => { e.stopPropagation(); setSelId(tk.role); setMode('docwall') },
+                                  }, '查看角色文稿 →'),
+                                  h('button', {
+                                    type: 'button',
+                                    className: 'rt-btn rt-btn-primary',
+                                    style: { padding: '1px 7px', fontSize: 10.5 },
+                                    onClick: (e) => { e.stopPropagation(); triggerCheckpoint('断点续跑', 'resume', tk.agentId || tk.role) },
+                                  }, '断点续跑')))
+                            : null)
+                      }))))
           : null,
 
-        /* ── 模式 3: 文稿视图 (Doc Wall) ── */
+        /* ── 模式 2: 角色文稿视图 (Doc Wall) ── */
         effectiveMode === 'docwall'
           ? h('div', { className: 'rt-doc-wall' },
               h('div', { className: 'rt-doc-strip' },
@@ -3351,31 +3497,7 @@
                     className: 'rt-btn',
                     onClick: () => copyWithFeedback(selected.docBody, selected.docTitle, (okFlag, m) => setToast(m)),
                   }, '复制文稿'),
-                  h('button', { type: 'button', className: 'rt-btn', onClick: () => setMode('p4') }, '返回网络画布')),
+                  h('button', { type: 'button', className: 'rt-btn', onClick: () => setMode('p4') }, '返回派生树')),
                 h(Markdown, { className: 'rt-markdown', text: selected.docBody })))
-          : null,
-
-        /* ── 模式 4: 飞书通知 (Feishu Push) ── */
-        effectiveMode === 'feishu'
-          ? h('div', { className: 'rt-feishu-panel' },
-              h('div', { style: { fontWeight: 600, fontSize: 12.5 } }, '飞书群聊机器人推送 (Feishu Bot Webhook · 节点完成与交付归档通知)'),
-              h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-                h('input', {
-                  className: 'rt-input', style: { flex: 1, minWidth: 220 },
-                  placeholder: '输入飞书机器人 Webhook 地址 (https://open.feishu.cn/open-apis/bot/v2/hook/...)',
-                  value: webhook, onChange: (e) => setWebhook(e.target.value),
-                }),
-                h('button', { type: 'button', className: 'rt-btn rt-btn-primary', onClick: triggerFeishuPush }, '发送测试推送'),
-                h('button', { type: 'button', className: 'rt-btn', disabled: feishuSaving, onClick: saveFeishuConfig }, feishuSaving ? '保存中…' : '保存推送配置')),
-              h('div', { className: 'rt-feishu-checks' },
-                h('label', { className: 'rt-kb-check' },
-                  h('input', { type: 'checkbox', checked: feishuOnNode, onChange: (e) => setFeishuOnNode(e.target.checked) }),
-                  'Wave 1–4 节点完成时推送卡片'),
-                h('label', { className: 'rt-kb-check' },
-                  h('input', { type: 'checkbox', checked: feishuOnGate, onChange: (e) => setFeishuOnGate(e.target.checked) }),
-                  'CSO / QA 门禁阻断或断点重试时告警'),
-                h('label', { className: 'rt-kb-check' },
-                  h('input', { type: 'checkbox', checked: feishuOnShip, onChange: (e) => setFeishuOnShip(e.target.checked) }),
-                  'Doc & Release 最终交付报告自动同步群聊')))
           : null)
     }

@@ -73,6 +73,33 @@ function safeFix(issue) {
 }
 
 /**
+ * 合并进程环境变量与 `$DSH_HOME/.env`（进程内已配置的非空值优先）。
+ * 与 `redteam_preflight` 和控制台「技能库」共用同一份解析逻辑。
+ * @param baseEnv - 基础环境变量映射（默认 `process.env`）。
+ * @returns `{ env, envFile, exists, keys }`
+ */
+export function loadDshEnv(baseEnv = process.env) {
+  const env = { ...(baseEnv || {}) }
+  const envFile = expandSkillPath('$DSH_HOME/.env', env)
+  const keys = []
+  let exists = false
+  try {
+    exists = existsSync(envFile)
+    if (exists) {
+      for (const line of readFileSync(envFile, 'utf8').split('\n')) {
+        const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line)
+        if (m === null) continue
+        const value = m[2].trim().replace(/^["']|["']$/g, '')
+        if (value === '') continue
+        keys.push(m[1])
+        if (env[m[1]] === undefined || env[m[1]] === '') env[m[1]] = value
+      }
+    }
+  } catch { /* .env 读不到不影响判定 */ }
+  return { env, envFile, exists, keys }
+}
+
+/**
  * 检查一个工程技能的可用性。
  *
  * @param skill - `{ name, description?, content?, path?, root? }`（content 是技能正文，root 是它来自哪个技能根）。
@@ -92,9 +119,7 @@ export function checkSkill(skill, options = {}) {
   /** 记一条问题：detail 是给用户看的"不可用原因"，fix 是"怎么修"（见 skill-fixes.js）。 */
   const addIssue = (kind, detail, extra) => {
     const payload = Object.assign({ kind, skill: name }, extra || {})
-    let fix = ''
-    try { fix = String(fixesForIssue(payload) || '') } catch { fix = '' }
-    issues.push(Object.assign({ kind, detail, fix }, extra || {}))
+    issues.push(Object.assign({ kind, detail, fix: safeFix(payload) }, extra || {}))
   }
 
   if (content.trim() === '') {
@@ -169,4 +194,43 @@ export function summarizeSkills(results) {
   const out = { total: results.length, available: 0, broken: 0, unknown: 0 }
   for (const r of results) out[r.status] = (out[r.status] || 0) + 1
   return out
+}
+
+/**
+ * 批量评估一组技能的可用性：单次加载 `$DSH_HOME/.env` 与同名技能根索引，
+ * 避免在技能列表循环中重复读盘。
+ * @param skillsSvc - `ctx.skills` 服务（需提供 `get(name, opts)`）。
+ * @param list - `ctx.skills.list()` 返回的技能摘要数组。
+ * @param options - `{ scope?, env?, baseEnv? }`。
+ * @returns `Promise<{ byName: Map<string, object>, results: object[], summary: object }>`
+ */
+export async function evaluateSkillsAvailability(skillsSvc, list = [], options = {}) {
+  const summaries = Array.isArray(list) ? list : []
+  const env = options.env || loadDshEnv(options.baseEnv || process.env).env
+  const getOpts = options.scope !== undefined ? { scope: options.scope } : undefined
+
+  const rootsWith = new Map()
+  for (const x of summaries) {
+    const dir = x && x.resourceBase && x.resourceBase.kind === 'directory' ? x.resourceBase.path : null
+    if (dir === null) continue
+    if (!rootsWith.has(x.name)) rootsWith.set(x.name, [])
+    if (!rootsWith.get(x.name).includes(dir)) rootsWith.get(x.name).push(dir)
+  }
+
+  const byName = new Map()
+  const results = []
+  for (const summary of summaries) {
+    let def
+    try { def = skillsSvc ? await skillsSvc.get(summary.name, getOpts) : undefined } catch { def = undefined }
+    const dir = summary && summary.resourceBase && summary.resourceBase.kind === 'directory' ? summary.resourceBase.path : null
+    const path = def && typeof def.path === 'string' ? def.path : dir
+    const verdict = checkSkill(
+      { name: summary.name, content: def && def.content, path, root: dir },
+      { env, sameNameIn: rootsWith.get(summary.name) || [] },
+    )
+    byName.set(summary.name, verdict)
+    results.push(verdict)
+  }
+
+  return { byName, results, summary: summarizeSkills(Array.from(byName.values())) }
 }

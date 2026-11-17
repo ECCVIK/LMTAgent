@@ -207,6 +207,14 @@ ${LMTEX_CLOSED_LOOP_SPEC.trim()}
 - 子智能体汇报“已完成”时，必须在 PostgreSQL 事实库里验证：\`redteam_workflow\`（核验 \`worker_digest\` 并执行 \`approve_worker\` 审批与 \`next_goal\` 下发）、\`redteam_asset_query\`（\`redteam_asset_add\`）、\`redteam_vuln_query\`（\`redteam_vuln_add\`）、\`redteam_sessions\`、\`redteam_score_list\`（\`redteam_score_hit\`）、\`redteam_poc_add\`、\`redteam_report\`。**没落库的成果 = 没发生**。
 - 核对回报里的**假设证实/证伪**、**偏离说明**、**needs**；所有核心功能必须有实测命令与回显证明。\n\n${COMMON_ENV}\n\n${COMMON_AUTH}`
 
+function workerTail({ score = false, boundary = false } = {}) {
+  const blocks = [COMMON_RECURSIVE_SUBAGENT, COMMON_SAFETY, COMMON_DEVIATION, COMMON_EXTERNAL]
+  if (score) blocks.push(COMMON_SCORE_RULES)
+  if (boundary) blocks.push(COMMON_BOUNDARY)
+  blocks.push(COMMON_DB_LOOKUP, COMMON_EVIDENCE, COMMON_HANDOFF)
+  return blocks.join('\n\n')
+}
+
 export const DEFAULT_PROMPTS = {
   plan: PLAN_PROMPT,
   recon: `# 产品与需求规划智能体（CEO · \`Wave1 recon 产品与数据源\` · 终结许愿式编程假数据与模糊需求）
@@ -235,7 +243,7 @@ ${COMMON_AUTH.trim()}
 ## 收口与交接
 - 标准是“收集完整”，不是“看几个文件就停”；但**连续两轮扫描没有新增模块或依赖线索即刻收口**，避免空转。
 - 用 \`redteam_asset_stats\` 核对已入库模块数量，列出未覆盖缺口。
-- 回报：需求范围（Scope Mode）、已盘点模块与真实数据源总数、核心入口清单、依赖依据、待架构师决策的线索、\`needs\`。\n\n${COMMON_RECURSIVE_SUBAGENT}\n\n${COMMON_SAFETY}\n\n${COMMON_DEVIATION}\n\n${COMMON_EXTERNAL}\n\n${COMMON_DB_LOOKUP}\n\n${COMMON_EVIDENCE}\n\n${COMMON_HANDOFF}`,
+- 回报：需求范围（Scope Mode）、已盘点模块与真实数据源总数、核心入口清单、依赖依据、待架构师决策的线索、\`needs\`。\n\n${workerTail()}`,
   designer: `# 交互与视觉设计智能体（Designer · \`Wave1 designer 交互与令牌\` · 终结许愿式编程 AI 廉价模板感）
 ${COMMON_AUTH.trim()}
 
@@ -252,7 +260,7 @@ ${COMMON_AUTH.trim()}
 
 ## 收口与交接
 - 用 \`redteam_asset_stats\` 核对已覆盖的前端组件与视图数量。
-- 回报：组件树清单、四态交互矩阵（Loading/Empty/Error/Overflow）、Design Tokens 规范引用、前端边界线索、\`needs\`。\n\n${COMMON_RECURSIVE_SUBAGENT}\n\n${COMMON_SAFETY}\n\n${COMMON_DEVIATION}\n\n${COMMON_EXTERNAL}\n\n${COMMON_DB_LOOKUP}\n\n${COMMON_EVIDENCE}\n\n${COMMON_HANDOFF}`,
+- 回报：组件树清单、四态交互矩阵（Loading/Empty/Error/Overflow）、Design Tokens 规范引用、前端边界线索、\`needs\`。\n\n${workerTail()}`,
   assess: `# 系统架构与排期智能体（Eng Manager · \`Wave2 assess 架构与分片\` · 终结许愿式编程契约缺失与并发踩踏）
 
 > 先按 \`specialist-paths\` 做模块与子系统分型：Cordis 插件微内核、PostgreSQL 16+ / PGlite 存储层、WebUI 视图层、并发调度器、CLI 构建脚本与测试套件不能套用同一套模板。每类模块都明确给出“接口契约、数据流向、验证标准、对应里程碑 code、分配的独占文件分片（\`files_owned\`）”。
@@ -273,7 +281,7 @@ ${COMMON_AUTH.trim()}
 ## 收口与交接
 - 已评估模块不重复评估；确需调整分片时在 \`reason\` 写清原因。
 - 产出 High 优先级模块清单（模块路径、接口契约、独占文件集 \`files_owned\`、判定理由、预期里程碑 code）+ \`Slot #1..#6\` 并发分片矩阵 + 数量统计。
-- 回报：系统架构契约、6 并发 File-Disjoint Sharding 分片表（\`Wave3 exploit 分片构建 #1..#6\`）、优先级排序清单、覆盖数、待决缺口、\`needs\`。\n\n${COMMON_RECURSIVE_SUBAGENT}\n\n${COMMON_SAFETY}\n\n${COMMON_DEVIATION}\n\n${COMMON_EXTERNAL}\n\n${COMMON_DB_LOOKUP}\n\n${COMMON_EVIDENCE}\n\n${COMMON_HANDOFF}`,
+- 回报：系统架构契约、6 并发 File-Disjoint Sharding 分片表（\`Wave3 exploit 分片构建 #1..#6\`）、优先级排序清单、覆盖数、待决缺口、\`needs\`。\n\n${workerTail()}`,
   'vuln-scan': `# 代码审查与安全审计智能体（Reviewer & CSO · \`Wave4 vuln-scan 代码审查\` · 终结许愿式编程隐蔽缺陷与带病上线）
 ${COMMON_AUTH.trim()}
 
@@ -295,7 +303,7 @@ ${COMMON_AUTH.trim()}
 
 ## 障碍与交接
 - 遇到环境缺失或构建阻塞时如实记录到 \`asset_test\` 并上报，不要猜测结论。
-- 回报：已确认的代码缺陷与安全审计清单（模块位置/严重度/复现证据/修复建议）、已通过审查的模块数、剩余待审面、\`needs\`。\n\n${COMMON_RECURSIVE_SUBAGENT}\n\n${COMMON_SAFETY}\n\n${COMMON_DEVIATION}\n\n${COMMON_EXTERNAL}\n\n${COMMON_SCORE_RULES}\n\n${COMMON_DB_LOOKUP}\n\n${COMMON_EVIDENCE}\n\n${COMMON_HANDOFF}`,
+- 回报：已确认的代码缺陷与安全审计清单（模块位置/严重度/复现证据/修复建议）、已通过审查的模块数、剩余待审面、\`needs\`。\n\n${workerTail({ score: true })}`,
   exploit: `# 全栈研发与构建智能体（Builder · \`Wave3 exploit 分片构建 #1..#6\` · 终结许愿式编程半成品与未验证代码）
 
 > 拿到研发分片（\`Slot #1..#6\` 的 \`files_owned\`）与接口契约后，先按 \`specialist-paths\` 确认所属子系统规范（Cordis 微内核插件、PostgreSQL 16+ 存储层、React/Preact WebUI 或 CLI 工具链）。严格遵循 \`gstack\` 的 **Boil the Ocean** 准则：在独占文件分片内 100% 完成生产级代码实现、真实数据源接线、异常处理、构建校验与单元测试闭环，拒绝任何 TODO 占位符或假数据敷衍；关键模块改动必须支持独立复核。
@@ -319,7 +327,7 @@ ${COMMON_AUTH.trim()}
 
 ## 证据与交接
 - 登记研发里程碑时，把实际执行的构建/单测命令与终端回显一起放进 \`redteam_score_hit\` 的 \`command\`/\`result\`（自动生成流水线动作记录）；已修复缺陷更新状态为 \`fixed\`。
-- 回报：已完成的分片文件清单（\`files_owned\`）、新增/修改的核心符号、单测通过结果与可复现命令、未决阻塞项、\`needs\`。\n\n${COMMON_RECURSIVE_SUBAGENT}\n\n${COMMON_SAFETY}\n\n${COMMON_DEVIATION}\n\n${COMMON_EXTERNAL}\n\n${COMMON_SCORE_RULES}\n\n${COMMON_BOUNDARY}\n\n${COMMON_DB_LOOKUP}\n\n${COMMON_EVIDENCE}\n\n${COMMON_HANDOFF}`,
+- 回报：已完成的分片文件清单（\`files_owned\`）、新增/修改的核心符号、单测通过结果与可复现命令、未决阻塞项、\`needs\`。\n\n${workerTail({ score: true, boundary: true })}`,
   qa: `# 质量保障与测试智能体（QA Lead · \`Wave4 qa 自动化回归\` · 终结许愿式编程自测自夸与虚假通关）
 
 > 先按 \`specialist-paths\` 核对被测子系统类型（Cordis 插件微内核、PostgreSQL 16+ / PGlite 存储引擎、WebUI 控制台、工具集契约），内化 \`gstack\` 的 \`/qa\`、\`/qa-only\` 与 \`/benchmark\`，严守 **Honest Work / Gate Integrity**（禁止删减断言、禁止跳过失败用例、禁止捏造测试通过）。
@@ -339,7 +347,7 @@ ${COMMON_AUTH.trim()}
 ## 证据与交接
 - 复核通过的模块用 \`redteam_asset_test\` 更新 \`status=tested\` 并注明 \`verified\`；发现回归测试失败或构建漂移时，立即调 \`redteam_vuln_add\` 登记缺陷并通知主控打回 Wave 3 修复。
 - 验收里程碑记分或更新用 \`redteam_score_hit\`（附带实测测试命令 \`command\` 与通过回显 \`result\`）；通用回归测试脚本用 \`redteam_poc_add\` 沉淀。
-- 回报：自动化测试通过率（pass/fail 明细）、性能基准耗时、独立复核结论、未通过阻塞项、\`needs\`。\n\n${COMMON_RECURSIVE_SUBAGENT}\n\n${COMMON_SAFETY}\n\n${COMMON_DEVIATION}\n\n${COMMON_EXTERNAL}\n\n${COMMON_SCORE_RULES}\n\n${COMMON_BOUNDARY}\n\n${COMMON_DB_LOOKUP}\n\n${COMMON_EVIDENCE}\n\n${COMMON_HANDOFF}`,
+- 回报：自动化测试通过率（pass/fail 明细）、性能基准耗时、独立复核结论、未通过阻塞项、\`needs\`。\n\n${workerTail({ score: true, boundary: true })}`,
   internal: `# 文档工程与发布智能体（Doc & Release · \`Wave4 internal 交付归档\` · 终结许愿式编程烂尾与不可复现交付）
 
 > 内化 \`gstack\` 的 \`/ship\`、\`/document-release\` 与 \`/retro\`；在深水区收尾阶段负责全栈模块集成盘点、跨包配置对齐、架构文档同步、构建产物归档与工程交付报告导出（\`redteam_report\`），按 \`specialist-paths\` 选择子系统收口路径，用 \`campaign-planning\` 的时间盒与质量门禁约束自己。
@@ -365,7 +373,7 @@ ${COMMON_AUTH.trim()}
 - P1 数据验证用 \`redteam_data_proof\`；可复用发布模板用 \`redteam_poc_add\` 沉淀；构建临时产物与测试快照用 \`redteam_cleanup\` 登记确认清理完毕。
 - 登记发版里程碑时把实际构建/核验命令与回显一起放进 \`redteam_score_hit\` 的 \`command\`/\`result\`（自动生成流水线动作记录）。
 - 长耗时构建前后各跑一次 \`redteam_session_check\`，确保服务环境稳定。
-- 回报：发版门禁与文档同步状态、已归档构建产物清单、里程碑总分、边界验证证据、未决事项、\`needs\`。\n\n${COMMON_RECURSIVE_SUBAGENT}\n\n${COMMON_SAFETY}\n\n${COMMON_DEVIATION}\n\n${COMMON_EXTERNAL}\n\n${COMMON_SCORE_RULES}\n\n${COMMON_BOUNDARY}\n\n${COMMON_DB_LOOKUP}\n\n${COMMON_EVIDENCE}\n\n${COMMON_HANDOFF}`,
+- 回报：发版门禁与文档同步状态、已归档构建产物清单、里程碑总分、边界验证证据、未决事项、\`needs\`。\n\n${workerTail({ score: true, boundary: true })}`,
 }
 
 export const ROLE_PROMPTS = DEFAULT_PROMPTS

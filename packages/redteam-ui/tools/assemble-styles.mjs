@@ -47,12 +47,18 @@ for (const req of EXPECTED_FILES) {
 const chunks = []
 for (const file of cssFiles) {
   const fullPath = join(stylesDir, file)
-  const content = readFileSync(fullPath, 'utf8').replace(/\r\n/g, '\n').trim()
-  if (content.includes('`') || content.includes('${')) {
+  const raw = readFileSync(fullPath, 'utf8').replace(/\r\n/g, '\n')
+  if (raw.includes('`') || raw.includes('${')) {
     console.error(`✗ src/styles/${file} 含有反引号或 \${ —— 内联进客户端模板串会截断，请改用单/双引号`)
     process.exit(1)
   }
-  chunks.push(content)
+  // 打包产出剥离 CSS 块注释并折叠空行，保留源文件完整可读性
+  const stripped = raw
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  if (stripped) chunks.push(stripped)
 }
 
 const combinedCss = chunks.join('\n\n')
@@ -75,7 +81,7 @@ const generated = `${header}\n${combinedCss}\n\`\n`
 if (CHECK) {
   let current
   try {
-    current = readFileSync(outFile, 'utf8')
+    current = readFileSync(outFile, 'utf8').replace(/\r\n/g, '\n')
   } catch {
     current = undefined
   }

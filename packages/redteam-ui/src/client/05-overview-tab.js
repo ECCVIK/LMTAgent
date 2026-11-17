@@ -90,15 +90,15 @@
                     ? h('span', { className: 'rt-tag rt-mono' }, sState.cwd)
                     : null),
                 h('div', { className: 'rt-ov-standby-title' },
-                  cleanSessionTitle + ' · 尚未绑定研发工作台'),
+                  cleanSessionTitle + ' · 未绑定工作台'),
                 h('div', { className: 'rt-ov-standby-sub' },
-                  '0 运行中智能体 · 0 已拆解模块 · 独立会话待初始化。每个会话拥有专属 1:1 工作台，绝不混入其他会话的历史任务或拓扑节点。'),
+                  '0 运行中智能体 · 0 已拆解模块 · 每个会话拥有专属 1:1 隔离工作台。'),
                 h('div', { className: 'rt-ov-standby-actions' },
                   h('button', {
                     type: 'button',
                     className: 'rt-btn rt-btn-primary',
                     onClick: () => onGo('collab'),
-                  }, '✨ 前往「协同与审批」初始化工作台'),
+                  }, '前往「协同与审批」初始化'),
                   isDismissed && !hasConv
                     ? h('button', {
                         type: 'button',
@@ -108,7 +108,7 @@
                           if (typeof props.onReopenOnboarding === 'function') props.onReopenOnboarding()
                           onGo('collab')
                         },
-                      }, '🧭 重新获取初始化指引')
+                      }, '重新获取初始化指引')
                     : null)))))
       }
 
@@ -186,24 +186,24 @@
             pendingCount > 0
               ? h('div', { className: 'rt-ov-action-banner is-pending' },
                   h('span', { style: { fontWeight: 700 } },
-                    '⏳ 当前有 ' + pendingCount + ' 项分片产出待您验收审批'),
+                    pendingCount + ' 项分片产出待验收审批'),
                   h('div', { className: 'rt-spacer' }),
                   h('button', {
                     type: 'button',
                     className: 'rt-btn rt-btn-primary',
                     style: { padding: '3px 10px', fontSize: 11.5, fontWeight: 700 },
                     onClick: () => onGo('collab'),
-                  }, '前往「协同与审批」处理 →'))
+                  }, '前往「协同与审批」'))
               : (!hasActiveWork
                   ? h('div', { className: 'rt-ov-action-banner is-empty' },
-                      h('span', null, '💡 当前工作台尚无研发任务，可通过对话式需求澄清一键拆解 4-Wave 分片蓝图'),
+                      h('span', null, '当前工作台尚无研发任务，可前往「协同与审批」澄清需求并立项。'),
                       h('div', { className: 'rt-spacer' }),
                       h('button', {
                         type: 'button',
                         className: 'rt-btn rt-btn-primary',
                         style: { padding: '3px 10px', fontSize: 11.5, fontWeight: 700 },
                         onClick: () => onGo('collab'),
-                      }, '前往「协同与审批」输入需求 →'))
+                      }, '前往「协同与审批」'))
                   : null),
 
             /* ── Row 1: 4 张高信噪比紧凑 KPI 指标卡（零重复环形图） ── */
@@ -229,7 +229,7 @@
                 h('div', { className: 'rt-ov-kpi-val' }, points + ' 分 · ' + (current ? current.name : '待立项')),
                 h('div', { className: 'rt-ov-kpi-sub' }, '已达成 ' + achievedCount + ' 项交付节点'))),
 
-            /* ── Row 2: 轻量级实时拓扑画布（variant="overview"，无下方重型流程舱） ── */
+            /* ── Row 2: 轻量级实时拓扑画布（variant="overview"，复用总览已拉取的 dagData 与 domTel） ── */
             h('div', { className: 'rt-bento-row-canvas' },
               h(HarnessWorkflowDeck, {
                 variant: 'overview',
@@ -238,34 +238,37 @@
                 snapshot: snapshot,
                 chain: chain,
                 agents: agents,
+                dagData: dagData,
+                domTel: domTel,
+                onReload: load,
                 refreshKey: refreshKey + localRefresh,
                 onOpenCollab: () => onGo('collab'),
                 onOpenAgents: () => onGo('agents'),
                 onOpenWishWizard: () => onGo('collab'),
               })),
 
-            /* ── Row 3: 紧凑四阶段推进条 (4-Wave Milestone Rail) + 领域页面直达按钮 ── */
+            /* ── Row 3: 紧凑四阶段推进条 + 领域页面直达按钮 ── */
             h('section', { className: 'rt-ov-hero' },
               h('div', { className: 'rt-ov-score' },
-                h('div', { className: 'rt-ov-score-label' }, '集群交付分值'),
+                h('div', { className: 'rt-ov-score-label' }, '交付分值'),
                 h('div', { className: 'rt-ov-score-num' }, String(points), h('small', null, '分')),
-                h('div', { className: 'rt-ov-score-sub' }, current ? ('当前 · ' + current.name) : '等待首个阶段交付'),
+                h('div', { className: 'rt-ov-score-sub' }, current ? current.name : '待立项'),
                 h('button', {
                   type: 'button',
                   className: 'rt-btn',
                   onClick: () => setLocalRefresh((x) => x + 1),
-                }, '刷新状态')),
+                }, '刷新')),
               h('div', { className: 'rt-ov-rail' },
                 h('div', {
                   className: 'rt-ov-rail-head',
                   style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
                 },
-                  h('span', null, '四阶段推进 · 4-Wave Milestone Rail'),
+                  h('span', null, '四阶段推进'),
                   h('div', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' } },
                     h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('collab') }, '协同与审批'),
-                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('assets') }, '查看架构模块'),
-                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('findings') }, '查看质量审查'),
-                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('report') }, '查看交付报告'))),
+                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('assets') }, '架构模块'),
+                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('findings') }, '质量审查'),
+                    h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('report') }, '交付报告'))),
                 h('div', { className: 'rt-ov-stages' },
                   stages.length > 0
                     ? stages.map((x, i) => h('div', {
@@ -279,10 +282,10 @@
                         h('div', { className: 'rt-ov-stage-pts' }, (x.points || 0) + ' 分'),
                         h('div', { className: 'rt-ov-stage-cum' }, '累计 ' + (x.cumulative || 0))))
                     : [
-                        { code: 'W1', name: 'Wave 1 立项澄清', color: '#4d6bfe' },
-                        { code: 'W2', name: 'Wave 2 架构分片', color: '#8b5cf6' },
-                        { code: 'W3', name: 'Wave 3 并行构建', color: '#0ea5e9' },
-                        { code: 'W4', name: 'Wave 4 门禁交付', color: '#10b981' },
+                        { code: 'W1', name: 'Wave 1 立项', color: '#4d6bfe' },
+                        { code: 'W2', name: 'Wave 2 架构', color: '#8b5cf6' },
+                        { code: 'W3', name: 'Wave 3 构建', color: '#0ea5e9' },
+                        { code: 'W4', name: 'Wave 4 交付', color: '#10b981' },
                       ].map((x, i) => h('div', {
                         key: 'st-def-' + x.code,
                         className: 'rt-ov-stage',

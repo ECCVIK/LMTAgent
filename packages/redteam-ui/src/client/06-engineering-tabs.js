@@ -26,6 +26,9 @@
       const [web, setWeb] = React.useState(null)
       const [openId, setOpenId] = React.useState(null)
       const [detail, setDetail] = React.useState(null)
+      const segs = (snapshot && snapshot.segments) || []
+      const snapShardLocks = (snapshot && (snapshot.shardLocks || snapshot.shard_locks)) || []
+      const hasSnapShardLocks = snapShardLocks.length > 0
       const [dagShardLocks, setDagShardLocks] = React.useState([])
       /* 左侧「对外服务模块 / 内部服务模块」两组各自折叠，状态按工作区记住 */
       const sideCollapse = useCollapse('assets-side:' + eng)
@@ -33,18 +36,18 @@
       const onData = props.onData
 
       React.useEffect(() => {
-        if (!eng) {
+        if (!eng || hasSnapShardLocks) {
           setDagShardLocks([])
           return
         }
         let alive = true
-        api({ op: 'workflowDag', engagement: eng }).then((r) => {
+        api({ op: 'shardLocks', engagement: eng }).then((r) => {
           if (!alive) return
-          const locks = r && (r.shard_locks || r.shardLocks)
+          const locks = r && (r.shard_locks || r.shardLocks || r.locks)
           if (Array.isArray(locks)) setDagShardLocks(locks)
         }, () => {})
         return () => { alive = false }
-      }, [eng, refreshKey])
+      }, [eng, refreshKey, hasSnapShardLocks])
 
       React.useEffect(() => {
         if (!eng) return
@@ -93,8 +96,6 @@
         }, () => {})
       }
 
-      const segs = (snapshot && snapshot.segments) || []
-      const snapShardLocks = (snapshot && (snapshot.shardLocks || snapshot.shard_locks)) || []
       const shardLocks = snapShardLocks.length > 0 ? snapShardLocks : dagShardLocks
 
       const sideChildren = []
@@ -225,20 +226,16 @@
         .slice(0, 10)
       const displayItems = view === 'next' ? nextTargets : state.items
       const noFilter = !testStatus && !priority && !scope && !prov && !assetState && !cidr
-      const conclItem = (key, label, value, active, onClick) => h('span', Object.assign({
-        key: key, className: 'rt-concl-i' + (active ? ' on' : ''), title: '点击筛选 / 再点取消',
-      }, clickable(onClick, { label: '按「' + label + '」筛选（' + (value || 0) + '）', expanded: active })),
-        h('b', null, String(value || 0)), h('span', null, label))
       const toggleTest = (v) => { setTestStatus((cur) => (cur === v ? '' : v)); setAssetState('') }
       const conclusion = h('div', { className: 'rt-concl' },
-        conclItem('all', '个模块', snapStats.assets, noFilter, () => {
+        ConclItem('all', '个模块', snapStats.assets, noFilter, () => {
           setTestStatus(''); setPriority(''); setScope(''); setProv(''); setAssetState(''); setCidr(null)
         }),
-        conclItem('live', '在线', snapStats.liveAssets, assetState === 'live', () => { setAssetState((v) => (v === 'live' ? '' : 'live')); setTestStatus('') }),
-        conclItem('untested', '待测', tests.untested, testStatus === 'untested', () => toggleTest('untested')),
-        conclItem('testing', '测试中', tests.testing, testStatus === 'testing', () => toggleTest('testing')),
-        conclItem('tested', '已测', tests.tested, testStatus === 'tested', () => toggleTest('tested')),
-        conclItem('giveup', '跳过', (tests.abandoned || 0) + (tests.blocked || 0), testStatus === 'abandoned,blocked', () => toggleTest('abandoned,blocked')),
+        ConclItem('live', '在线', snapStats.liveAssets, assetState === 'live', () => { setAssetState((v) => (v === 'live' ? '' : 'live')); setTestStatus('') }),
+        ConclItem('untested', '待测', tests.untested, testStatus === 'untested', () => toggleTest('untested')),
+        ConclItem('testing', '测试中', tests.testing, testStatus === 'testing', () => toggleTest('testing')),
+        ConclItem('tested', '已测', tests.tested, testStatus === 'tested', () => toggleTest('tested')),
+        ConclItem('giveup', '跳过', (tests.abandoned || 0) + (tests.blocked || 0), testStatus === 'abandoned,blocked', () => toggleTest('abandoned,blocked')),
         h('div', { className: 'rt-spacer' }),
         h('select', {
           className: 'rt-input', value: sort, onChange: (e) => setSort(e.target.value),
@@ -254,10 +251,10 @@
       const shardLockBanner = shardLocks.length > 0
         ? h('div', { className: 'rt-card', style: { margin: '6px 10px 4px', padding: '8px 10px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 } },
-              h('b', { style: { fontSize: 12 } }, '🔒 文件独占分片锁（ShardLock）'),
+              h('b', { style: { fontSize: 12 } }, '文件独占分片锁（ShardLock）'),
               h('span', { className: 'rt-tag rt-tag-live' }, '锁定中 ' + shardLocks.length + ' 项'),
               h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                'Wave 3 多智能体并发修改受独占路径保护，杜绝跨分片覆盖冲突')),
+                'Wave 3 并行分片独占路径保护')),
             h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
               shardLocks.slice(0, 16).map((lk, idx) => {
                 const pathStr = String(lk.file_path || lk.path || lk.glob || lk.target || ('shard-' + (idx + 1)))
@@ -601,13 +598,9 @@
                   placeholder: '该角色的系统提示词（Markdown）',
                 }),
             h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', marginTop: 6 } },
-              preview
-                ? (cur && cur.planner
-                    ? '主会话实际使用预设里的 persona；这里的 plan 文本只作人设参考，不会自动注入。'
-                    : '当前是渲染预览。点「编辑」修改 Markdown 源文；保存后写入 agents/' + (active || 'role') + '.md，主会话派活时用 redteam_role_prompt 读取并写入子任务描述。')
-                : (cur && cur.planner
-                    ? '正在编辑主会话参考文本；它不会自动进入系统提示（主会话用预设 persona）。'
-                    : '正在编辑 Markdown 源文。点「预览」看渲染效果；保存后写入 agents/' + (active || 'role') + '.md，主会话派活时用 redteam_role_prompt 读取并写入子任务描述。')))))
+              cur && cur.planner
+                ? '主会话实际使用预设 persona；此处 plan 文本仅作参考。'
+                : '保存后写入 agents/' + (active || 'role') + '.md，派活时通过 redteam_role_prompt 读取。'))))
     }
 
     /* ---------------------------------------------------------- 研发技能库（DSH 原生） */
@@ -778,7 +771,7 @@
                       + ' / 不可用 ' + (availSummary.broken || 0)
                       + ' / 未知 ' + (availSummary.unknown || 0) : ''))),
                 h('div', { className: 'rt-foot', style: { marginBottom: 8 } },
-                  '左侧选一个技能，查看正文、何时使用、不可用原因与修复方法。'),
+                  '从左侧选择技能查看正文与可用性。'),
                 meta.availability && (meta.availability.broken || []).length > 0
                   ? h('div', { className: 'rt-hint' },
                       h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '现在跑不起来的技能：'),
@@ -1013,22 +1006,18 @@
       })
 
       /* ── 结论行：只给结论，数字点一下就是筛选 ─────────────────────── */
-      const concl = (key, label, value, active, onClick) => h('span', Object.assign({
-        key: key, className: 'rt-concl-i' + (active ? ' on' : ''), title: '点击筛选 / 再点取消',
-      }, clickable(onClick, { label: '按「' + label + '」筛选（' + (value || 0) + '）', expanded: active })),
-        h('b', null, String(value || 0)), h('span', null, label))
       const conclusion = h('div', { className: 'rt-concl' },
         h('span', { className: 'rt-concl-group' }, '质量'),
-        concl('exp', '已确认修复/验证', (stats.byStatus.exploited || 0), status === 'exploited', () => setStatus((v) => (v === 'exploited' ? '' : 'exploited'))),
-        concl('gain', '影响范围', (stats.withGained || 0), gainOnly, () => setGainOnly((v) => !v)),
+        ConclItem('exp', '已确认修复/验证', (stats.byStatus.exploited || 0), status === 'exploited', () => setStatus((v) => (v === 'exploited' ? '' : 'exploited'))),
+        ConclItem('gain', '影响范围', (stats.withGained || 0), gainOnly, () => setGainOnly((v) => !v)),
         h('span', { className: 'rt-concl-group' }, '等级'),
-        concl('crit', '严重', (stats.bySeverity.critical || 0), sev === 'critical', () => setSev((v) => (v === 'critical' ? '' : 'critical'))),
-        concl('high', '高危', (stats.bySeverity.high || 0), sev === 'high', () => setSev((v) => (v === 'high' ? '' : 'high'))),
+        ConclItem('crit', '严重', (stats.bySeverity.critical || 0), sev === 'critical', () => setSev((v) => (v === 'critical' ? '' : 'critical'))),
+        ConclItem('high', '高危', (stats.bySeverity.high || 0), sev === 'high', () => setSev((v) => (v === 'high' ? '' : 'high'))),
         h('details', { className: 'rt-concl-extra' },
           h('summary', null, '已确认 ' + (stats.byStatus.confirmed || 0) + ' · 中危 ' + (stats.bySeverity.medium || 0)),
           h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 4 } },
-            concl('conf', '已确认', (stats.byStatus.confirmed || 0), status === 'confirmed', () => setStatus((v) => (v === 'confirmed' ? '' : 'confirmed'))),
-            concl('med', '中危', (stats.bySeverity.medium || 0), sev === 'medium', () => setSev((v) => (v === 'medium' ? '' : 'medium'))))),
+            ConclItem('conf', '已确认', (stats.byStatus.confirmed || 0), status === 'confirmed', () => setStatus((v) => (v === 'confirmed' ? '' : 'confirmed'))),
+            ConclItem('med', '中危', (stats.bySeverity.medium || 0), sev === 'medium', () => setSev((v) => (v === 'medium' ? '' : 'medium'))))),
         h('div', { className: 'rt-spacer' }),
         h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
           '默认按模块聚合 · 当前显示 ' + visibleItems.length + ' / 共 ' + (state.total || 0) + ' 条 · ' + (stats.targetGroups || 0) + ' 个目标模块'))
@@ -1052,12 +1041,10 @@
         const out = []
         const gainedList = String(v.gained || '').split(/[、,;，；]/).map((x) => x.trim()).filter(Boolean)
         const open = openId === v.id
-        out.push(h('div', {
-          key: 'v' + v.id, className: 'rt-vrow', role: 'button', tabIndex: 0,
+        out.push(h('div', Object.assign({
+          key: 'v' + v.id, className: 'rt-vrow',
           style: compact ? { cursor: 'pointer', gridTemplateColumns: '58px minmax(0,1fr) 104px 68px' } : { cursor: 'pointer' },
-          onClick: () => setOpenId(open ? null : v.id),
-          onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(open ? null : v.id) } },
-        },
+        }, clickable(() => setOpenId(open ? null : v.id))),
           h('span', null, h('span', { className: sevClass(v.severity) }, SEV_LABEL[v.severity] || v.severity)),
           h('span', { title: v.title || '' }, h('span', { className: 'rt-sec-caret' }, open ? '▾' : '▸'), (v.cve ? v.cve + ' ' : '') + (v.title || '')),
           compact ? null : h('span', { className: 'rt-mono', title: v.target || '' }, v.target || v.asset_ip || '—'),
@@ -1549,9 +1536,9 @@
               h('div', { style: { marginTop: 6, maxHeight: 220, overflow: 'auto' } },
                 gapPreview,
                 gapItems.length > 12
-                  ? h('div', { className: 'rt-foot' }, '仅列前 12 项；其余见下方每条卡片与导出的报告。')
+                  ? h('div', { className: 'rt-foot' }, '仅列前 12 项，其余见下方卡片。')
                   : null))
-          : h('div', { className: 'rt-foot', style: { marginBottom: 6 } }, '复现材料已齐：每条都有步骤/命令或原始请求。'),
+          : h('div', { className: 'rt-foot', style: { marginBottom: 6 } }, '复现材料完整。'),
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           h('details', { className: 'rt-rep-full', style: { margin: '0 0 10px' } },
             h('summary', { className: 'rt-rep-trace-head', style: { cursor: 'pointer', fontWeight: 600 } },
@@ -1568,7 +1555,7 @@
                   },
                 }, '关闭')),
               h('div', { className: 'rt-foot', style: { padding: '4px 0' } },
-                '这是下载/导出的同一份 Markdown；截图请在卡片视图或导出包查看。'),
+                '与导出 Markdown 同源；截图见卡片视图。'),
               h(Markdown, { className: 'rt-markdown', text: fullText }))),
           stages.length
             ? h('div', { className: 'rt-rep-list' },
@@ -1579,13 +1566,10 @@
                   const open = collapse.isOpen('st:' + st.code, false)
                   const toggle = collapse.toggle('st:' + st.code, false)
                   return h('div', { key: 'g' + st.code, className: 'rt-rep-group' },
-                    h('div', {
-                      className: 'rt-rep-stage', role: 'button', tabIndex: 0,
+                    h('div', Object.assign({
+                      className: 'rt-rep-stage',
                       style: { borderLeftColor: st.color },
-                      'aria-expanded': open ? 'true' : 'false',
-                      onClick: toggle,
-                      onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e) } },
-                    },
+                    }, clickable(toggle, { expanded: open })),
                       h('span', { className: 'rt-sec-caret' }, open ? '▾' : '▸'),
                       h('span', { className: 'rt-rep-no', style: { background: st.color } }, CIRCLED[st.ordinal - 1] || st.ordinal),
                       h('span', { className: 'rt-rep-stage-name' }, st.name),
@@ -1598,11 +1582,11 @@
                 }))
             : (data === null ? h('div', { className: 'rt-empty' }, '加载中…')
                 : h('div', { className: 'rt-empty' },
-                    h('div', null, '还没有可交付的里程碑成果。'),
+                    h('div', null, '暂无可交付的里程碑成果。'),
                     h('div', { style: { marginTop: 6, fontSize: 12 } },
-                      '本报告收录已达成的里程碑交付成果；达成后用 redteam_score_hit 记录里程碑得分，并补充 redteam_http_evidence_add 以便复现。')))),
+                      '达成后使用 redteam_score_hit 与 redteam_http_evidence_add 补充交付记录。')))),
         h('div', { className: 'rt-foot' },
-          h('span', null, '口径：收录里程碑交付成果；下载/复制的 Markdown 按「模块归属 → 里程碑汇总 → 配置凭据 → 交付点复现」组织；凭据默认脱敏')))
+          h('span', null, '按「模块归属 → 里程碑汇总 → 凭据 → 交付复现」组织，凭据默认脱敏')))
     }
 
     /* ---------------------------------------------------------- 构建与验证脚本 */
@@ -1643,12 +1627,9 @@
         const fKey = 'folder:' + folder.folder
         const fileNodes = []
         for (const f of folder.files) {
-          fileNodes.push(h('div', {
+          fileNodes.push(h('div', Object.assign({
             key: 'a' + f.id, className: 'rt-vrow', style: { gridTemplateColumns: '18px 1.2fr 60px 1.6fr', cursor: 'pointer' },
-            role: 'button', tabIndex: 0,
-            onClick: () => openFile(f),
-            onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFile(f) } },
-          },
+          }, clickable(() => openFile(f))),
             h('span', { className: 'rt-sec-caret' }, detail && detail.id === f.id ? '▾' : '▸'),
             h('span', { className: 'rt-mono' }, f.name),
             h('span', null, h('span', { className: 'rt-tag rt-tag-active' }, FILE_KIND[f.kind] || f.kind || '—')),
@@ -1684,8 +1665,8 @@
         err ? h('div', { className: 'rt-err' }, err) : null,
         h('div', { className: 'rt-table' },
           rows,
-          !folders.length ? h('div', { className: 'rt-empty' }, '暂无构建与验证脚本（工程化构建与测试脚本会按目标模块文件夹出现在这里）') : null),
-        h('div', { className: 'rt-foot' }, h('span', null, '目录：attack-files/<模块|服务>/ ｜ 收录实际生效的构建与验证脚本')))
+          !folders.length ? h('div', { className: 'rt-empty' }, '暂无构建与验证脚本') : null),
+        h('div', { className: 'rt-foot' }, h('span', null, '目录：attack-files/<模块|服务>/')))
     }
 
     /* ---------------------------------------------------------- 工程模式与验证模板库（全局共享） */
@@ -1770,11 +1751,9 @@
         const isOpen = openId === x.id
         const d = isOpen && detail && detail.id === x.id ? detail : null
         return h('div', { key: 'p' + x.id, className: 'rt-kb' + (isOpen ? ' open' : '') },
-          h('div', {
-            className: 'rt-kb-head', role: 'button', tabIndex: 0, 'aria-expanded': isOpen ? 'true' : 'false',
-            onClick: () => open(x.id),
-            onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(x.id) } },
-          },
+          h('div', Object.assign({
+            className: 'rt-kb-head',
+          }, clickable(() => open(x.id), { expanded: isOpen })),
             h('span', { className: 'rt-sec-caret' }, isOpen ? '▾' : '▸'),
             h('span', { className: 'rt-kb-kind k-' + (x.kind || 'poc') }, POC_KIND_LABEL[x.kind] || x.kind || '模板'),
             h('span', { className: 'rt-kb-title' }, x.title),
@@ -1936,12 +1915,12 @@
           data === null ? h('div', { className: 'rt-empty' }, '加载中…') : null,
           data !== null && !items.length && !tplItems.length
             ? h('div', { className: 'rt-empty' },
-                h('div', null, q || kind || verifiedOnly ? '没有命中：换个关键字再试，或沉淀新的工程模式后回填。' : '工程模式库还是空的。'),
+                h('div', null, q || kind || verifiedOnly ? '没有命中，请换个关键字再试。' : '工程模式库暂无记录。'),
                 h('div', { style: { marginTop: 6, fontSize: 12 } },
-                  '标准研发复用流程：① redteam_poc_search 先检索已沉淀模式与验证模板 → ② 研发或回归验证通过后调用 redteam_poc_add 回填，后续项目可直接复用。'))
+                  '通过 redteam_poc_search 检索复用，验证通过后由 redteam_poc_add 回填。'))
             : null),
         h('div', { className: 'rt-foot' },
-          h('span', null, '全局共享（跨工作区）｜ 落盘：pocs/<code>/ ｜ 收录通用可复用的架构模式与验证模板，模块专用脚本走「构建脚本」')))
+          h('span', null, '全局共享（跨工作区）· 落盘 pocs/<code>/')))
     }
 
     /* ---------------------------------------------------------- 交付里程碑 */
@@ -2064,11 +2043,9 @@
         for (const p of g.tiers) {
           const achieved = p.hits.length > 0
           const open = openId === p.id
-          rows.push(h('div', {
-            key: 'sp' + p.id, className: 'rt-score-row', role: 'button', tabIndex: 0,
-            onClick: () => setOpenId(open ? null : p.id),
-            onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenId(open ? null : p.id) } },
-          },
+          rows.push(h('div', Object.assign({
+            key: 'sp' + p.id, className: 'rt-score-row',
+          }, clickable(() => setOpenId(open ? null : p.id))),
             h('span', { className: 'rt-sec-caret' }, open ? '▾' : '▸'),
             h('span', null, h('span', {
               className: achieved ? 'rt-pri rt-pri-high' : 'rt-pri rt-pri-low',
@@ -2255,11 +2232,6 @@
     }
 
     /* ---------------------------------------------------------- 当前验证（实时） */
-    const TEST_STATUS_LABEL = {
-      untested: '待验证', testing: '验证中', tested: '已验证',
-      blocked: '受阻', abandoned: '已跳过', no_surface: '无需验证',
-    }
-
     function TestingTab(props) {
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
@@ -2312,7 +2284,7 @@
           h('div', { className: 'rt-atest-head' },
             past ? null : h('span', { className: 'rt-live-dot' }),
             h('span', { className: 'rt-atest-ip' }, a.ip),
-            h('span', { className: 'rt-tag ' + (a.test_status === 'testing' ? 'rt-tag-live' : '') }, TEST_STATUS_LABEL[a.test_status] || a.test_status),
+            h('span', { className: 'rt-tag ' + (a.test_status === 'testing' ? 'rt-tag-live' : '') }, TEST_LABEL[a.test_status] || a.test_status),
             h('div', { className: 'rt-spacer' }),
             h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
               fmt(a.test_updated_at) + (a.test_updated_by ? ' · ' + a.test_updated_by : ''))),
@@ -2322,14 +2294,12 @@
           noteLines.length ? h(Clip, { label: '验证记录', text: noteLines.join('\n') }) : null)
       }
 
-      const concl = (label, value) => h('span', { key: label, className: 'rt-concl-i', style: { cursor: 'default' } },
-        h('b', null, String(value || 0)), h('span', null, label))
       const conclusion = h('div', { className: 'rt-concl' },
-        concl('验证中', stats.testing),
-        concl('待验证', stats.untested),
-        concl('已验证', stats.tested),
-        concl('受阻/跳过', (stats.abandoned || 0) + (stats.blocked || 0)),
-        concl('无需验证', stats.no_surface),
+        ConclItem('testing', '验证中', stats.testing),
+        ConclItem('untested', '待验证', stats.untested),
+        ConclItem('tested', '已验证', stats.tested),
+        ConclItem('blocked', '受阻/跳过', (stats.abandoned || 0) + (stats.blocked || 0)),
+        ConclItem('no_surface', '无需验证', stats.no_surface),
         h('div', { className: 'rt-spacer' }),
         at ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
           '更新于 ' + at.toLocaleTimeString('zh-CN', { hour12: false })) : null,
@@ -2528,9 +2498,9 @@
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           !shells.length && !tunnels.length
             ? h('div', { className: 'rt-empty' },
-                h('div', null, '当前工作区尚未登记运行环境端点或联调通道。'),
+                h('div', null, '当前工作区暂无运行环境端点或联调通道。'),
                 h('div', { style: { marginTop: 6, fontSize: 12 } },
-                  '子智能体启动本地预览服务、调试端点或端口转发通道后会自动同步至此处；也可点击上方「检测连通性」核验在线状态。'))
+                  '子智能体启动服务或转发通道后将同步于此，可点「检测连通性」核验。'))
             : null,
           h(Section, {
             key: 'webshells', tone: 'queue', title: '服务端点',
@@ -2574,4 +2544,726 @@
         }
         return this.props.children
       }
+    }
+
+    /* ---------------------------------------------------------- 统一设置中心 */
+    const normalizeModelCatalog = (raw) => {
+      if (!raw) return []
+      const groups = []
+      const pushModel = (bucket, m) => {
+        if (!m) return
+        if (typeof m === 'string') {
+          const s = m.trim()
+          if (s) bucket.push({ id: s, name: s })
+          return
+        }
+        if (typeof m === 'object') {
+          const mid = String(m.id || m.model || m.name || '').trim()
+          if (mid) bucket.push({ id: mid, name: String(m.name || m.label || mid) })
+        }
+      }
+      const rawGroups = Array.isArray(raw)
+        ? raw
+        : (Array.isArray(raw.groups) ? raw.groups : (Array.isArray(raw.providers) ? raw.providers : null))
+      if (rawGroups) {
+        const byProv = new Map()
+        for (const item of rawGroups) {
+          if (!item || typeof item !== 'object') continue
+          if (Array.isArray(item.models)) {
+            const pid = String(item.id || item.provider || item.name || '').trim()
+            if (!pid) continue
+            const models = []
+            for (const m of item.models) pushModel(models, m)
+            groups.push({ id: pid, name: String(item.name || item.label || pid), models })
+          } else if (item.provider && (item.model || item.id)) {
+            const pid = String(item.provider).trim()
+            if (!byProv.has(pid)) byProv.set(pid, { id: pid, name: String(item.providerName || pid), models: [] })
+            pushModel(byProv.get(pid).models, item)
+          }
+        }
+        for (const g of byProv.values()) groups.push(g)
+        return groups
+      }
+      if (typeof raw === 'object') {
+        for (const [pid, list] of Object.entries(raw)) {
+          if (!Array.isArray(list)) continue
+          const models = []
+          for (const m of list) pushModel(models, m)
+          groups.push({ id: pid, name: pid, models })
+        }
+      }
+      return groups
+    }
+
+    function SettingsHubTab(props) {
+      const eng = props.engagement || null
+      const engagements = Array.isArray(props.engagements) ? props.engagements : []
+      const activeSid = props.sessionId || null
+      const refreshKey = props.refreshKey || 0
+      const compact = Boolean(props.compact)
+      const onRefresh = typeof props.onRefresh === 'function' ? props.onRefresh : (() => {})
+      const onGo = typeof props.onGo === 'function'
+        ? props.onGo
+        : ((tab) => setUI({ open: true, tab: tab }))
+
+      const uiState = useUI()
+      const [loading, setLoading] = React.useState(false)
+      const [saving, setSaving] = React.useState(false)
+      const [err, setErr] = React.useState(null)
+      const [saveMsg, setSaveMsg] = React.useState(null)
+
+      /* ① AI 需求拆解与模型设置 */
+      const [modelCatalog, setModelCatalog] = React.useState([])
+      const [sessionRoute, setSessionRoute] = React.useState(null)
+      const [modelMode, setModelMode] = React.useState('follow_session')
+      const [provider, setProvider] = React.useState('')
+      const [model, setModel] = React.useState('')
+      const [reasoningEffort, setReasoningEffort] = React.useState('low')
+      const [timeoutSec, setTimeoutSec] = React.useState(60)
+      const [scanRepoContext, setScanRepoContext] = React.useState(true)
+      const [customConstraints, setCustomConstraints] = React.useState('')
+
+      /* ② 集群并发与派发策略 */
+      const [maxAgents, setMaxAgents] = React.useState(6)
+      const [maxLimit, setMaxLimit] = React.useState(12)
+      const [thinkingEffort, setThinkingEffort] = React.useState('low')
+      const [maxDepth, setMaxDepth] = React.useState(3)
+      const [dispatchMode, setDispatchMode] = React.useState('hybrid_auto')
+      const [subagentProvider, setSubagentProvider] = React.useState('spawn')
+      const [autoWakeOnApprove, setAutoWakeOnApprove] = React.useState(true)
+
+      /* ③ 存储与 PostgreSQL 连接 */
+      const [dbEngine, setDbEngine] = React.useState(null)
+      const [pgUrlMasked, setPgUrlMasked] = React.useState('')
+      const [pgUrlConfigured, setPgUrlConfigured] = React.useState(false)
+      const [pgUrlDraft, setPgUrlDraft] = React.useState('')
+      const [pgBusy, setPgBusy] = React.useState(false)
+      const [pgMsg, setPgMsg] = React.useState(null)
+
+      /* ④ 通知集成（飞书机器人） */
+      const targetFeishuEng = eng || (engagements[0] && engagements[0].id) || 'default'
+      const [feishuWebhook, setFeishuWebhook] = React.useState('')
+      const [feishuOnNode, setFeishuOnNode] = React.useState(true)
+      const [feishuOnGate, setFeishuOnGate] = React.useState(true)
+      const [feishuOnShip, setFeishuOnShip] = React.useState(true)
+      const [feishuBusy, setFeishuBusy] = React.useState(false)
+      const [feishuMsg, setFeishuMsg] = React.useState(null)
+
+      /* ⑤ 界面偏好与角色预设 */
+      const [defaultViewMode, setDefaultViewMode] = React.useState(() => uiState.uiMode || 'novice')
+      const [defaultTreeDirection, setDefaultTreeDirection] = React.useState(() => {
+        try {
+          return (typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('rt-tree-direction')) || 'horizontal'
+        } catch { return 'horizontal' }
+      })
+      const [verNote, setVerNote] = React.useState(null)
+
+      const loadSeq = React.useRef(0)
+
+      const applySettingsPayload = React.useCallback((res) => {
+        if (!res || typeof res !== 'object') return
+        const cfg = (res.settings && typeof res.settings === 'object') ? res.settings : res
+        const ai = cfg.aiPlanner || cfg.ai_planner || res.aiPlanner || res.ai_planner || {}
+        const dp = cfg.dispatchPolicy || cfg.dispatch_policy || res.dispatchPolicy || res.dispatch_policy || {}
+        const uip = cfg.uiPreferences || cfg.ui_preferences || res.uiPreferences || res.ui_preferences || {}
+
+        const catalog = normalizeModelCatalog(res.model_catalog || res.modelCatalog || cfg.model_catalog)
+        setModelCatalog(catalog)
+        setSessionRoute(res.active_session_route || res.activeSessionRoute || null)
+
+        const rawMode = String(ai.modelMode ?? ai.model_mode ?? 'follow_session').trim().toLowerCase()
+        setModelMode(rawMode === 'custom' ? 'custom' : 'follow_session')
+        const nextProv = String(ai.provider || '').trim()
+        const nextMod = String(ai.model || '').trim()
+        if (nextProv) {
+          setProvider(nextProv)
+        } else if (catalog.length > 0) {
+          setProvider(catalog[0].id)
+        } else {
+          setProvider('')
+        }
+        if (nextMod) {
+          setModel(nextMod)
+        } else if (catalog.length > 0 && catalog[0].models.length > 0) {
+          setModel(catalog[0].models[0].id)
+        } else {
+          setModel('')
+        }
+
+        const rawRe = String(ai.reasoningEffort ?? ai.reasoning_effort ?? 'low').trim().toLowerCase()
+        setReasoningEffort(['none', 'low', 'medium', 'high'].includes(rawRe) ? rawRe : 'low')
+        const tMs = Number(ai.timeoutMs ?? ai.timeout_ms)
+        setTimeoutSec(Number.isFinite(tMs) && tMs > 0 ? Math.max(15, Math.min(180, Math.round(tMs / 1000))) : 60)
+        setScanRepoContext((ai.scanRepoContext ?? ai.scan_repo_context) !== false)
+        setCustomConstraints(String(ai.customConstraints ?? ai.custom_constraints ?? ''))
+
+        const rawMax = Number(cfg.maxAgents ?? cfg.max_agents ?? cfg.max ?? res.maxAgents ?? res.max)
+        if (Number.isFinite(rawMax) && rawMax >= 1) setMaxAgents(Math.max(1, Math.min(12, Math.floor(rawMax))))
+        const rawLim = Number(cfg.limit ?? res.limit)
+        if (Number.isFinite(rawLim) && rawLim >= 1) setMaxLimit(rawLim)
+        const rawThink = String(cfg.thinkingEffort ?? cfg.thinking_effort ?? cfg.thinking ?? res.thinkingEffort ?? 'low').trim().toLowerCase()
+        setThinkingEffort(['low', 'medium', 'high'].includes(rawThink) ? rawThink : 'low')
+        const rawDepth = Number(cfg.maxDepth ?? cfg.max_depth ?? res.maxDepth)
+        if (Number.isFinite(rawDepth) && rawDepth >= 1) setMaxDepth(Math.max(1, Math.min(5, Math.floor(rawDepth))))
+
+        const rawDm = String(dp.dispatchMode ?? dp.dispatch_mode ?? 'hybrid_auto').trim().toLowerCase()
+        setDispatchMode(rawDm === 'captain_only' ? 'captain_only' : 'hybrid_auto')
+        const rawSubProv = String(dp.subagentProvider ?? dp.subagent_provider ?? 'spawn').trim().toLowerCase()
+        setSubagentProvider(rawSubProv === 'fork' ? 'fork' : 'spawn')
+        setAutoWakeOnApprove((dp.autoWakeOnApprove ?? dp.auto_wake_on_approve) !== false)
+
+        const engInfo = res.db_engine || res.dbEngine || cfg.db_engine || null
+        setDbEngine(engInfo)
+        const masked = String(cfg.pgUrlMasked ?? res.pgUrlMasked ?? (engInfo && (engInfo.urlMasked || engInfo.maskedUrl)) ?? '')
+        const configured = Boolean(
+          cfg.pgUrlConfigured
+          ?? res.pgUrlConfigured
+          ?? (engInfo && (engInfo.configured || engInfo.mode === 'postgresql' || engInfo.engine === 'postgresql')),
+        )
+        setPgUrlMasked(masked)
+        setPgUrlConfigured(configured)
+
+        const fCfg = res.feishu_config || res.feishuConfig || res.feishu || cfg.feishu_config || null
+        if (fCfg && typeof fCfg === 'object') {
+          setFeishuWebhook(String(fCfg.webhook_url ?? fCfg.webhookUrl ?? fCfg.webhook ?? ''))
+          const ev = fCfg.events
+          if (Array.isArray(ev)) {
+            setFeishuOnNode(ev.includes('on_node') || ev.includes('wave_complete'))
+            setFeishuOnGate(ev.includes('on_gate') || ev.includes('gate_approval') || ev.includes('gate_alert'))
+            setFeishuOnShip(ev.includes('on_ship') || ev.includes('milestone_hit') || ev.includes('daily_digest'))
+          } else if (ev && typeof ev === 'object') {
+            setFeishuOnNode((ev.on_node ?? ev.wave_complete) !== false)
+            setFeishuOnGate((ev.on_gate ?? ev.gate_approval ?? ev.gate_alert) !== false)
+            setFeishuOnShip((ev.on_ship ?? ev.milestone_hit ?? ev.daily_digest) !== false)
+          }
+        }
+
+        const rawVm = String(uip.defaultViewMode ?? uip.default_view_mode ?? uiState.uiMode ?? 'novice').trim().toLowerCase()
+        setDefaultViewMode(rawVm === 'expert' ? 'expert' : 'novice')
+        const rawTd = String(uip.defaultTreeDirection ?? uip.default_tree_direction ?? 'horizontal').trim().toLowerCase()
+        setDefaultTreeDirection(rawTd === 'vertical' ? 'vertical' : 'horizontal')
+      }, [uiState.uiMode])
+
+      const loadSettings = React.useCallback(() => {
+        const my = ++loadSeq.current
+        setLoading(true)
+        setErr(null)
+        api({
+          op: 'getSettings',
+          engagement: eng || undefined,
+          session: activeSid || undefined,
+        }).then((r) => {
+          if (my !== loadSeq.current) return
+          setLoading(false)
+          if (!r || r.ok === false) {
+            setErr((r && r.error) || '读取设置失败')
+            return
+          }
+          applySettingsPayload(r)
+        }, (e) => {
+          if (my !== loadSeq.current) return
+          setLoading(false)
+          setErr(String((e && e.message) || e))
+        })
+      }, [eng, activeSid, applySettingsPayload])
+
+      React.useEffect(() => {
+        loadSettings()
+      }, [loadSettings, refreshKey])
+
+      const selectedGroup = React.useMemo(() => {
+        if (modelCatalog.length === 0) return null
+        return modelCatalog.find((g) => g.id === provider) || modelCatalog[0]
+      }, [modelCatalog, provider])
+
+      const modelOptions = React.useMemo(() => {
+        const list = selectedGroup && Array.isArray(selectedGroup.models) ? selectedGroup.models.slice() : []
+        if (model && !list.some((m) => m.id === model)) {
+          list.unshift({ id: model, name: model })
+        }
+        return list
+      }, [selectedGroup, model])
+
+      const handleProviderChange = (nextProv) => {
+        setProvider(nextProv)
+        const grp = modelCatalog.find((g) => g.id === nextProv)
+        if (grp && Array.isArray(grp.models) && grp.models.length > 0) {
+          if (!grp.models.some((m) => m.id === model)) {
+            setModel(grp.models[0].id)
+          }
+        }
+      }
+
+      const handleSaveAll = () => {
+        setSaving(true)
+        setSaveMsg(null)
+        setErr(null)
+        const sec = Math.max(15, Math.min(180, Math.round(Number(timeoutSec) || 60)))
+        api({
+          op: 'saveSettings',
+          engagement: eng || undefined,
+          session: activeSid || undefined,
+          maxAgents: maxAgents,
+          thinkingEffort: thinkingEffort,
+          maxDepth: maxDepth,
+          aiPlanner: {
+            modelMode: modelMode === 'custom' ? 'custom' : 'follow_session',
+            provider: provider.trim(),
+            model: model.trim(),
+            reasoningEffort: reasoningEffort,
+            timeoutMs: sec * 1000,
+            scanRepoContext: Boolean(scanRepoContext),
+            customConstraints: customConstraints,
+          },
+          dispatchPolicy: {
+            dispatchMode: dispatchMode === 'captain_only' ? 'captain_only' : 'hybrid_auto',
+            subagentProvider: subagentProvider === 'fork' ? 'fork' : 'spawn',
+            autoWakeOnApprove: Boolean(autoWakeOnApprove),
+          },
+          uiPreferences: {
+            defaultViewMode: defaultViewMode === 'expert' ? 'expert' : 'novice',
+            defaultTreeDirection: defaultTreeDirection === 'vertical' ? 'vertical' : 'horizontal',
+          },
+        }).then((r) => {
+          setSaving(false)
+          if (!r || r.ok === false) {
+            setSaveMsg({ err: (r && r.error) || '保存设置失败' })
+            return
+          }
+          applySettingsPayload(r)
+          setUiMode(defaultViewMode === 'expert' ? 'expert' : 'novice')
+          try {
+            if (typeof window !== 'undefined' && window.localStorage) {
+              window.localStorage.setItem('rt-tree-direction', defaultTreeDirection === 'vertical' ? 'vertical' : 'horizontal')
+            }
+          } catch { /* ignore */ }
+          setSaveMsg({ ok: (r && r.note) || '设置已保存并立即生效' })
+          onRefresh()
+        }, (e) => {
+          setSaving(false)
+          setSaveMsg({ err: String((e && e.message) || e) })
+        })
+      }
+
+      const handleProbePg = () => {
+        setPgBusy(true)
+        setPgMsg(null)
+        api({ op: 'probePg', url: pgUrlDraft.trim() || undefined }).then((r) => {
+          setPgBusy(false)
+          if (r && r.db_engine) setDbEngine(r.db_engine)
+          if (!r || r.ok === false) {
+            setPgMsg({ err: (r && (r.error || r.message || r.note)) || 'PostgreSQL 连接探测失败' })
+            return
+          }
+          setPgMsg({ ok: (r && (r.note || r.message)) || 'PostgreSQL 连接探测成功' })
+        }, (e) => {
+          setPgBusy(false)
+          setPgMsg({ err: String((e && e.message) || e) })
+        })
+      }
+
+      const handleSavePgUrl = (nextUrl) => {
+        const clean = String(nextUrl || '').trim()
+        setPgBusy(true)
+        setPgMsg(null)
+        api({ op: 'setPgUrl', url: clean }).then((r) => {
+          setPgBusy(false)
+          if (!r || r.ok === false) {
+            setPgMsg({ err: (r && r.error) || '更新 PostgreSQL 连接失败' })
+            return
+          }
+          if (r.db_engine) setDbEngine(r.db_engine)
+          setPgUrlConfigured(Boolean(r.url || clean))
+          if (!clean) {
+            setPgUrlDraft('')
+            setPgUrlMasked('')
+          }
+          setPgMsg({ ok: (r && r.note) || (clean ? 'PostgreSQL 连接已保存' : '已切换回本地引擎') })
+          onRefresh()
+        }, (e) => {
+          setPgBusy(false)
+          setPgMsg({ err: String((e && e.message) || e) })
+        })
+      }
+
+      const handleSaveFeishu = () => {
+        const url = String(feishuWebhook || '').trim()
+        setFeishuBusy(true)
+        setFeishuMsg(null)
+        api({
+          op: 'feishuConfig',
+          engagement: targetFeishuEng,
+          engagement_id: targetFeishuEng,
+          webhook_url: url,
+          webhook: url,
+          enabled: Boolean(url),
+          events: {
+            on_node: feishuOnNode,
+            wave_complete: feishuOnNode,
+            on_gate: feishuOnGate,
+            gate_approval: feishuOnGate,
+            gate_alert: feishuOnGate,
+            on_ship: feishuOnShip,
+            milestone_hit: feishuOnShip,
+          },
+        }).then((r) => {
+          setFeishuBusy(false)
+          if (!r || r.ok === false) {
+            setFeishuMsg({ err: (r && r.error) || '保存飞书配置失败' })
+            return
+          }
+          setFeishuMsg({ ok: (r && r.note) || '飞书配置已保存' })
+        }, (e) => {
+          setFeishuBusy(false)
+          setFeishuMsg({ err: String((e && e.message) || e) })
+        })
+      }
+
+      const handleTestFeishu = () => {
+        setFeishuBusy(true)
+        setFeishuMsg(null)
+        api({
+          op: 'feishuTestPush',
+          engagement: targetFeishuEng,
+          engagement_id: targetFeishuEng,
+          webhook_url: String(feishuWebhook || '').trim() || undefined,
+          title: 'LMTAgent 飞书连接测试',
+          text: '来自工作区「' + targetFeishuEng + '」的连通性测试推送',
+        }).then((r) => {
+          setFeishuBusy(false)
+          if (!r || r.ok === false) {
+            setFeishuMsg({ err: (r && r.error) || '测试推送失败' })
+            return
+          }
+          setFeishuMsg({ ok: (r && r.note) || '测试推送已发送' })
+        }, (e) => {
+          setFeishuBusy(false)
+          setFeishuMsg({ err: String((e && e.message) || e) })
+        })
+      }
+
+      const checkVersionQuick = () => {
+        setVerNote('正在检查版本…')
+        api({ op: 'updateCheck' }).then((r) => {
+          if (r && r.ok !== false) {
+            setVerNote('当前 v' + (r.current || '?') + (r.updateAvailable && r.latest ? (' · 可升级至 v' + r.latest) : ' · 已是最新'))
+            return
+          }
+          api({ op: 'version' }).then((v) => {
+            const cur = v && v.plugin ? v.plugin.version : (v && v.current)
+            setVerNote('当前版本 v' + (cur || '?'))
+          }, () => setVerNote('版本检查暂不可用'))
+        }, () => setVerNote('版本检查暂不可用'))
+      }
+
+      const routeLabel = (() => {
+        if (!sessionRoute) return '跟随当前会话默认模型'
+        if (typeof sessionRoute === 'string') return sessionRoute
+        const p = sessionRoute.provider ? String(sessionRoute.provider) : ''
+        const m = sessionRoute.model ? String(sessionRoute.model) : ''
+        if (p && m) return p + ' / ' + m
+        return String(sessionRoute.label || m || p || '跟随当前会话默认模型')
+      })()
+
+      const isPgActive = Boolean(
+        pgUrlConfigured
+        || (dbEngine && (dbEngine.mode === 'postgresql' || dbEngine.engine === 'postgresql' || dbEngine.type === 'postgresql')),
+      )
+      const dbStatusLabel = (() => {
+        if (dbEngine && typeof dbEngine === 'string') return dbEngine
+        if (dbEngine && (dbEngine.label || dbEngine.mode || dbEngine.engine)) {
+          return String(dbEngine.label || (isPgActive ? 'PostgreSQL' : 'SQLite WAL 本地引擎'))
+        }
+        return isPgActive ? 'PostgreSQL 已配置' : 'SQLite WAL 本地引擎'
+      })()
+
+      const slotPresets = [3, 6, 8, 12]
+
+      const shellBody = h('div', { className: 'rt-settings-shell' },
+        err ? h('div', { className: 'rt-err' }, err) : null,
+        saveMsg ? h('div', { className: saveMsg.err ? 'rt-err' : 'rt-note', style: { margin: 0 } }, saveMsg.err || saveMsg.ok) : null,
+
+        /* ① AI 需求拆解与模型设置 */
+        h('section', { className: 'rt-settings-section' },
+          h('div', { className: 'rt-settings-section-head' },
+            h('h4', { className: 'rt-settings-section-title' }, 'AI 需求拆解与模型设置'),
+            h('span', { className: 'rt-settings-badge' }, routeLabel)),
+          h('div', { className: 'rt-settings-grid' },
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '模型选择策略'),
+              h('select', {
+                className: 'rt-select',
+                value: modelMode,
+                onChange: (e) => setModelMode(e.target.value),
+              },
+                h('option', { value: 'follow_session' }, '跟随当前会话 / 默认模型'),
+                h('option', { value: 'custom' }, '自定义指定模型'))),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '规划推理深度'),
+              h('select', {
+                className: 'rt-select',
+                value: reasoningEffort,
+                onChange: (e) => setReasoningEffort(e.target.value),
+              },
+                h('option', { value: 'none' }, 'none（关闭推理）'),
+                h('option', { value: 'low' }, 'low（快速）'),
+                h('option', { value: 'medium' }, 'medium（均衡）'),
+                h('option', { value: 'high' }, 'high（深度）'))),
+            modelMode === 'custom'
+              ? h('div', { className: 'rt-settings-field' },
+                  h('label', null, 'Provider'),
+                  modelCatalog.length > 0
+                    ? h('select', {
+                        className: 'rt-select',
+                        value: (selectedGroup && selectedGroup.id) || provider,
+                        onChange: (e) => handleProviderChange(e.target.value),
+                      },
+                        provider && !modelCatalog.some((g) => g.id === provider)
+                          ? h('option', { value: provider }, provider)
+                          : null,
+                        modelCatalog.map((g) => h('option', { key: 'pv-' + g.id, value: g.id }, g.name)))
+                    : h('input', {
+                        className: 'rt-input',
+                        value: provider,
+                        placeholder: '如 deepseek / openai',
+                        onChange: (e) => setProvider(e.target.value),
+                      }))
+              : null,
+            modelMode === 'custom'
+              ? h('div', { className: 'rt-settings-field' },
+                  h('label', null, 'Model'),
+                  modelOptions.length > 0
+                    ? h('select', {
+                        className: 'rt-select',
+                        value: model,
+                        onChange: (e) => setModel(e.target.value),
+                      }, modelOptions.map((m) => h('option', { key: 'md-' + m.id, value: m.id }, m.name)))
+                    : h('input', {
+                        className: 'rt-input',
+                        value: model,
+                        placeholder: '如 deepseek-chat',
+                        onChange: (e) => setModel(e.target.value),
+                      }))
+              : null,
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '拆解超时（秒）'),
+              h('input', {
+                type: 'number',
+                min: 15,
+                max: 180,
+                className: 'rt-input',
+                value: String(timeoutSec),
+                onChange: (e) => setTimeoutSec(Number(e.target.value) || 60),
+              })),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '工作区上下文'),
+              h('label', { className: 'rt-kb-check', style: { marginTop: 4 } },
+                h('input', {
+                  type: 'checkbox',
+                  checked: scanRepoContext,
+                  onChange: (e) => setScanRepoContext(e.target.checked),
+                }),
+                '拆解前自动扫描项目目录结构')),
+            h('div', { className: 'rt-settings-field is-full' },
+              h('label', null, '全局拆解工程约束'),
+              h('textarea', {
+                className: 'rt-textarea',
+                rows: 3,
+                value: customConstraints,
+                placeholder: '填写全局代码规范、技术栈限制或路径禁改规则…',
+                onChange: (e) => setCustomConstraints(e.target.value),
+              })))),
+
+        /* ② 集群并发与任务派发策略 */
+        h('section', { className: 'rt-settings-section' },
+          h('div', { className: 'rt-settings-section-head' },
+            h('h4', { className: 'rt-settings-section-title' }, '集群并发与任务派发策略'),
+            h('span', { className: 'rt-settings-badge' }, maxAgents + ' 槽 · depth ' + maxDepth + ' · ' + thinkingEffort)),
+          h('div', { className: 'rt-settings-grid' },
+            h('div', { className: 'rt-settings-field is-full' },
+              h('label', null, '并发槽位上限（1–' + maxLimit + '）'),
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                h('div', { className: 'rt-p3-stepper' },
+                  h('button', {
+                    type: 'button', className: 'rt-p3-step-btn', disabled: maxAgents <= 1,
+                    onClick: () => setMaxAgents((v) => Math.max(1, v - 1)),
+                  }, '-'),
+                  h('span', { className: 'rt-p3-step-val' }, maxAgents + ' 槽'),
+                  h('button', {
+                    type: 'button', className: 'rt-p3-step-btn', disabled: maxAgents >= maxLimit,
+                    onClick: () => setMaxAgents((v) => Math.min(maxLimit, v + 1)),
+                  }, '+')),
+                h('div', { className: 'rt-p3-pills' },
+                  slotPresets.filter((n) => n <= maxLimit).map((n) => h('button', {
+                    key: 'cfg-slot-' + n,
+                    type: 'button',
+                    className: 'rt-p3-pill' + (maxAgents === n ? ' on' : ''),
+                    onClick: () => setMaxAgents(n),
+                  }, n + ' 槽'))))),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '子代理思考强度'),
+              h('select', {
+                className: 'rt-select',
+                value: thinkingEffort,
+                onChange: (e) => setThinkingEffort(e.target.value),
+              },
+                h('option', { value: 'low' }, 'low（快速响应）'),
+                h('option', { value: 'medium' }, 'medium（均衡）'),
+                h('option', { value: 'high' }, 'high（深度思考）'))),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '递归深度上限'),
+              h('select', {
+                className: 'rt-select',
+                value: String(maxDepth),
+                onChange: (e) => setMaxDepth(Number(e.target.value) || 3),
+              }, [1, 2, 3, 4, 5].map((d) => h('option', { key: 'md-' + d, value: String(d) }, 'maxDepth = ' + d)))),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '立项默认派发方式'),
+              h('select', {
+                className: 'rt-select',
+                value: dispatchMode,
+                onChange: (e) => setDispatchMode(e.target.value),
+              },
+                h('option', { value: 'hybrid_auto' }, '方案 A 混合编排（hybrid_auto）'),
+                h('option', { value: 'captain_only' }, '纯主代理接管（captain_only）'))),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '子代理载体'),
+              h('select', {
+                className: 'rt-select',
+                value: subagentProvider,
+                onChange: (e) => setSubagentProvider(e.target.value),
+              },
+                h('option', { value: 'spawn' }, 'spawn（独立子代理）'),
+                h('option', { value: 'fork' }, 'fork（分叉上下文）'))),
+            h('div', { className: 'rt-settings-field is-full' },
+              h('label', { className: 'rt-kb-check' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: autoWakeOnApprove,
+                  onChange: (e) => setAutoWakeOnApprove(e.target.checked),
+                }),
+                '门禁审批通过后自动唤醒目标子会话继续执行')))),
+
+        /* ③ 存储与 PostgreSQL 连接 */
+        h('section', { className: 'rt-settings-section' },
+          h('div', { className: 'rt-settings-section-head' },
+            h('h4', { className: 'rt-settings-section-title' }, '存储与 PostgreSQL 连接'),
+            h('span', { className: 'rt-settings-badge ' + (isPgActive ? 'is-ok' : '') },
+              dbStatusLabel + (pgUrlMasked ? ' · ' + pgUrlMasked : ''))),
+          h('div', { className: 'rt-settings-field is-full' },
+            h('label', null, 'PostgreSQL 连接串（留空则使用本地 SQLite WAL 引擎）'),
+            h('input', {
+              className: 'rt-input rt-mono',
+              value: pgUrlDraft,
+              placeholder: pgUrlMasked || 'postgresql://user:pass@127.0.0.1:5432/lmtagent',
+              onChange: (e) => setPgUrlDraft(e.target.value),
+            })),
+          pgMsg ? h('div', { className: pgMsg.err ? 'rt-err' : 'rt-note', style: { margin: 0 } }, pgMsg.err || pgMsg.ok) : null,
+          h('div', { className: 'rt-settings-actions' },
+            h('button', { type: 'button', className: 'rt-btn', disabled: pgBusy, onClick: handleProbePg }, pgBusy ? '探测中…' : '测试连通'),
+            h('button', {
+              type: 'button',
+              className: 'rt-btn rt-btn-primary',
+              disabled: pgBusy || !pgUrlDraft.trim(),
+              onClick: () => handleSavePgUrl(pgUrlDraft),
+            }, '保存连接'),
+            h('button', {
+              type: 'button',
+              className: 'rt-btn',
+              disabled: pgBusy,
+              onClick: () => handleSavePgUrl(''),
+            }, '清除回本地引擎'))),
+
+        /* ④ 通知集成（飞书机器人） */
+        h('section', { className: 'rt-settings-section' },
+          h('div', { className: 'rt-settings-section-head' },
+            h('h4', { className: 'rt-settings-section-title' }, '通知集成（飞书机器人）'),
+            h('span', { className: 'rt-settings-badge' }, '工作区：' + targetFeishuEng)),
+          h('div', { className: 'rt-settings-field is-full' },
+            h('label', null, '飞书 Webhook 地址'),
+            h('input', {
+              className: 'rt-input rt-mono',
+              value: feishuWebhook,
+              placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/...',
+              onChange: (e) => setFeishuWebhook(e.target.value),
+            })),
+          h('div', { className: 'rt-settings-row' },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' } },
+              h('label', { className: 'rt-kb-check' },
+                h('input', { type: 'checkbox', checked: feishuOnNode, onChange: (e) => setFeishuOnNode(e.target.checked) }),
+                '节点完成'),
+              h('label', { className: 'rt-kb-check' },
+                h('input', { type: 'checkbox', checked: feishuOnGate, onChange: (e) => setFeishuOnGate(e.target.checked) }),
+                '门禁审批'),
+              h('label', { className: 'rt-kb-check' },
+                h('input', { type: 'checkbox', checked: feishuOnShip, onChange: (e) => setFeishuOnShip(e.target.checked) }),
+                '交付归档')),
+            h('div', { className: 'rt-settings-actions' },
+              h('button', { type: 'button', className: 'rt-btn', disabled: feishuBusy, onClick: handleSaveFeishu }, '保存通知'),
+              h('button', { type: 'button', className: 'rt-btn rt-btn-primary', disabled: feishuBusy, onClick: handleTestFeishu }, '发送测试推送'))),
+          feishuMsg ? h('div', { className: feishuMsg.err ? 'rt-err' : 'rt-note', style: { margin: 0 } }, feishuMsg.err || feishuMsg.ok) : null),
+
+        /* ⑤ 界面偏好与角色预设管理 */
+        h('section', { className: 'rt-settings-section' },
+          h('div', { className: 'rt-settings-section-head' },
+            h('h4', { className: 'rt-settings-section-title' }, '界面偏好与角色预设管理'),
+            verNote ? h('span', { className: 'rt-settings-badge' }, verNote) : null),
+          h('div', { className: 'rt-settings-grid' },
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '默认视图模式'),
+              h('select', {
+                className: 'rt-select',
+                value: defaultViewMode,
+                onChange: (e) => setDefaultViewMode(e.target.value),
+              },
+                h('option', { value: 'novice' }, '协同模式（简洁）'),
+                h('option', { value: 'expert' }, '工程模式（专家）'))),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, '派生树默认排版方向'),
+              h('select', {
+                className: 'rt-select',
+                value: defaultTreeDirection,
+                onChange: (e) => setDefaultTreeDirection(e.target.value),
+              },
+                h('option', { value: 'horizontal' }, '横向向右派生'),
+                h('option', { value: 'vertical' }, '纵向向下派生')))),
+          h('div', { className: 'rt-settings-row' },
+            h('p', { className: 'rt-settings-hint' }, '管理 8 位 gstack 研发角色的提示词模板或检查控制台版本。'),
+            h('div', { className: 'rt-settings-actions' },
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                onClick: () => onGo('prompts'),
+              }, '前往「角色与提示词」'),
+              h('button', {
+                type: 'button',
+                className: 'rt-btn',
+                onClick: checkVersionQuick,
+              }, '检查版本')))),
+
+        /* 底部统一保存条 */
+        h('div', { className: 'rt-settings-actions' },
+          h('button', {
+            type: 'button',
+            className: 'rt-btn',
+            disabled: loading || saving,
+            onClick: loadSettings,
+          }, loading ? '加载中…' : '重新读取'),
+          h('button', {
+            type: 'button',
+            className: 'rt-btn rt-btn-primary',
+            disabled: saving,
+            onClick: handleSaveAll,
+          }, saving ? '保存中…' : '保存设置')))
+
+      if (compact) return shellBody
+
+      return h('div', { className: 'rt-main' },
+        h('div', { className: 'rt-toolbar' },
+          h('span', { style: { fontWeight: 600 } }, '统一设置中心'),
+          h('span', { className: 'rt-tag rt-tag-passive' }, eng ? ('工作区：' + eng) : '全局设置'),
+          h('div', { className: 'rt-spacer' }),
+          h('button', { type: 'button', className: 'rt-btn', disabled: loading, onClick: loadSettings }, loading ? '读取中…' : '刷新'),
+          h('button', { type: 'button', className: 'rt-btn rt-btn-primary', disabled: saving, onClick: handleSaveAll }, saving ? '保存中…' : '保存设置')),
+        h('div', { className: 'rt-pane', style: { overflow: 'auto' } }, shellBody))
     }

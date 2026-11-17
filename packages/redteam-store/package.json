@@ -1,6 +1,6 @@
 {
   "name": "dsh-redteam-store",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "private": true,
   "description": "LMTAgent 存储库：1:1 会话专属工作台隔离状态机 + PostgreSQL/SQLite 双模事实库 + FTS 全文检索与租约回收",
   "type": "module",
