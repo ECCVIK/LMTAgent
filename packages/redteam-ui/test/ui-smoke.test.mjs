@@ -412,7 +412,7 @@ ok(
 console.log('— 冒烟十：v1.0.0 @lmtagent/ui 宿主插件身份、/lmtagent/* 路由与调度基准契约')
 {
   const uiPkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
-  ok(uiPkg.name === '@lmtagent/ui' && uiPkg.version === '1.0.0', `package.json 为 @lmtagent/ui@1.0.0（实际：${uiPkg.name}@${uiPkg.version}）`)
+  ok(uiPkg.name === '@lmtagent/ui' && uiPkg.version === '1.1.0', `package.json 为 @lmtagent/ui@1.1.0（实际：${uiPkg.name}@${uiPkg.version}）`)
   ok(hostPluginName === 'lmtagent-ui', `index.js export name === "lmtagent-ui"（实际：${hostPluginName}）`)
   ok(Array.isArray(hostPluginInject) && hostPluginInject[0] === 'lmtagent', `index.js export inject 首项为 "lmtagent"（实际：${hostPluginInject.join(',')}）`)
 

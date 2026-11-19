@@ -894,6 +894,22 @@
       const [seen, setSeen] = React.useState(null)
       const [full, setFull] = React.useState(() => isFullWindow())
 
+      /* 独立窗口 URL 参数恢复（lmt_session / lmt_eng / lmt_tab） */
+      React.useEffect(() => {
+        if (!isFullWindow()) return
+        const params = readStandaloneUrlParams()
+        if (params.session && !scopedSession.authoritative) {
+          setSessionId(params.session, null)
+        }
+        if (params.engagement) {
+          manualPickRef.current = params.session || sid || ''
+          setEng(params.engagement)
+        }
+        if (params.tab) {
+          setUI({ tab: params.tab })
+        }
+      }, [])
+
       const exitFull = React.useCallback(() => {
         setFull(false)
         try {
@@ -1284,7 +1300,7 @@
       const visibleEngagements = namedEngagements.length > 0 ? namedEngagements : engagements
       const sessionDisplayLabel = (!isRawUuidName(sesTitle) && sesTitle)
         ? sesTitle
-        : (sid ? sid.slice(0, 8) : t('当前会话', 'Session'))
+        : (sid ? formatShortSessionId(sid) : t('当前会话', 'Session'))
 
       const selectorOptions = []
       if (sid && !eng) {
@@ -1340,7 +1356,9 @@
       ]
       const groupOf = (tab) => TAB_GROUPS.find((g) => g.tabs.indexOf(tab) !== -1) || TAB_GROUPS[1]
       const activeGroup = groupOf(st.tab)
-      const openFull = () => { openFullView() }
+      const openFull = () => {
+        openStandaloneWindow({ session: sid || undefined, engagement: eng || undefined, tab: st.tab || undefined })
+      }
 
       React.useEffect(() => {
         if (!full) return undefined
@@ -1468,8 +1486,8 @@
         (full || embedMode) ? null : h('div', { className: 'rt-grip', onMouseDown: startResize }),
         h('div', { className: 'rt-head' },
           h('div', { className: 'rt-title' }, h('span', { className: 'rt-dot' }),
-            full ? t('LMTAgent 全面浏览', 'LMTAgent Full View') : t('LMTAgent 研发控制台', 'LMTAgent Console'),
-            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, t('全屏视图', 'Fullscreen')) : null),
+            full ? t('LMTAgent 独立工作台', 'LMTAgent Standalone Workbench') : t('LMTAgent 研发控制台', 'LMTAgent Console'),
+            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, t('独立窗口', 'Standalone')) : null),
           sid === null
             ? null
             : (!eng
@@ -1551,10 +1569,10 @@
             onClick: () => goTab('settings'),
           }, t('设置', 'Settings')),
           full ? null : h('button', {
-            className: 'rt-btn',
-            title: isDesktopShell() ? t('当前窗口全屏查看（Esc 退出）', 'Open fullscreen view (Esc to exit)') : t('新窗口打开', 'Open in new window'),
+            className: 'rt-btn rt-btn-primary',
+            title: t('在脱离 DSH 的独立应用窗口中打开（支持拖到双屏）', 'Open in a detached standalone OS window (multi-monitor ready)'),
             onClick: openFull,
-          }, t('全面浏览', 'Full View')),
+          }, t('弹出独立窗口 ↗', 'Pop Out ↗')),
           (full || embedMode) ? null : h('button', { className: 'rt-btn', title: t('收起面板', 'Collapse panel'), onClick: () => setUI({ open: false }) }, t('收起', 'Close'))),
         hostVersionMismatch
           ? h('div', {
@@ -1615,7 +1633,7 @@
             ? null
             : h('span', {
                 title: t('当前会话 ', 'Session ') + sid + (sesTitle ? ' (' + sesTitle + ')' : ''),
-              }, t('会话 ', 'Session ') + sid.slice(0, 8) + (followSource ? ' · ' + followSourceLabel(followSource) : ''))))
+              }, t('会话 ', 'Session ') + formatShortSessionId(sid) + (followSource ? ' · ' + followSourceLabel(followSource) : ''))))
     }
 
     /* ---------------------------------------------------------- 精简宿主入口按钮（零重复胶囊） */
@@ -1643,10 +1661,11 @@
     function SidebarButton() {
       useLocale()
       const st = useUI()
+      const sess = useSession()
       return h('button', {
         className: 'rt-icon-btn' + (st.open ? ' on' : ''),
-        title: t('LMTAgent 研发控制台（常驻右侧栏）', 'LMTAgent Console (Right Dock)'),
-        onClick: () => setUI({ open: !st.open }),
+        title: t('弹出 LMTAgent 独立研发控制台窗口', 'Pop out LMTAgent Console in a standalone window'),
+        onClick: () => openStandaloneWindow({ session: sess.id || undefined, tab: st.tab || undefined }),
       }, h('svg', {
         width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none',
         stroke: 'currentColor', strokeWidth: 1.6, 'aria-hidden': 'true',
@@ -1665,28 +1684,35 @@
       React.useEffect(() => { if (sid || title) setSessionId(sid, title) }, [sid, title])
       return h('button', {
         className: 'rt-hbtn' + (st.open ? ' on' : ''),
-        title: t('LMTAgent 研发控制台（切换右侧常驻工作台）', 'LMTAgent Console (Toggle Dock)'),
-        onClick: () => setUI({ open: !st.open }),
-      }, t('LMTAgent 控制台', 'LMTAgent Console'))
+        title: t('在脱离 DSH 的独立窗口中打开 LMTAgent 控制台', 'Pop out LMTAgent Console in an independent window'),
+        onClick: () => openStandaloneWindow({ session: sid || undefined, tab: st.tab || undefined }),
+      }, t('LMTAgent 独立窗口 ↗', 'LMTAgent Window ↗'))
     }
 
     function SettingsSlotSection() {
       useLocale()
+      const sess = useSession()
       return h('div', { style: { margin: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
           h('div', null,
             h('div', { style: { fontWeight: 700, fontSize: 13 } }, t('LMTAgent 统一设置中心', 'LMTAgent Unified Settings')),
             h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
               t('AI 规划、并发派发、存储、飞书与界面偏好', 'AI Planning, Concurrency, Storage, Feishu & UI Preferences'))),
-          h('button', {
-            type: 'button',
-            className: 'rt-btn rt-btn-primary',
-            onClick: () => setUI({ open: true, tab: 'settings' }),
-          }, t('打开完整控制台', 'Open Full Console'))),
+          h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+            h('button', {
+              type: 'button',
+              className: 'rt-btn rt-btn-primary',
+              onClick: () => openStandaloneWindow({ session: sess.id || undefined, tab: 'settings' }),
+            }, t('弹出独立窗口 ↗', 'Pop Out Window ↗')),
+            h('button', {
+              type: 'button',
+              className: 'rt-btn',
+              onClick: () => setUI({ open: true, tab: 'settings' }),
+            }, t('停靠右侧栏', 'Dock to Sidebar')))),
         typeof SettingsHubTab === 'function'
           ? h(SettingsHubTab, {
               compact: true,
-              onGo: (tab) => setUI({ open: true, tab: tab || 'settings' }),
+              onGo: (tab) => openStandaloneWindow({ session: sess.id || undefined, tab: tab || 'settings' }),
             })
           : null)
     }
@@ -1753,7 +1779,7 @@
             id: 'lmtagent-workbench',
             label: t('LMTAgent 控制台', 'LMTAgent Console'),
             order: 35,
-            onClick: () => setUI({ open: !ui.open }),
+            onClick: () => openStandaloneWindow({ session: sessionId || undefined, tab: ui.tab || undefined }),
           })
         }
       } catch (e) { /* optional service */ }
@@ -1770,6 +1796,8 @@
     exports.setLocale = setLocale
     exports.syncLocaleFromSettings = syncLocaleFromSettings
     exports.t = t
+    exports.formatShortSessionId = formatShortSessionId
+    exports.openStandaloneWindow = openStandaloneWindow
     return module.exports
   },
 })

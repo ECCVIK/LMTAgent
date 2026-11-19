@@ -1096,7 +1096,7 @@
       const activeSid = props.sessionId || null
       const rawSessionTitle = props.sessionTitle || null
       const cleanSessionTitle = rawSessionTitle && !isRawUuidName(rawSessionTitle) ? String(rawSessionTitle).trim() : null
-      const sessionBadgeText = cleanSessionTitle || (activeSid ? activeSid.slice(0, 8) : t('未命名新会话', 'Untitled Session'))
+      const sessionBadgeText = cleanSessionTitle || (activeSid ? formatShortSessionId(activeSid) : t('未命名新会话', 'Untitled Session'))
       const sessionState = props.sessionState || null
       const snapshot = props.snapshot || null
       const refreshKey = props.refreshKey || 0

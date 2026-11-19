@@ -1,40 +1,35 @@
-# dsh-lmtagent (`v1.0.0`)
+# dsh-lmtagent (`v1.1.0`)
 
-Multi-agent software engineering orchestrator and docked workbench plugin for DeepSeek Harness (DSH Desktop), packaged cleanly as a self-contained single-bundle distribution with zero external runtime dependencies.
+**Multi-agent full-stack dev workbench for DeepSeek Harness (DSH Desktop)**: turns feature wishes into parallel file-disjoint coding shards with 8 role presets, a detached standalone OS window, one-click Git scope rollback, workspace budget guard, and a live bilingual DAG console.
 
 [Full English Documentation](https://github.com/ECCVIK/LMTAgent/blob/main/README.md) | [Simplified Chinese Documentation](https://github.com/ECCVIK/LMTAgent/blob/main/README.zh-CN.md)
-
----
-
-## UI Preview (`v1.0.0`)
-
-| Overview & Expandable Context Drawer | Cluster Scheduling & Topology Tree |
-| :---: | :---: |
-| ![Overview & Expandable Context Drawer](https://raw.githubusercontent.com/ECCVIK/LMTAgent/main/docs/assets/ui-overview-workbench-en.png) | ![Cluster Scheduling & Topology Tree](https://raw.githubusercontent.com/ECCVIK/LMTAgent/main/docs/assets/ui-agents-dag-en.png) |
-| **Collaboration, Quick Demos & Scope Rollback** | **Unified Settings & Dispatch Policy** |
-| ![Collaboration, Quick Demos & Scope Rollback](https://raw.githubusercontent.com/ECCVIK/LMTAgent/main/docs/assets/ui-assets-pg-en.png) | ![Unified Settings & Dispatch Policy](https://raw.githubusercontent.com/ECCVIK/LMTAgent/main/docs/assets/ui-report-v2-en.png) |
-
----
-
-## Key Highlights (`v1.0.0`)
-
-- **Coexistence-Ready Namespace (`dsh-lmtagent`)**: Independent Cordis plugin IDs (`lmtagent-mode`, `lmtagent-tools`, `lmtagent-ui`, `dsh-lmtagent-ui`), routes (`/lmtagent/api`, `/lmtagent/events`), presets (`preset-lmtagent*`), and `$DSH_HOME/lmtagent` workspace storage (with automatic non-destructive copy migration from `$DSH_HOME/redteam`).
-- **12 Clean Engineering Skills & 12 Lean `lmt_*` Tools**: Ships strictly the 12 clean engineering and workflow skills (`eng-*` x8 + `campaign-planning`, `browser-automation`, `opsec-hygiene`, `supply-chain`) and 12 compact `lmt_*` tools (`11,645` bytes serialized schema, `58%` below the `28,000`-byte baseline).
-- **Modular High-Performance Architecture**: Write-versioned store read memoization, incremental `.jsonl` byte-offset telemetry, pre/post-write `ShardLock` validation with Git `rollbackScopeViolations`, workspace token/cost budget circuit breaker, exponential-backoff auto-retry (`maxAutoRetries`), experimental speculative DAG pipelining (`speculativeWaveDispatch`), and reactive bilingual `zh-CN` / `en-US` UI.
-
----
-
-## Installation
 
 ```bash
 dsh plugin add github:ECCVIK/LMTAgent
 ```
 
-Or install from the DSH Desktop Plugin Market by searching `dsh-lmtagent`.
+---
+
+## UI Preview (`v1.1.0`)
+
+| Live Overview & Efficiency Metrics | Cluster Concurrency & Derivation Tree |
+| :---: | :---: |
+| ![Overview & Context Breakdown](https://raw.githubusercontent.com/ECCVIK/LMTAgent/main/docs/assets/ui-overview-workbench-en.png) | ![Cluster Concurrency & Derivation Tree](https://raw.githubusercontent.com/ECCVIK/LMTAgent/main/docs/assets/ui-agents-dag-en.png) |
+| **1-Min Quick Demos & Git Scope Rollback** | **Unified Settings & Budget Guard** |
+| ![1-Min Quick Demos & Git Scope Rollback](https://raw.githubusercontent.com/ECCVIK/LMTAgent/main/docs/assets/ui-assets-pg-en.png) | ![Unified Settings & Budget Guard](https://raw.githubusercontent.com/ECCVIK/LMTAgent/main/docs/assets/ui-report-v2-en.png) |
 
 ---
 
-## Verification Gates
+## Highlights (`v1.1.0`)
+
+- **Standalone Pop-Out Desktop Window (`Pop Out ↗`)**: Opens LMTAgent in a detached chromeless OS window (`--app=` mode) sharing the live DSH same-origin API and SSE stream — ideal for dual-monitor workflows without cramped sidebars.
+- **Independent Coexistence Namespace (`dsh-lmtagent`)**: Clean Cordis IDs, `/lmtagent/api` routes, `preset-lmtagent*` presets, and `$DSH_HOME/lmtagent` storage (with automatic non-destructive copy migration from `$DSH_HOME/redteam`).
+- **12 Lean `lmt_*` Tools (`11,645` Bytes Schema) & 12 Clean Engineering Skills**: 58% smaller tool schema footprint and zero legacy pentest handbooks in the default package.
+- **Safety & Experimental Performance**: Pre/post-write `ShardLock` + Git `rollbackScopeViolations`, workspace Token/Cost budget circuit breaker, exponential-backoff auto-retry (`maxAutoRetries`), experimental speculative DAG pipelining (`speculativeWaveDispatch`), and reactive `en-US` / `zh-CN` UI.
+
+---
+
+## Verification
 
 ```bash
 node packages/redteam-bundle/tools/build.mjs --check

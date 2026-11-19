@@ -209,7 +209,7 @@ window.__ModuleLoader__.load({
       return hits.length ? hits[0].x.id : null
     }
 
-    const CLIENT_PLUGIN_VERSION = '1.0.0'
+    const CLIENT_PLUGIN_VERSION = '1.1.0'
     const CSS = `
 :root{
   --rt-dock-w:540px;
@@ -248,7 +248,7 @@ div:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-rightbar-collapsed]
 div:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-rightbar-fullscreen] .rt-dock{
   transform:translateX(100%);opacity:0;pointer-events:none}
 .rt-grip{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize;background:transparent;z-index:2}
-.rt-head{display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);
+.rt-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding:10px 14px;border-bottom:1px solid var(--dsw-alias-border-l1);
   background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 88%,transparent);
   backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .rt-title{font-weight:700;font-size:14.5px;letter-spacing:-.01em;display:flex;align-items:center;gap:6px;white-space:nowrap}
@@ -310,7 +310,7 @@ div:has(> [data-shell-overlay] .rt-dock[data-open="1"])[data-rightbar-fullscreen
   padding:2px 8px;font-size:12px;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px}
 .rt-hbtn:hover{background:var(--dsw-alias-bg-layer-2)}
 .rt-hbtn.on{border-color:var(--wb-blue,var(--dsw-alias-brand-primary));color:var(--wb-blue,var(--dsw-alias-brand-primary))}
-.rt-full{position:fixed;top:var(--dsh-frame-chrome-top,var(--dsh-frame-top-clearance,var(--dsh-windows-titlebar-height,0px)));right:0;bottom:0;left:0;z-index:60;display:flex;flex-direction:column;
+.rt-full{position:fixed;top:var(--dsh-frame-chrome-top,var(--dsh-frame-top-clearance,var(--dsh-windows-titlebar-height,0px)));right:0;bottom:0;left:0;z-index:9999;display:flex;flex-direction:column;
   background:radial-gradient(960px 440px at 100% 0%,rgba(77,107,254,.09),transparent 64%),radial-gradient(640px 320px at 0% 100%,rgba(14,165,233,.05),transparent 60%),var(--dsw-alias-bg-base);
   color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.5;border-top:3px solid var(--wb-blue,var(--dsw-alias-brand-primary))}
 .rt-full .rt-head{padding:12px 18px}
@@ -2539,12 +2539,64 @@ body[data-ds-dark-theme] .rt-anim-complete{
     const exitFullInPlace = () => {
       try { window.dispatchEvent(new Event(EXIT_FULL_EVENT)) } catch { /* 旧浏览器 */ }
     }
-    const openFullView = () => {
-      if (isDesktopShell()) { requestFullInPlace(); return }
-      let win = null
-      try { win = window.open(window.location.href.split('#')[0] + '#lmtagent-full', '_blank') } catch { win = null }
-      if (win === null || win === undefined) requestFullInPlace()
+    const formatShortSessionId = (sid) => {
+      const raw = String(sid || '').trim()
+      if (!raw) return ''
+      const stripped = raw.replace(/^session-/i, '')
+      return (stripped || raw).slice(0, 8)
     }
+
+    const readStandaloneUrlParams = () => {
+      try {
+        const search = String((typeof window !== 'undefined' && window.location && window.location.search) || '')
+        if (!search) return { session: null, engagement: null, tab: null }
+        const p = new URLSearchParams(search)
+        return {
+          session: p.get('lmt_session') || null,
+          engagement: p.get('lmt_eng') || null,
+          tab: p.get('lmt_tab') || null,
+        }
+      } catch {
+        return { session: null, engagement: null, tab: null }
+      }
+    }
+
+    const openStandaloneWindow = (opts) => {
+      const options = opts && typeof opts === 'object' ? opts : {}
+      const baseHref = (() => {
+        try { return String(window.location.href || '').split('#')[0] } catch { return '' }
+      })()
+      const payload = {
+        op: 'openStandaloneWindow',
+        url: baseHref || undefined,
+        session: options.session || undefined,
+        engagement: options.engagement || undefined,
+        tab: options.tab || undefined,
+      }
+      const fallbackPopup = (targetUrl) => {
+        const href = targetUrl || (baseHref ? (baseHref + '#lmtagent-full') : '#lmtagent-full')
+        let win = null
+        try {
+          if (typeof window !== 'undefined' && typeof window.open === 'function') {
+            win = window.open(href, 'lmtagent-standalone', 'popup=yes,width=1440,height=920')
+          }
+        } catch { win = null }
+        if (win === null || win === undefined) {
+          requestFullInPlace()
+          return { ok: true, launched: false, mode: 'in-place-full' }
+        }
+        return { ok: true, launched: true, mode: 'popup', url: href }
+      }
+      return api(payload).then((res) => {
+        if (res && res.ok && res.launched) {
+          try { if (typeof setUI === 'function') setUI({ open: false }) } catch { /* ignore */ }
+          return res
+        }
+        return fallbackPopup(res && res.url ? res.url : null)
+      }).catch(() => fallbackPopup(null))
+    }
+
+    const openFullView = (opts) => openStandaloneWindow(opts)
 
     let _lastHostSeq = 0
 
@@ -4594,7 +4646,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const activeSid = props.sessionId || null
       const rawSessionTitle = props.sessionTitle || null
       const cleanSessionTitle = rawSessionTitle && !isRawUuidName(rawSessionTitle) ? String(rawSessionTitle).trim() : null
-      const sessionBadgeText = cleanSessionTitle || (activeSid ? activeSid.slice(0, 8) : t('未命名新会话', 'Untitled Session'))
+      const sessionBadgeText = cleanSessionTitle || (activeSid ? formatShortSessionId(activeSid) : t('未命名新会话', 'Untitled Session'))
       const sessionState = props.sessionState || null
       const snapshot = props.snapshot || null
       const refreshKey = props.refreshKey || 0
@@ -8919,7 +8971,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
       const cleanSessionTitle = (props.sessionTitle && !isRawUuidName(props.sessionTitle) ? props.sessionTitle : null)
         || (currentSess.title && !isRawUuidName(currentSess.title) ? currentSess.title : null)
-        || (activeSid ? (t('会话 ', 'Session ') + String(activeSid).slice(0, 8)) : t('当前新会话', 'New Session'))
+        || (activeSid ? (t('会话 ', 'Session ') + formatShortSessionId(activeSid)) : t('当前新会话', 'New Session'))
 
       if (!eng) {
         const sState = props.sessionState || null
@@ -13726,6 +13778,21 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const [seen, setSeen] = React.useState(null)
       const [full, setFull] = React.useState(() => isFullWindow())
 
+      React.useEffect(() => {
+        if (!isFullWindow()) return
+        const params = readStandaloneUrlParams()
+        if (params.session && !scopedSession.authoritative) {
+          setSessionId(params.session, null)
+        }
+        if (params.engagement) {
+          manualPickRef.current = params.session || sid || ''
+          setEng(params.engagement)
+        }
+        if (params.tab) {
+          setUI({ tab: params.tab })
+        }
+      }, [])
+
       const exitFull = React.useCallback(() => {
         setFull(false)
         try {
@@ -14109,7 +14176,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const visibleEngagements = namedEngagements.length > 0 ? namedEngagements : engagements
       const sessionDisplayLabel = (!isRawUuidName(sesTitle) && sesTitle)
         ? sesTitle
-        : (sid ? sid.slice(0, 8) : t('当前会话', 'Session'))
+        : (sid ? formatShortSessionId(sid) : t('当前会话', 'Session'))
 
       const selectorOptions = []
       if (sid && !eng) {
@@ -14165,7 +14232,9 @@ body[data-ds-dark-theme] .rt-anim-complete{
       ]
       const groupOf = (tab) => TAB_GROUPS.find((g) => g.tabs.indexOf(tab) !== -1) || TAB_GROUPS[1]
       const activeGroup = groupOf(st.tab)
-      const openFull = () => { openFullView() }
+      const openFull = () => {
+        openStandaloneWindow({ session: sid || undefined, engagement: eng || undefined, tab: st.tab || undefined })
+      }
 
       React.useEffect(() => {
         if (!full) return undefined
@@ -14293,8 +14362,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
         (full || embedMode) ? null : h('div', { className: 'rt-grip', onMouseDown: startResize }),
         h('div', { className: 'rt-head' },
           h('div', { className: 'rt-title' }, h('span', { className: 'rt-dot' }),
-            full ? t('LMTAgent 全面浏览', 'LMTAgent Full View') : t('LMTAgent 研发控制台', 'LMTAgent Console'),
-            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, t('全屏视图', 'Fullscreen')) : null),
+            full ? t('LMTAgent 独立工作台', 'LMTAgent Standalone Workbench') : t('LMTAgent 研发控制台', 'LMTAgent Console'),
+            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, t('独立窗口', 'Standalone')) : null),
           sid === null
             ? null
             : (!eng
@@ -14376,10 +14445,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
             onClick: () => goTab('settings'),
           }, t('设置', 'Settings')),
           full ? null : h('button', {
-            className: 'rt-btn',
-            title: isDesktopShell() ? t('当前窗口全屏查看（Esc 退出）', 'Open fullscreen view (Esc to exit)') : t('新窗口打开', 'Open in new window'),
+            className: 'rt-btn rt-btn-primary',
+            title: t('在脱离 DSH 的独立应用窗口中打开（支持拖到双屏）', 'Open in a detached standalone OS window (multi-monitor ready)'),
             onClick: openFull,
-          }, t('全面浏览', 'Full View')),
+          }, t('弹出独立窗口 ↗', 'Pop Out ↗')),
           (full || embedMode) ? null : h('button', { className: 'rt-btn', title: t('收起面板', 'Collapse panel'), onClick: () => setUI({ open: false }) }, t('收起', 'Close'))),
         hostVersionMismatch
           ? h('div', {
@@ -14440,7 +14509,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             ? null
             : h('span', {
                 title: t('当前会话 ', 'Session ') + sid + (sesTitle ? ' (' + sesTitle + ')' : ''),
-              }, t('会话 ', 'Session ') + sid.slice(0, 8) + (followSource ? ' · ' + followSourceLabel(followSource) : ''))))
+              }, t('会话 ', 'Session ') + formatShortSessionId(sid) + (followSource ? ' · ' + followSourceLabel(followSource) : ''))))
     }
 
     function LocaleSwitcher() {
@@ -14467,10 +14536,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
     function SidebarButton() {
       useLocale()
       const st = useUI()
+      const sess = useSession()
       return h('button', {
         className: 'rt-icon-btn' + (st.open ? ' on' : ''),
-        title: t('LMTAgent 研发控制台（常驻右侧栏）', 'LMTAgent Console (Right Dock)'),
-        onClick: () => setUI({ open: !st.open }),
+        title: t('弹出 LMTAgent 独立研发控制台窗口', 'Pop out LMTAgent Console in a standalone window'),
+        onClick: () => openStandaloneWindow({ session: sess.id || undefined, tab: st.tab || undefined }),
       }, h('svg', {
         width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none',
         stroke: 'currentColor', strokeWidth: 1.6, 'aria-hidden': 'true',
@@ -14489,28 +14559,35 @@ body[data-ds-dark-theme] .rt-anim-complete{
       React.useEffect(() => { if (sid || title) setSessionId(sid, title) }, [sid, title])
       return h('button', {
         className: 'rt-hbtn' + (st.open ? ' on' : ''),
-        title: t('LMTAgent 研发控制台（切换右侧常驻工作台）', 'LMTAgent Console (Toggle Dock)'),
-        onClick: () => setUI({ open: !st.open }),
-      }, t('LMTAgent 控制台', 'LMTAgent Console'))
+        title: t('在脱离 DSH 的独立窗口中打开 LMTAgent 控制台', 'Pop out LMTAgent Console in an independent window'),
+        onClick: () => openStandaloneWindow({ session: sid || undefined, tab: st.tab || undefined }),
+      }, t('LMTAgent 独立窗口 ↗', 'LMTAgent Window ↗'))
     }
 
     function SettingsSlotSection() {
       useLocale()
+      const sess = useSession()
       return h('div', { style: { margin: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
           h('div', null,
             h('div', { style: { fontWeight: 700, fontSize: 13 } }, t('LMTAgent 统一设置中心', 'LMTAgent Unified Settings')),
             h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
               t('AI 规划、并发派发、存储、飞书与界面偏好', 'AI Planning, Concurrency, Storage, Feishu & UI Preferences'))),
-          h('button', {
-            type: 'button',
-            className: 'rt-btn rt-btn-primary',
-            onClick: () => setUI({ open: true, tab: 'settings' }),
-          }, t('打开完整控制台', 'Open Full Console'))),
+          h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } },
+            h('button', {
+              type: 'button',
+              className: 'rt-btn rt-btn-primary',
+              onClick: () => openStandaloneWindow({ session: sess.id || undefined, tab: 'settings' }),
+            }, t('弹出独立窗口 ↗', 'Pop Out Window ↗')),
+            h('button', {
+              type: 'button',
+              className: 'rt-btn',
+              onClick: () => setUI({ open: true, tab: 'settings' }),
+            }, t('停靠右侧栏', 'Dock to Sidebar')))),
         typeof SettingsHubTab === 'function'
           ? h(SettingsHubTab, {
               compact: true,
-              onGo: (tab) => setUI({ open: true, tab: tab || 'settings' }),
+              onGo: (tab) => openStandaloneWindow({ session: sess.id || undefined, tab: tab || 'settings' }),
             })
           : null)
     }
@@ -14570,7 +14647,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             id: 'lmtagent-workbench',
             label: t('LMTAgent 控制台', 'LMTAgent Console'),
             order: 35,
-            onClick: () => setUI({ open: !ui.open }),
+            onClick: () => openStandaloneWindow({ session: sessionId || undefined, tab: ui.tab || undefined }),
           })
         }
       } catch (e) { /* optional service */ }
@@ -14587,6 +14664,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
     exports.setLocale = setLocale
     exports.syncLocaleFromSettings = syncLocaleFromSettings
     exports.t = t
+    exports.formatShortSessionId = formatShortSessionId
+    exports.openStandaloneWindow = openStandaloneWindow
     return module.exports
   },
 })

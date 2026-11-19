@@ -152,7 +152,7 @@
 
       const cleanSessionTitle = (props.sessionTitle && !isRawUuidName(props.sessionTitle) ? props.sessionTitle : null)
         || (currentSess.title && !isRawUuidName(currentSess.title) ? currentSess.title : null)
-        || (activeSid ? (t('会话 ', 'Session ') + String(activeSid).slice(0, 8)) : t('当前新会话', 'New Session'))
+        || (activeSid ? (t('会话 ', 'Session ') + formatShortSessionId(activeSid)) : t('当前新会话', 'New Session'))
 
       /* ── 未绑定工作台：当前会话专属干净待机概览卡 ── */
       if (!eng) {

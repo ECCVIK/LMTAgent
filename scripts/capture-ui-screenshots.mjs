@@ -238,11 +238,11 @@ function mockOpResponse(body, lang) {
   if (op === 'version' || op === 'updateCheck') {
     return {
       ok: true,
-      current: '1.0.0',
-      hostVersion: '1.0.0',
-      latest: '1.0.0',
+      current: '1.1.0',
+      hostVersion: '1.1.0',
+      latest: '1.1.0',
       hasUpdate: false,
-      plugin: { name: 'dsh-lmtagent', version: '1.0.0' },
+      plugin: { name: 'dsh-lmtagent', version: '1.1.0' },
     }
   }
   if (op === 'sessionBinding') {
@@ -261,7 +261,7 @@ function mockOpResponse(body, lang) {
   if (op === 'bootstrap') {
     return {
       ok: true,
-      hostVersion: '1.0.0',
+      hostVersion: '1.1.0',
       active: MOCK_ENG_ID,
       engagements: [{ id: MOCK_ENG_ID, name: f.engName, cwd: 'D:/Projects/OrderFlow' }],
       host_sessions: [{

@@ -143,7 +143,12 @@ ok(registeredSlots.every((s) => typeof s.render === 'function' && s.meta && s.me
 ok(/\/lmtagent\/api/.test(source) && /\/lmtagent\/events/.test(source) && /#lmtagent-full/.test(source)
   && !/\/redteam\/(api|events)/.test(source) && !source.includes('⚡'),
   'client.js 使用 /lmtagent/api + /lmtagent/events + #lmtagent-full，零 /redteam/* 路由与 ⚡ 图标')
-ok(/CLIENT_PLUGIN_VERSION\s*=\s*['"]1\.0\.0['"]/.test(source), 'CLIENT_PLUGIN_VERSION 为 1.0.0')
+ok(/CLIENT_PLUGIN_VERSION\s*=\s*['"]1\.1\.0['"]/.test(source), 'CLIENT_PLUGIN_VERSION 为 1.1.0')
+ok(typeof moduleExports.formatShortSessionId === 'function'
+  && moduleExports.formatShortSessionId('session-abcdef12-3456') === 'abcdef12'
+  && moduleExports.formatShortSessionId('orderflow-sess-1000') === 'orderflo',
+  'formatShortSessionId 剥离 session- 前缀后展示 8 位短 ID（修复会话 session- 截断）')
+ok(typeof moduleExports.openStandaloneWindow === 'function', '导出 openStandaloneWindow 独立窗口弹出函数')
 ok(appended.length >= 2, `注入了样式标签（${appended.length} 个）`)
 for (const dispose of cleanups) { try { dispose() } catch { /* 忽略 */ } }
 ok(removed.length >= 2, `卸载时把样式标签移除了（${removed.length} 个）`)

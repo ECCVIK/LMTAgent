@@ -21,12 +21,64 @@
     const exitFullInPlace = () => {
       try { window.dispatchEvent(new Event(EXIT_FULL_EVENT)) } catch { /* 旧浏览器 */ }
     }
-    const openFullView = () => {
-      if (isDesktopShell()) { requestFullInPlace(); return }
-      let win = null
-      try { win = window.open(window.location.href.split('#')[0] + '#lmtagent-full', '_blank') } catch { win = null }
-      if (win === null || win === undefined) requestFullInPlace()
+    const formatShortSessionId = (sid) => {
+      const raw = String(sid || '').trim()
+      if (!raw) return ''
+      const stripped = raw.replace(/^session-/i, '')
+      return (stripped || raw).slice(0, 8)
     }
+
+    const readStandaloneUrlParams = () => {
+      try {
+        const search = String((typeof window !== 'undefined' && window.location && window.location.search) || '')
+        if (!search) return { session: null, engagement: null, tab: null }
+        const p = new URLSearchParams(search)
+        return {
+          session: p.get('lmt_session') || null,
+          engagement: p.get('lmt_eng') || null,
+          tab: p.get('lmt_tab') || null,
+        }
+      } catch {
+        return { session: null, engagement: null, tab: null }
+      }
+    }
+
+    const openStandaloneWindow = (opts) => {
+      const options = opts && typeof opts === 'object' ? opts : {}
+      const baseHref = (() => {
+        try { return String(window.location.href || '').split('#')[0] } catch { return '' }
+      })()
+      const payload = {
+        op: 'openStandaloneWindow',
+        url: baseHref || undefined,
+        session: options.session || undefined,
+        engagement: options.engagement || undefined,
+        tab: options.tab || undefined,
+      }
+      const fallbackPopup = (targetUrl) => {
+        const href = targetUrl || (baseHref ? (baseHref + '#lmtagent-full') : '#lmtagent-full')
+        let win = null
+        try {
+          if (typeof window !== 'undefined' && typeof window.open === 'function') {
+            win = window.open(href, 'lmtagent-standalone', 'popup=yes,width=1440,height=920')
+          }
+        } catch { win = null }
+        if (win === null || win === undefined) {
+          requestFullInPlace()
+          return { ok: true, launched: false, mode: 'in-place-full' }
+        }
+        return { ok: true, launched: true, mode: 'popup', url: href }
+      }
+      return api(payload).then((res) => {
+        if (res && res.ok && res.launched) {
+          try { if (typeof setUI === 'function') setUI({ open: false }) } catch { /* ignore */ }
+          return res
+        }
+        return fallbackPopup(res && res.url ? res.url : null)
+      }).catch(() => fallbackPopup(null))
+    }
+
+    const openFullView = (opts) => openStandaloneWindow(opts)
 
     /* Host 递增变更序号（配合可选 sinceSeq 与 SSE /lmtagent/events 增量感知） */
     let _lastHostSeq = 0

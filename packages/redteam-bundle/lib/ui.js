@@ -76,6 +76,11 @@ import {
 import { normalizeTouchedFilePath } from './telemetry-jsonl.js'
 import { rollbackScopeViolations, sanitizeRepoRelativePath } from './scope-rollback.js'
 import {
+  validateLoopbackWindowUrl,
+  resolveAppBrowserBin,
+  launchStandaloneWindow,
+} from './window-launcher.js'
+import {
   detectDagCycles,
   computeReadyTasksForPipeline,
   computeWorkspaceUsage,
@@ -919,6 +924,9 @@ export {
   computeReadyTasksForPipeline,
   evaluateWorkspaceBudgetGuard,
   computeWorkspacePerfMetrics,
+  validateLoopbackWindowUrl,
+  resolveAppBrowserBin,
+  launchStandaloneWindow,
 }
 
 const dispatchDeps = {
@@ -3447,6 +3455,20 @@ export function apply(ctx) {
             sendJson(res, 200, { ok: true, unchanged: true, seq: eventSeq })
             return
           }
+        }
+
+        if (request.op === 'openStandaloneWindow') {
+          const launchRes = launchStandaloneWindow({
+            url: request.url,
+            host: req.headers.host,
+            session: request.session,
+            engagement: request.engagement,
+            tab: request.tab,
+            width: request.width,
+            height: request.height,
+          })
+          sendJsonWithSeq(res, launchRes.ok ? 200 : 400, launchRes)
+          return
         }
 
         const agentsResult = await handleAgentsOp(ctx, request)

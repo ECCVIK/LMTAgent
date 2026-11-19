@@ -1586,6 +1586,61 @@ async function main() {
         && retryPrompts[1].includes('Transient OOM timeout on shard worker')
         && retryPrompts[1].includes('lmt_workflow'),
       ))
+
+      /* 7.6 独立窗口启动器（validateLoopbackWindowUrl + launchStandaloneWindow + RPC 路由） */
+      const { validateLoopbackWindowUrl, launchStandaloneWindow } = await import('../lib/index.js')
+      const validLoopback = validateLoopbackWindowUrl('http://127.0.0.1:3080/', {
+        session: 'session-abcdef12-3456',
+        engagement: 'orderflow-v2',
+        tab: 'overview',
+      })
+      check('validateLoopbackWindowUrl 允许 127.0.0.1 并附加 lmt_session / lmt_eng / lmt_tab 与 #lmtagent-full', Boolean(
+        validLoopback.ok
+        && validLoopback.url.startsWith('http://127.0.0.1:3080/?')
+        && validLoopback.url.includes('lmt_session=session-abcdef12-3456')
+        && validLoopback.url.includes('lmt_eng=orderflow-v2')
+        && validLoopback.url.includes('lmt_tab=overview')
+        && validLoopback.url.endsWith('#lmtagent-full'),
+      ))
+      check('validateLoopbackWindowUrl 严格拒绝非回环域、file:// 与 javascript: URI', Boolean(
+        validateLoopbackWindowUrl('https://evil.example/').ok === false
+        && validateLoopbackWindowUrl('file:///etc/passwd').ok === false
+        && validateLoopbackWindowUrl('javascript:alert(1)').ok === false,
+      ))
+      let spawnedCmd = null
+      let spawnedArgs = null
+      let spawnedOpts = null
+      const launchRes = launchStandaloneWindow({
+        url: 'http://localhost:3080/',
+        session: 'session-99887766',
+        tab: 'collab',
+        env: { LMTAGENT_BROWSER_BIN: 'mock-edge' },
+        spawnFn: (cmd, args, opts) => {
+          spawnedCmd = cmd
+          spawnedArgs = args
+          spawnedOpts = opts
+          return { unref() {} }
+        },
+      })
+      check('launchStandaloneWindow 以 --app=<loopbackUrl> 独立进程模式拉起窗口且零 shell 拼接', Boolean(
+        launchRes.ok === true
+        && launchRes.launched === true
+        && launchRes.mode === 'browser-app'
+        && spawnedCmd === 'mock-edge'
+        && Array.isArray(spawnedArgs)
+        && spawnedArgs.some((a) => a.startsWith('--app=http://localhost:3080/') && a.endsWith('#lmtagent-full'))
+        && spawnedOpts && spawnedOpts.detached === true && spawnedOpts.shell !== true,
+      ))
+      const winHost = createMockPluginHost({ store: v1Store })
+      try {
+        const rpcRejectWin = await winHost.callApi({ op: 'openStandaloneWindow', url: 'https://evil.example/' })
+        check('POST /lmtagent/api openStandaloneWindow 拦截非回环 URL 返回 400', Boolean(
+          rpcRejectWin.status === 400 && rpcRejectWin.json && rpcRejectWin.json.ok === false,
+        ))
+      } finally {
+        if (typeof winHost.close === 'function') winHost.close()
+        else if (typeof winHost.dispose === 'function') winHost.dispose()
+      }
     }
   } finally {
     for (const d of tempDirs) {

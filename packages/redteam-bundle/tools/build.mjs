@@ -98,6 +98,7 @@ write('lib/ui.js', uiIndex)
 const UI_SUB_MODULES = [
   'llm-planner.js', 'dsh-dispatch.js', 'telemetry-jsonl.js',
   'settings-bridge.js', 'update-manager.js', 'scope-rollback.js', 'dag-scheduler.js',
+  'window-launcher.js',
 ]
 for (const uiSub of UI_SUB_MODULES) {
   if (existsSync(join(packagesDir, 'redteam-ui/lib/' + uiSub))) {
