@@ -4,11 +4,17 @@
  * 从 lib/index.js 拆出：
  *   - 会话 ID 解包与根智能体解析（unwrapSessionIdValue / resolveLiveRootAgent）
  *   - 子代理预设与安全拉起（startSubagentActivationSafe / deliverPromptToChild / bindWorkerSessionCompat）
+ *   - 支持 maxAutoRetries 指数退避重拉与前置错误注入
  *   - 主代理 Captain 唤醒（sendRootFollowupMessage）
- *   - 工作流派发与波次自动推进（dispatchWorkflowToDshAgents / advanceNextWaveIfReady）
+ *   - 工作流派发与波次自动推进（dispatchWorkflowToDshAgents / advanceNextWaveIfReady），集成预算熔断与推测 DAG 流水线
  */
 import { randomUUID } from 'node:crypto'
 import { resolveAgentModelRoute } from './llm-planner.js'
+import {
+  computeReadyTasksForPipeline,
+  computeWorkspaceUsage,
+  evaluateWorkspaceBudgetGuard,
+} from './dag-scheduler.js'
 
 function tryGet(ctx, serviceName) {
   if (!ctx || typeof ctx.get !== 'function') return null
@@ -111,15 +117,15 @@ export async function resolveLiveRootAgent(ctx, sessionId, deps = {}) {
 export function workerPresetForRole(role) {
   const r = String(role || '').trim().toLowerCase()
   const map = {
-    recon: 'redteam-worker-recon',
-    designer: 'redteam-worker-designer',
-    assess: 'redteam-worker-assess',
-    'vuln-scan': 'redteam-worker-vuln-scan',
-    exploit: 'redteam-worker-exploit',
-    qa: 'redteam-worker-qa',
-    internal: 'redteam-worker-internal',
+    recon: 'lmtagent-worker-recon',
+    designer: 'lmtagent-worker-designer',
+    assess: 'lmtagent-worker-assess',
+    'vuln-scan': 'lmtagent-worker-vuln-scan',
+    exploit: 'lmtagent-worker-exploit',
+    qa: 'lmtagent-worker-qa',
+    internal: 'lmtagent-worker-internal',
   }
-  return map[r] || 'redteam-worker'
+  return map[r] || 'lmtagent-worker'
 }
 
 export function isPlaceholderWorkerSessionId(ctx, sid, deps = {}) {
@@ -180,6 +186,11 @@ export function buildSelfContainedWorkerPrompt(task, engId, refinedPrompt = '', 
   const assignedGoal = String((task && (task.assigned_goal || task.assignedGoal || task.objective || task.goal || task.title)) || '').trim()
   const filesOwned = parseArr(task && (task.files_owned ?? task.filesOwned ?? task.files_owned_json))
   const acceptance = String((task && (task.acceptance_criteria || task.acceptanceCriteria)) || '').trim()
+  const priorError = String(
+    (deps && deps.priorError)
+    || (task && (task.priorError || task.prior_error || task.error_detail))
+    || '',
+  ).trim()
 
   return [
     `你是 LMTAgent 集群执行角色 \`${role}\`（${wave} · ${workerName}）。`,
@@ -190,11 +201,12 @@ export function buildSelfContainedWorkerPrompt(task, engId, refinedPrompt = '', 
     '',
     `## 独占文件分片（files_owned — 严禁越界修改其他分片文件）\n${filesOwned.length > 0 ? filesOwned.map((f) => `- \`${f}\``).join('\n') : '- （遵循本角色职责范围，不修改未授权文件）'}`,
     acceptance ? `\n## 验收判据\n${acceptance}` : '',
+    priorError ? `\n## 上次执行异常摘要（请优先排查并修复）\n${priorError.slice(0, 600)}` : '',
     extraNote ? `\n## 补充指令\n${extraNote}` : '',
     '',
     '## 执行与汇报纪律',
-    '1. 所有研发成果、模块/缺陷/里程碑记录须写入事实库（`redteam_*` 工具），并附真实命令回显与验证证据。',
-    `2. 完成后调用 \`redteam_workflow({ action: "submit_digest", engagement: ${JSON.stringify(engId || 'default')}, worker_task_id: ${JSON.stringify(taskId || workerName)}, worker_name: ${JSON.stringify(workerName)}, worker_role: ${JSON.stringify(role)}, wave: ${JSON.stringify(wave)}, what_was_done: "...", files_touched: [...], key_decisions: [...], verification: "..." })\` 提交压缩摘要，并在最终回复中给出完整结论与验证证据。`,
+    '1. 所有研发成果、模块/缺陷/里程碑记录须写入事实库（`lmt_*` 工具），并附真实命令回显与验证证据。',
+    `2. 完成后调用 \`lmt_workflow({ action: "submit_digest", engagement: ${JSON.stringify(engId || 'default')}, worker_task_id: ${JSON.stringify(taskId || workerName)}, worker_name: ${JSON.stringify(workerName)}, worker_role: ${JSON.stringify(role)}, wave: ${JSON.stringify(wave)}, what_was_done: "...", files_touched: [...], key_decisions: [...], verification: "..." })\` 提交压缩摘要，并在最终回复中给出完整结论与验证证据。`,
   ].filter(Boolean).join('\n')
 }
 
@@ -305,38 +317,77 @@ export async function startSubagentActivationSafe(ctx, subagentsSvc, rootAgent, 
     && (!providerObj || (providerObj.capabilities?.agentPreset !== false && !providerObj.inheritsParentContext))
   const sig = opts.signal || AbortSignal.timeout(30000)
   const agentOptions = await resolveSafeChildAgentOptions(ctx, rootAgent, opts.thinkingEffort, sig, deps)
-  const reqObj = {
-    parent: rootAgent,
-    ...(opts.cwd ? { cwd: opts.cwd } : {}),
-    prompt: [{
-      type: 'text',
-      text: buildSelfContainedWorkerPrompt(task, opts.engId, opts.refinedPrompt, opts.extraNote, deps),
-    }],
-    ...(supportsPreset ? { agentPreset: workerPresetForRole(task.worker_role || task.role) } : {}),
-    ...(opts.maxDepth !== undefined ? { maxDepth: opts.maxDepth } : {}),
-    ...(Object.keys(agentOptions).length > 0 ? { agentOptions } : {}),
-  }
-  const spec = {
-    provider: providerName,
-    delivery: 'parent',
-    label: String(task.title || task.worker_name || `worker-${task.id || '1'}`),
-    request: reqObj,
-    signal: sig,
-  }
-  try {
-    return await subagentsSvc.startActivation(spec)
-  } catch (err) {
-    const msg = err && err.message ? String(err.message) : ''
-    if (supportsPreset && /preset/i.test(msg)) {
-      const fallbackReq = Object.assign({}, reqObj)
-      if (fallbackReq.agentPreset !== 'redteam-worker') {
-        fallbackReq.agentPreset = 'redteam-worker'
-      } else {
-        delete fallbackReq.agentPreset
-      }
-      return await subagentsSvc.startActivation(Object.assign({}, spec, { request: fallbackReq }))
+
+  const rawMaxRetries = opts.maxAutoRetries ?? (opts.policy && opts.policy.maxAutoRetries)
+  const maxAutoRetries = rawMaxRetries !== undefined && rawMaxRetries !== null && Number.isFinite(Number(rawMaxRetries))
+    ? Math.max(0, Math.min(3, Math.floor(Number(rawMaxRetries))))
+    : 1
+
+  const activateOnce = async (priorErr) => {
+    const promptDeps = priorErr ? Object.assign({}, deps, { priorError: priorErr }) : deps
+    const reqObj = {
+      parent: rootAgent,
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+      prompt: [{
+        type: 'text',
+        text: buildSelfContainedWorkerPrompt(task, opts.engId, opts.refinedPrompt, opts.extraNote, promptDeps),
+      }],
+      ...(supportsPreset ? { agentPreset: workerPresetForRole(task.worker_role || task.role) } : {}),
+      ...(opts.maxDepth !== undefined ? { maxDepth: opts.maxDepth } : {}),
+      ...(Object.keys(agentOptions).length > 0 ? { agentOptions } : {}),
     }
-    throw err
+    const spec = {
+      provider: providerName,
+      delivery: 'parent',
+      label: String(task.title || task.worker_name || `worker-${task.id || '1'}`),
+      request: reqObj,
+      signal: sig,
+    }
+
+    let started
+    try {
+      started = await subagentsSvc.startActivation(spec)
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : ''
+      if (supportsPreset && /preset/i.test(msg)) {
+        const fallbackReq = Object.assign({}, reqObj)
+        if (fallbackReq.agentPreset !== 'lmtagent-worker') {
+          fallbackReq.agentPreset = 'lmtagent-worker'
+        } else {
+          delete fallbackReq.agentPreset
+        }
+        started = await subagentsSvc.startActivation(Object.assign({}, spec, { request: fallbackReq }))
+      } else {
+        throw err
+      }
+    }
+    if (!started || !started.childId) {
+      throw new Error('startActivation 未返回有效的 childId')
+    }
+    return started
+  }
+
+  let priorError = ''
+  for (let attempt = 0; attempt <= maxAutoRetries; attempt += 1) {
+    try {
+      const res = await activateOnce(priorError)
+      if (attempt > 0) {
+        return Object.assign({}, res, { retryAttempts: attempt, priorError })
+      }
+      return res
+    } catch (err) {
+      const msg = err && err.message ? String(err.message) : String(err)
+      if (attempt >= maxAutoRetries || (sig && sig.aborted)) {
+        throw err
+      }
+      priorError = msg.slice(0, 400)
+      const delayMs = opts.retryDelayMs !== undefined
+        ? Math.max(0, Number(opts.retryDelayMs) || 0)
+        : (1500 * (attempt + 1))
+      if (delayMs > 0) {
+        await new Promise((r) => setTimeout(r, delayMs))
+      }
+    }
   }
 }
 
@@ -360,20 +411,42 @@ export async function dispatchWorkflowToDshAgents(ctx, store, opts = {}, deps = 
     maxAgents: 6,
     thinkingEffort: 'low',
     maxDepth: 3,
-    dispatchPolicy: deps.defaultDispatchPolicy || { dispatchMode: 'hybrid_auto', subagentProvider: 'spawn', autoWakeOnApprove: true },
+    dispatchPolicy: deps.defaultDispatchPolicy || {
+      dispatchMode: 'hybrid_auto',
+      subagentProvider: 'spawn',
+      autoWakeOnApprove: true,
+      maxAutoRetries: 1,
+    },
   }))
   const parseWave = deps.parseWaveNumber || defaultParseWaveNumber
   const parseArr = deps.parseJsonArraySafe || defaultParseJsonArraySafe
 
   const engId = String(opts.engagementId || opts.engagement || '').trim()
   const sessionId = String(opts.sessionId || opts.session || '').trim()
-  const settingsRoot = resolveSettingsRoot(store && store.root)
-  const settings = readSettings(settingsRoot, process.env)
+  const settingsRoot = opts.settingsRoot || resolveSettingsRoot(store && store.root)
+  const settings = opts.settings || readSettings(settingsRoot, process.env)
   const policy = settings.dispatchPolicy || deps.defaultDispatchPolicy || {
     dispatchMode: 'hybrid_auto',
     subagentProvider: 'spawn',
     autoWakeOnApprove: true,
+    maxAutoRetries: 1,
   }
+
+  /* 工作区级 Token / 费用预算熔断校验 */
+  const dag = opts.dag || (store && engId && typeof store.workflowDag === 'function' ? store.workflowDag(engId) : null)
+  const usage = computeWorkspaceUsage(dag, opts.hostSessions, { usage: opts.usage })
+  const budget = evaluateWorkspaceBudgetGuard(usage, policy)
+  if (budget.tripped && !opts.allowOverrideBudget) {
+    return {
+      ok: false,
+      mode: 'budget_blocked',
+      budget_exceeded: true,
+      budget,
+      spawned: [],
+      error: budget.reason || '工作区 Token 或费用预算已达上限，已熔断子代理派发',
+    }
+  }
+
   const clusterCfg = {
     maxAgents: settings.maxAgents,
     thinkingEffort: settings.thinkingEffort,
@@ -417,6 +490,8 @@ export async function dispatchWorkflowToDshAgents(ctx, store, opts = {}, deps = 
           refinedPrompt: opts.refinedPrompt || '',
           maxDepth: clusterCfg.maxDepth,
           thinkingEffort: clusterCfg.thinkingEffort,
+          maxAutoRetries: policy.maxAutoRetries ?? 1,
+          retryDelayMs: opts.retryDelayMs,
           signal: opts.signal,
         }, deps)
         if (started && started.childId) {
@@ -477,7 +552,7 @@ export async function dispatchWorkflowToDshAgents(ctx, store, opts = {}, deps = 
           ? `后续待编排波次（Wave 2–4，共 ${wave2Plus.length} 项）：\n` + wave2Plus.map((t) => `- [${t.wave || 'wave-?'} · ${t.worker_role || t.role}] ${t.title || t.worker_name} (task_id=${t.id})`).join('\n')
           : '',
         '',
-        '请主控 Captain 耐心等待上述 Wave 1 子代理通过 `delivery: "parent"` 完成汇报（或 `send_message` 回传），核验事实库摘要后通过 `redteam_workflow` 执行审批并接管 Wave 2–4 的协同调度！',
+        '请主控 Captain 耐心等待上述 Wave 1 子代理通过 `delivery: "parent"` 完成汇报（或 `send_message` 回传），核验事实库摘要后通过 `lmt_workflow` 执行审批并接管 Wave 2–4 的协同调度！',
       ].filter(Boolean).join('\n')
     } else {
       syncText = [
@@ -488,7 +563,7 @@ export async function dispatchWorkflowToDshAgents(ctx, store, opts = {}, deps = 
         `已写入 ${tasks.length} 项 4-Wave 分片任务到事实库（\`worker_tasks\`）：`,
         ...tasks.map((t) => `- [${t.wave || 'wave-?'} · ${t.worker_role || t.role}] ${t.title || t.worker_name} (task_id=${t.id}) · 目标: ${String(t.assigned_goal || '').slice(0, 160)}`),
         '',
-        '请主控 Captain 按照 4-Wave Bounded DAG 与 `redteam_agent_slot` 并发闸门开始派发与闭环编排。',
+        '请主控 Captain 按照 4-Wave Bounded DAG 与 `lmt_agent_slot` 并发闸门开始派发与闭环编排。',
       ].filter(Boolean).join('\n')
     }
     try {
@@ -508,6 +583,7 @@ export async function dispatchWorkflowToDshAgents(ctx, store, opts = {}, deps = 
     mode: effectiveMode,
     provider: policy.subagentProvider || 'spawn',
     spawned,
+    budget,
     ...(errors.length > 0 ? { errors } : {}),
     captainNotified,
     rootAgentId: rootAgent ? rootAgent.id : null,
@@ -516,9 +592,8 @@ export async function dispatchWorkflowToDshAgents(ctx, store, opts = {}, deps = 
 }
 
 /**
- * 审批通过 Wave k 任务后，若开启了 `dispatchPolicy.autoAdvanceWave` 且 Wave k 全部任务均已
- * `done` / `approved` / `completed`，自动拉起 Wave k + 1 的排队任务（受 `maxAgents` 限制）
- * 并通过 `sendRootFollowupMessage` 通知主代理 Captain。
+ * 审批通过任务后自动推进下一波次（或启用 `speculativeWaveDispatch` 时按 `computeReadyTasksForPipeline` 推测推进所有非重叠可就绪下游节点），
+ * 并在执行前强制校验 `evaluateWorkspaceBudgetGuard`。
  */
 export async function advanceNextWaveIfReady(ctx, store, opts = {}, deps = {}) {
   const resolveSettingsRoot = deps.resolveRedteamSettingsRoot || ((r) => (typeof r === 'string' ? r : ''))
@@ -526,7 +601,14 @@ export async function advanceNextWaveIfReady(ctx, store, opts = {}, deps = {}) {
     maxAgents: 6,
     thinkingEffort: 'low',
     maxDepth: 3,
-    dispatchPolicy: deps.defaultDispatchPolicy || { dispatchMode: 'hybrid_auto', subagentProvider: 'spawn', autoWakeOnApprove: true, autoAdvanceWave: false },
+    dispatchPolicy: deps.defaultDispatchPolicy || {
+      dispatchMode: 'hybrid_auto',
+      subagentProvider: 'spawn',
+      autoWakeOnApprove: true,
+      autoAdvanceWave: false,
+      speculativeWaveDispatch: false,
+      maxAutoRetries: 1,
+    },
   }))
   const parseWave = deps.parseWaveNumber || defaultParseWaveNumber
   const parseArr = deps.parseJsonArraySafe || defaultParseJsonArraySafe
@@ -547,46 +629,94 @@ export async function advanceNextWaveIfReady(ctx, store, opts = {}, deps = {}) {
     return { triggered: false, reason: 'missing_engagement', spawned: [] }
   }
 
+  const dag = opts.dag || (store && typeof store.workflowDag === 'function' ? store.workflowDag(engId) : null)
+  const usage = computeWorkspaceUsage(dag, opts.hostSessions, { usage: opts.usage })
+  const budget = evaluateWorkspaceBudgetGuard(usage, policy)
+  if (budget.tripped && !opts.allowOverrideBudget) {
+    return {
+      ok: false,
+      triggered: false,
+      reason: 'budget_exceeded',
+      budget_exceeded: true,
+      budget,
+      spawned: [],
+      error: budget.reason || '工作区 Token 或费用预算已达上限，已停止自动推进',
+    }
+  }
+
   const currentWave = opts.currentWave
     ? parseWave(opts.currentWave, 0)
     : (opts.approvedTask ? parseWave(opts.approvedTask.wave ?? opts.approvedTask.wave_key, 0) : 0)
-  if (currentWave < 1) {
-    return { triggered: false, reason: 'unknown_wave', spawned: [] }
-  }
 
-  const dag = opts.dag || (store && typeof store.workflowDag === 'function' ? store.workflowDag(engId) : null)
   const tasks = dag && Array.isArray(dag.worker_tasks) ? dag.worker_tasks : []
-  const waveKTasks = tasks.filter((t) => t && parseWave(t.wave ?? t.wave_key, 0) === currentWave)
-  if (waveKTasks.length === 0) {
-    return { triggered: false, reason: 'no_wave_tasks', currentWave, spawned: [] }
-  }
-
-  const DONE_STATUSES = new Set(['done', 'approved', 'completed'])
-  const allWaveKDone = waveKTasks.every((t) => {
-    const st = String(t.status || '').trim().toLowerCase()
-    const ap = String(t.approval_state || '').trim().toLowerCase()
-    return DONE_STATUSES.has(st) || ap === 'approved'
-  })
-  if (!allWaveKDone) {
-    return { triggered: false, reason: 'wave_incomplete', currentWave, spawned: [] }
-  }
-
-  const nextWave = currentWave + 1
   const maxAgents = Math.max(1, Number(settings.maxAgents) || 6)
-  const SKIP_NEXT_STATUSES = new Set(['completed', 'done', 'finished', 'approved', 'cancelled', 'archived'])
-  const nextWaveTargets = tasks
-    .filter((t) => {
-      if (!t || typeof t !== 'object') return false
-      if (parseWave(t.wave ?? t.wave_key, 0) !== nextWave) return false
-      const st = String(t.status || '').trim().toLowerCase()
-      if (SKIP_NEXT_STATUSES.has(st)) return false
-      if (st === 'running' && isRealChildSessionId(ctx, t.session_id, deps)) return false
-      return true
-    })
-    .slice(0, maxAgents)
+  const runningCount = tasks.filter((t) => (
+    t && String(t.status || '').trim().toLowerCase() === 'running' && isRealChildSessionId(ctx, t.session_id, deps)
+  )).length
+  const availableSlots = Math.max(0, maxAgents - runningCount)
 
-  if (nextWaveTargets.length === 0) {
-    return { triggered: false, reason: 'no_next_wave_tasks', currentWave, nextWave, spawned: [] }
+  let nextWave = currentWave + 1
+  let nextWaveTargets = []
+
+  if (policy.speculativeWaveDispatch) {
+    const pipeline = computeReadyTasksForPipeline(dag || { worker_tasks: tasks }, Object.assign({}, policy, {
+      availableSlots,
+    }))
+    if (pipeline.cycleDetected) {
+      return {
+        triggered: false,
+        reason: 'dag_cycle_detected',
+        cycleNodes: pipeline.cycleNodes,
+        spawned: [],
+      }
+    }
+    nextWaveTargets = pipeline.readyTasks
+      .filter((t) => !(String(t.status || '').trim().toLowerCase() === 'running' && isRealChildSessionId(ctx, t.session_id, deps)))
+      .slice(0, maxAgents)
+    if (nextWaveTargets.length === 0) {
+      return {
+        triggered: false,
+        reason: pipeline.blockedByShardLock.length > 0 ? 'blocked_by_shard_lock' : 'no_ready_tasks',
+        currentWave,
+        pipeline,
+        spawned: [],
+      }
+    }
+    nextWave = parseWave(nextWaveTargets[0].wave ?? nextWaveTargets[0].wave_key, Math.max(1, currentWave) + 1)
+  } else {
+    if (currentWave < 1) {
+      return { triggered: false, reason: 'unknown_wave', spawned: [] }
+    }
+    const waveKTasks = tasks.filter((t) => t && parseWave(t.wave ?? t.wave_key, 0) === currentWave)
+    if (waveKTasks.length === 0) {
+      return { triggered: false, reason: 'no_wave_tasks', currentWave, spawned: [] }
+    }
+
+    const DONE_STATUSES = new Set(['done', 'approved', 'completed'])
+    const allWaveKDone = waveKTasks.every((t) => {
+      const st = String(t.status || '').trim().toLowerCase()
+      const ap = String(t.approval_state || '').trim().toLowerCase()
+      return DONE_STATUSES.has(st) || ap === 'approved'
+    })
+    if (!allWaveKDone) {
+      return { triggered: false, reason: 'wave_incomplete', currentWave, spawned: [] }
+    }
+
+    const SKIP_NEXT_STATUSES = new Set(['completed', 'done', 'finished', 'approved', 'cancelled', 'archived'])
+    nextWaveTargets = tasks
+      .filter((t) => {
+        if (!t || typeof t !== 'object') return false
+        if (parseWave(t.wave ?? t.wave_key, 0) !== nextWave) return false
+        const st = String(t.status || '').trim().toLowerCase()
+        if (SKIP_NEXT_STATUSES.has(st)) return false
+        if (st === 'running' && isRealChildSessionId(ctx, t.session_id, deps)) return false
+        return true
+      })
+      .slice(0, Math.max(1, availableSlots || maxAgents))
+
+    if (nextWaveTargets.length === 0) {
+      return { triggered: false, reason: 'no_next_wave_tasks', currentWave, nextWave, spawned: [] }
+    }
   }
 
   const sessionId = String(opts.sessionId || opts.session || '').trim()
@@ -615,6 +745,8 @@ export async function advanceNextWaveIfReady(ctx, store, opts = {}, deps = {}) {
         refinedPrompt: opts.refinedPrompt || '',
         maxDepth: settings.maxDepth,
         thinkingEffort: settings.thinkingEffort,
+        maxAutoRetries: policy.maxAutoRetries ?? 1,
+        retryDelayMs: opts.retryDelayMs,
         signal: opts.signal,
       }, deps)
       if (started && started.childId) {
@@ -649,11 +781,14 @@ export async function advanceNextWaveIfReady(ctx, store, opts = {}, deps = {}) {
 
   let captainNotified = false
   if (spawned.length > 0 && rootAgent && typeof rootAgent.followup === 'function') {
+    const modeTitle = policy.speculativeWaveDispatch
+      ? `【LMTAgent 控制台 · 推测 DAG 流水线自动推进下游可就绪节点】`
+      : `【LMTAgent 控制台 · Wave ${currentWave} 已全部审批，自动推进至 Wave ${nextWave}】`
     const syncText = [
-      `【LMTAgent 控制台 · Wave ${currentWave} 已全部审批，自动推进至 Wave ${nextWave}】`,
+      modeTitle,
       `- 项目工作区（engagement_id）：\`${engId}\``,
-      `以下 **Wave ${nextWave} 子代理已自动通过 \`subagents.startActivation\` 拉起**：`,
-      ...spawned.map((s) => `- [Wave ${nextWave} · ${s.role}] \`${s.worker_name}\` → childId: \`${s.childId}\`${s.files_owned.length ? ` · 分片: ${s.files_owned.join(', ')}` : ''}`),
+      `以下 **子代理已自动通过 \`subagents.startActivation\` 拉起**：`,
+      ...spawned.map((s) => `- [${s.wave || `Wave ${nextWave}`} · ${s.role}] \`${s.worker_name}\` → childId: \`${s.childId}\`${s.files_owned.length ? ` · 分片: ${s.files_owned.join(', ')}` : ''}`),
       '请主控 Captain 持续跟踪上述子代理执行与汇总状态。',
     ].join('\n')
     try {
@@ -664,9 +799,11 @@ export async function advanceNextWaveIfReady(ctx, store, opts = {}, deps = {}) {
 
   return {
     triggered: spawned.length > 0,
+    mode: policy.speculativeWaveDispatch ? 'speculative' : 'barrier',
     currentWave,
     nextWave,
     spawned,
+    budget,
     ...(errors.length > 0 ? { errors } : {}),
     captainNotified,
   }

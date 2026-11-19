@@ -1,37 +1,100 @@
     /* ---------------------------------------------------------- 04-workflow-deck：动态几何画布、节点编排与审批抽屉 */
     const HARNESS_DAG_WAVES = [
       {
-        wave: 'WAVE 0', sub: '主控调度',
+        wave: 'WAVE 0', sub: '主控调度', subEn: 'Orchestration',
         nodes: [
-          { id: 'plan', code: '⓪ plan', name: 'Captain 主控架构师', skill: '/dag-schedule', status: 'wait', statusLabel: '待命', slots: 'Orchestrator', thinking: 'high', docTitle: '00_PLAN_CHARTER.md', docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。' },
+          {
+            id: 'plan', code: '⓪ plan',
+            name: 'Captain 主控架构师', nameEn: 'Captain Orchestrator',
+            skill: '/dag-schedule', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Orchestrator', thinking: 'high', docTitle: '00_PLAN_CHARTER.md',
+            docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。',
+            docBodyEn: '# ⓪ Captain Charter & 4-Wave DAG Scheduling\n\n- Mode: 4-Wave Bounded DAG (6 concurrent slots default, up to 12)\n- Delegation: Subagents may spawn micro-workers (maxDepth = 3, thinking = low)\n- Persistence: Synced to PostgreSQL / SQLite fact store with checkpoint resume.',
+          },
         ],
       },
       {
-        wave: 'WAVE 1', sub: '2 槽双轨立项',
+        wave: 'WAVE 1', sub: '2 槽双轨立项', subEn: '2-Slot Discovery',
         nodes: [
-          { id: 'recon', code: '① recon', name: 'CEO 产品与需求规划', skill: '/office-hours · /plan-ceo-review', status: 'wait', statusLabel: '待命', slots: 'Slot #1', thinking: 'low', docTitle: '01_CEO_PRD_AND_SURFACE.md', docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO modules（实时同步）' },
-          { id: 'designer', code: '② designer', name: 'Designer 交互与视觉', skill: '/plan-design-review · /design-shotgun', status: 'wait', statusLabel: '待命', slots: 'Slot #2', thinking: 'low', docTitle: '02_DESIGN_SYSTEM_BENTO.md', docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + 主题自适应探针 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。' },
+          {
+            id: 'recon', code: '① recon',
+            name: 'CEO 产品与需求规划', nameEn: 'CEO Product & Planning',
+            skill: '/office-hours · /plan-ceo-review', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Slot #1', thinking: 'low', docTitle: '01_CEO_PRD_AND_SURFACE.md',
+            docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO modules（实时同步）',
+            docBodyEn: '# ① CEO PRD & Module Surface Mapping\n\n- Skills: /office-hours + /plan-ceo-review\n- Outputs: P0/P1 module priorities, repo topology & interface boundaries\n- Store Sync: INSERT INTO modules (live)',
+          },
+          {
+            id: 'designer', code: '② designer',
+            name: 'Designer 交互与视觉', nameEn: 'Designer UX & Visuals',
+            skill: '/plan-design-review · /design-shotgun', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Slot #2', thinking: 'low', docTitle: '02_DESIGN_SYSTEM_BENTO.md',
+            docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + 主题自适应探针 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。',
+            docBodyEn: '# ② Designer Modular Bento UI & Interaction Spec\n\n- Skills: /plan-design-review + /design-shotgun\n- Visuals: DSH Brand Blue (#4D6BFE), adaptive theme tokens & live DAG canvas\n- States: Data / Empty / Error coverage with full keyboard accessibility.',
+          },
         ],
       },
       {
-        wave: 'WAVE 2', sub: '1 槽契约锁',
+        wave: 'WAVE 2', sub: '1 槽契约锁', subEn: '1-Slot Contract Lock',
         nodes: [
-          { id: 'assess', code: '③ assess', name: 'Eng Manager 架构与分片', skill: '/plan-eng-review', status: 'wait', statusLabel: '待命', slots: 'Slot #1 (Lock)', thinking: 'low', docTitle: '03_ENG_SHARD_CONTRACT.md', docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：写入 dag_nodes 检查点，支持单分片失败独立重试。' },
+          {
+            id: 'assess', code: '③ assess',
+            name: 'Eng Manager 架构与分片', nameEn: 'Eng Manager Architecture & Shards',
+            skill: '/plan-eng-review', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Slot #1 (Lock)', thinking: 'low', docTitle: '03_ENG_SHARD_CONTRACT.md',
+            docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：写入 dag_nodes 检查点，支持单分片失败独立重试。',
+            docBodyEn: '# ③ Eng Manager Interface Contracts & File-Disjoint Shards\n\n- Skills: /plan-eng-review\n- Sharding: File-Disjoint Sharding across up to 6 parallel builder slots\n- Checkpoints: Persisted in dag_nodes for isolated per-shard retry.',
+          },
         ],
       },
       {
-        wave: 'WAVE 3', sub: '6 槽并发构建',
+        wave: 'WAVE 3', sub: '6 槽并发构建', subEn: '6-Slot Parallel Build',
         nodes: [
-          { id: 'exploit', code: '⑤ exploit #1..#6', name: 'Builder 全栈分片构建', skill: '/parallel-build · 6 Slots', status: 'wait', statusLabel: '待命', slots: 'Slots #1–#6', thinking: 'low', docTitle: '04_BUILDER_SHARDS_LOG.md', docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 并行编码与单元验证\n- 递归子代理：按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO sharded_files（极速落盘）' },
-          { id: 'subworker', code: '↳ sub-worker', name: '递归子代理 (thinking: low)', skill: 'maxDepth=3 · 微任务分解', status: 'wait', statusLabel: '待命', slots: 'Child Workers', thinking: 'low', isSub: true, docTitle: '05_RECURSIVE_SUBAGENTS.md', docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/接口对齐微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。' },
+          {
+            id: 'exploit', code: '⑤ exploit #1..#6',
+            name: 'Builder 全栈分片构建', nameEn: 'Builder Parallel Shards',
+            skill: '/parallel-build · 6 Slots', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Slots #1–#6', thinking: 'low', docTitle: '04_BUILDER_SHARDS_LOG.md',
+            docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 并行编码与单元验证\n- 递归子代理：按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO sharded_files（极速落盘）',
+            docBodyEn: '# ⑤ Builder 6-Slot Parallel Implementation Log\n\n- Concurrency: Parallel coding & unit tests across Slots #1–#6\n- Sub-Workers: Spawn recursive workers for micro-tasks (maxDepth=3, thinking=low)\n- Store Sync: INSERT INTO sharded_files',
+          },
+          {
+            id: 'subworker', code: '↳ sub-worker',
+            name: '递归子代理 (thinking: low)', nameEn: 'Recursive Sub-Worker (thinking: low)',
+            skill: 'maxDepth=3 · 微任务分解', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Child Workers', thinking: 'low', isSub: true, docTitle: '05_RECURSIVE_SUBAGENTS.md',
+            docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/接口对齐微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。',
+            docBodyEn: '# ↳ Recursive Sub-Workers Execution Stack\n\n- Strategy: Parent builders spawn child workers for focused type fixes or tests\n- Thinking: Default thinking = low for low latency\n- Guardrail: maxDepth = 3, digests bubble back to parent shard.',
+          },
         ],
       },
       {
-        wave: 'WAVE 4', sub: '双轨门禁交付',
+        wave: 'WAVE 4', sub: '双轨门禁交付', subEn: 'Dual-Gate Release',
         nodes: [
-          { id: 'vuln-scan', code: '④ vuln-scan', name: 'Reviewer & CSO 代码审查', skill: '/review · /cso', status: 'wait', statusLabel: '待命', slots: 'Gate #1', thinking: 'low', docTitle: '06_CSO_SECURITY_REVIEW.md', docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、架构边界审查、安全规范门禁\n- 结论同步：UPDATE code_audits（通过后放行发布）。' },
-          { id: 'qa', code: '⑥ qa', name: 'QA Lead 自动化回归', skill: '/qa · /benchmark', status: 'wait', statusLabel: '待命', slots: 'Gate #2', thinking: 'low', docTitle: '07_QA_BENCHMARK_GATE.md', docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO qa_runs（全部断言通过）。' },
-          { id: 'internal', code: '⑦ internal', name: 'Doc & Release 归档发布', skill: '/ship · /document-release', status: 'wait', statusLabel: '待命', slots: 'Release Slot', thinking: 'low', docTitle: '08_FINAL_RELEASE_NOTE.md', docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化研发交付报告并触发飞书群聊机器人通知。' },
+          {
+            id: 'vuln-scan', code: '④ vuln-scan',
+            name: 'Reviewer & CSO 代码审查', nameEn: 'Reviewer & CSO Audit',
+            skill: '/review · /cso', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Gate #1', thinking: 'low', docTitle: '06_CSO_SECURITY_REVIEW.md',
+            docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、架构边界审查、安全规范门禁\n- 结论同步：UPDATE code_audits（通过后放行发布）。',
+            docBodyEn: '# ④ Reviewer & CSO Quality & Security Audit\n\n- Skills: /review + /cso\n- Scope: Static analysis, architecture boundaries & security gates\n- Sync: UPDATE code_audits',
+          },
+          {
+            id: 'qa', code: '⑥ qa',
+            name: 'QA Lead 自动化回归', nameEn: 'QA Lead Automated Gate',
+            skill: '/qa · /benchmark', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Gate #2', thinking: 'low', docTitle: '07_QA_BENCHMARK_GATE.md',
+            docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO qa_runs（全部断言通过）。',
+            docBodyEn: '# ⑥ QA Lead Regression & Benchmark Gate\n\n- Skills: /qa + /benchmark\n- Coverage: Client render tests, bundle contracts & DB consistency checks\n- Gate: INSERT INTO qa_runs',
+          },
+          {
+            id: 'internal', code: '⑦ internal',
+            name: 'Doc & Release 归档发布', nameEn: 'Doc & Release Shipper',
+            skill: '/ship · /document-release', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Release Slot', thinking: 'low', docTitle: '08_FINAL_RELEASE_NOTE.md',
+            docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化研发交付报告并触发飞书群聊机器人通知。',
+            docBodyEn: '# ⑦ Doc & Release Final Delivery & Notifications\n\n- Skills: /ship + /document-release\n- Closure: Aggregate Wave 1–4 deliverables, build structured delivery report & notify webhooks.',
+          },
         ],
       },
     ]
@@ -42,53 +105,67 @@
 
     const _p4RoleDefaults = {
       defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-      defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
-      filesTouched: [], nextGoal: '继续推进下一波次契约验证与回归闭环',
+      defaultDur: '待命', defaultDurEn: 'Idle', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
+      filesTouched: [], nextGoal: '继续推进下一波次契约验证与回归闭环', nextGoalEn: 'Proceed to next wave contract verification & regression closure',
     }
     const _defP4Role = (spec) => Object.assign({}, _p4RoleDefaults, spec)
 
     const P4_ROLE_META = {
       designer: _defP4Role({
         wave: 1, role: 'designer', avatar: 'WD', color: '#ef4444',
-        defaultTitle: 'Wave1 designer 交互与设计',
+        defaultTitle: 'Wave1 designer 交互与设计', defaultTitleEn: 'Wave1 designer UX & Design',
         prompt: '基于项目需求梳理模块化 Bento UI 布局、设计令牌与交互视图规范。',
-        output: '等待执行交互与视觉设计任务。', whatWasDone: '交互与视觉规范分片已就绪。',
+        promptEn: 'Define modular Bento UI layout, design tokens, and interaction specs.',
+        output: '等待执行交互与视觉设计任务。', outputEn: 'Awaiting UX & visual design execution.',
+        whatWasDone: '交互与视觉规范分片已就绪。', whatWasDoneEn: 'UX & visual design shard ready.',
       }),
       recon: _defP4Role({
         wave: 1, role: 'recon', avatar: 'WR', color: '#10b981',
-        defaultTitle: 'Wave1 recon 产品与需求',
+        defaultTitle: 'Wave1 recon 产品与需求', defaultTitleEn: 'Wave1 recon Product & Specs',
         prompt: '盘点目标项目全量业务模块、数据接口与核心功能优先级。',
-        output: '等待执行需求拆解与数据源测绘。', whatWasDone: '产品与数据源测绘分片已就绪。',
+        promptEn: 'Catalog project modules, API contracts, and P0/P1 priorities.',
+        output: '等待执行需求拆解与数据源测绘。', outputEn: 'Awaiting requirement analysis & surface mapping.',
+        whatWasDone: '产品与数据源测绘分片已就绪。', whatWasDoneEn: 'Product & surface mapping shard ready.',
       }),
       assess: _defP4Role({
         wave: 2, role: 'assess', avatar: 'WA', color: '#8b5cf6',
-        defaultTitle: 'Wave2 assess 架构与分片',
+        defaultTitle: 'Wave2 assess 架构与分片', defaultTitleEn: 'Wave2 assess Architecture & Shards',
         prompt: '基于 Wave 1 需求与设计产出，冻结模块接口契约并划分独占文件分片。',
-        output: '等待锁定模块接口契约与独占文件分片。', whatWasDone: '系统架构与分片边界待锁定。',
+        promptEn: 'Freeze module interface contracts and partition exclusive file shards from Wave 1 outputs.',
+        output: '等待锁定模块接口契约与独占文件分片。', outputEn: 'Awaiting contract freeze & shard assignment.',
+        whatWasDone: '系统架构与分片边界待锁定。', whatWasDoneEn: 'Architecture & shard boundaries pending lock.',
       }),
       exploit: _defP4Role({
         wave: 3, role: 'exploit', avatar: 'WB', color: '#3b82f6',
-        defaultTitle: 'Wave3 exploit 分片构建',
+        defaultTitle: 'Wave3 exploit 分片构建', defaultTitleEn: 'Wave3 exploit Parallel Build',
         prompt: '在独占文件分片内执行全栈编码实现与单元测试自检。',
-        output: '等待执行分片代码构建与自检。', whatWasDone: '分片编码实现与单元验证就绪。',
+        promptEn: 'Implement full-stack code and unit self-checks inside owned file shards.',
+        output: '等待执行分片代码构建与自检。', outputEn: 'Awaiting shard build & self-check.',
+        whatWasDone: '分片编码实现与单元验证就绪。', whatWasDoneEn: 'Shard implementation & verification ready.',
       }),
       'vuln-scan': _defP4Role({
         wave: 4, role: 'vuln-scan', avatar: 'WC', color: '#f59e0b',
-        defaultTitle: 'Wave4 vuln-scan 代码审查',
+        defaultTitle: 'Wave4 vuln-scan 代码审查', defaultTitleEn: 'Wave4 vuln-scan Code Review',
         prompt: '对各分片代码变更执行静态缺陷审查、架构边界复核与安全门禁审计。',
-        output: '等待执行代码审查与安全门禁校验。', whatWasDone: '代码审查与安全门禁就绪。',
+        promptEn: 'Run static defect review, boundary checks, and security gate audits.',
+        output: '等待执行代码审查与安全门禁校验。', outputEn: 'Awaiting code review & security gate.',
+        whatWasDone: '代码审查与安全门禁就绪。', whatWasDoneEn: 'Code review & security gate ready.',
       }),
       qa: _defP4Role({
         wave: 4, role: 'qa', avatar: 'WQ', color: '#06b6d4',
-        defaultTitle: 'Wave4 qa 自动化回归',
+        defaultTitle: 'Wave4 qa 自动化回归', defaultTitleEn: 'Wave4 qa Automated QA',
         prompt: '运行全量单元测试、UI 渲染冒烟测试与打包一致性断言。',
-        output: '等待运行自动化测试套件与回归校验。', whatWasDone: '自动化回归测试套件就绪。',
+        promptEn: 'Run full unit tests, UI render smoke checks, and bundle assertions.',
+        output: '等待运行自动化测试套件与回归校验。', outputEn: 'Awaiting automated test suite & regression checks.',
+        whatWasDone: '自动化回归测试套件就绪。', whatWasDoneEn: 'Automated QA regression suite ready.',
       }),
       internal: _defP4Role({
         wave: 4, role: 'internal', avatar: 'WI', color: '#ec4899',
-        defaultTitle: 'Wave4 internal 归档发布',
+        defaultTitle: 'Wave4 internal 归档发布', defaultTitleEn: 'Wave4 internal Docs & Release',
         prompt: '汇总 Wave 1–4 研发产物与交付里程碑，生成结构化交付报告。',
-        output: '等待汇总研发交付报告与归档。', whatWasDone: '归档发布与交付报告就绪。',
+        promptEn: 'Aggregate Wave 1–4 deliverables and milestones into structured release report.',
+        output: '等待汇总研发交付报告与归档。', outputEn: 'Awaiting release report & archival.',
+        whatWasDone: '归档发布与交付报告就绪。', whatWasDoneEn: 'Release & delivery report ready.',
       }),
     }
 
@@ -538,6 +615,7 @@
     }
 
     function HarnessWorkflowDeck(props) {
+      useLocale()
       const eng = props.engagement || null
       const variant = props.variant === 'cluster' ? 'cluster' : (props.variant || 'overview')
       const isClusterVariant = variant === 'cluster'
@@ -645,33 +723,35 @@
 
       const dynamicWaves = HARNESS_DAG_WAVES.map((w) => ({
         wave: w.wave,
-        sub: w.sub,
+        sub: t(w.sub, w.subEn),
         nodes: w.nodes.map((n) => {
           const dn = dagNodesById.get(n.id)
           const dnStatus = dn ? String(dn.status || '').toLowerCase() : ''
           const isRunningSub = runningAgents.some((ra) => String(ra.label || '').toLowerCase().includes(n.id))
           let status = 'wait'
-          let statusLabel = '待命'
+          let statusLabel = t('待命', 'Idle')
           if (['error', 'failed', 'blocked', 'timeout', 'shard_violation'].includes(dnStatus)) {
             status = 'error'
-            statusLabel = '异常待修复'
+            statusLabel = t('异常待修复', 'Needs Fix')
           } else if (isRunningSub || dnStatus === 'running') {
             status = 'run'
-            statusLabel = '运行中'
+            statusLabel = t('运行中', 'Running')
           } else if (dn && (dnStatus === 'done' || dnStatus === 'completed' || (Number(dn.steps) || 0) > 0)) {
             status = 'done'
-            statusLabel = '已完成 (' + (dn.steps || 1) + '步)'
+            statusLabel = t('已完成 (' + (dn.steps || 1) + '步)', 'Done (' + (dn.steps || 1) + ' steps)')
           } else if (n.id === 'recon' && (Number(stats.assets) || 0) > 0) {
             status = 'done'
-            statusLabel = '已测绘 (' + stats.assets + ')'
+            statusLabel = t('已测绘 (' + stats.assets + ')', 'Mapped (' + stats.assets + ')')
           } else if (n.id === 'vuln-scan' && (Number(stats.vulns) || 0) > 0) {
             status = 'done'
-            statusLabel = '已审查 (' + stats.vulns + ')'
+            statusLabel = t('已审查 (' + stats.vulns + ')', 'Reviewed (' + stats.vulns + ')')
           } else if (n.id === 'exploit' && (Number(stats.steps) || 0) > 0) {
             status = 'done'
-            statusLabel = '已执行 (' + stats.steps + '步)'
+            statusLabel = t('已执行 (' + stats.steps + '步)', 'Executed (' + stats.steps + ' steps)')
           }
           return Object.assign({}, n, {
+            name: t(n.name, n.nameEn),
+            docBody: t(n.docBody, n.docBodyEn),
             status,
             statusLabel,
             lastDecision: (dn && (dn.last_decision || dn.summary || dn.note)) || null,
@@ -687,7 +767,7 @@
         if (!raw) return
         const roleKey = inferChildRole(raw.role || raw.agent_role, raw.title || raw.label || raw.name)
         const meta = P4_ROLE_META[roleKey] || P4_ROLE_META.assess
-        const title = String(raw.title || raw.label || raw.name || meta.defaultTitle).trim()
+        const title = String(raw.title || raw.label || raw.name || t(meta.defaultTitle, meta.defaultTitleEn)).trim()
         const explicitId = String(raw.id || raw.worker_id || raw.workerId || '').trim()
         const dedupKey = explicitId ? ('id:' + explicitId) : (roleKey + ':' + title)
         if (seenChildKeys.has(dedupKey)) return
@@ -704,7 +784,7 @@
           ? (String(raw.tokenLabel).toLowerCase().includes('tok') ? String(raw.tokenLabel) : String(raw.tokenLabel) + ' tok')
           : (fmtTokNum(tokVal) + ' tok')
         const costVal = raw.costLabel || (tokVal > 0 ? ('¥' + Math.max(0.01, (tokVal / 1000000) * 1.8).toFixed(2)) : '¥0.00')
-        const durLbl = raw.durationLabel || raw.duration || (isErr ? '异常中断' : (isRun ? '运行中' : (isPending ? '待调度' : '已完成')))
+        const durLbl = raw.durationLabel || raw.duration || (isErr ? t('异常中断', 'Failed') : (isRun ? t('运行中', 'Running') : (isPending ? t('待调度', 'Queued') : t('已完成', 'Done'))))
         const stepsVal = Number(raw.steps) || 0
         const ctxPctVal = raw.ctxPct || meta.defaultPct
         const color = isErr
@@ -737,22 +817,22 @@
           || raw.prompt
           || raw.inputPrompt
           || raw.task
-          || meta.prompt
+          || t(meta.prompt, meta.promptEn)
 
         const digestObj = (raw.compressedDigest && typeof raw.compressedDigest === 'object')
           ? {
-              whatWasDone: raw.compressedDigest.whatWasDone || raw.output || (isErr ? (raw.error || '执行异常，等待修复或重跑分片') : (isPending ? assignedGoalStr : meta.whatWasDone)),
+              whatWasDone: raw.compressedDigest.whatWasDone || raw.output || (isErr ? (raw.error || t('执行异常，等待修复或重跑分片', 'Execution error, awaiting fix or retry')) : (isPending ? assignedGoalStr : t(meta.whatWasDone, meta.whatWasDoneEn))),
               filesTouched: Array.isArray(raw.compressedDigest.filesTouched) && raw.compressedDigest.filesTouched.length > 0
                 ? raw.compressedDigest.filesTouched
                 : rawFilesOwned,
             }
           : {
-              whatWasDone: raw.whatWasDone || raw.output || raw.summary || (isErr ? (raw.error || '执行异常，等待修复或重跑分片') : (isPending ? assignedGoalStr : meta.whatWasDone)),
+              whatWasDone: raw.whatWasDone || raw.output || raw.summary || (isErr ? (raw.error || t('执行异常，等待修复或重跑分片', 'Execution error, awaiting fix or retry')) : (isPending ? assignedGoalStr : t(meta.whatWasDone, meta.whatWasDoneEn))),
               filesTouched: rawFilesOwned,
             }
 
         const resolvedStatus = isErr ? 'error' : (isRun ? 'running' : (isPending ? 'pending' : 'done'))
-        const resolvedStatusLabel = isErr ? '异常待修复' : (isRun ? '运行中' : (isPending ? '待执行' : '已完成'))
+        const resolvedStatusLabel = isErr ? t('异常待修复', 'Needs Fix') : (isRun ? t('运行中', 'Running') : (isPending ? t('待执行', 'Pending') : t('已完成', 'Done')))
 
         fusedChildren.push({
           id: childId,
@@ -760,7 +840,7 @@
           name: title,
           wave: Number(raw.wave) || (waveMatch ? Number(waveMatch[1]) : meta.wave),
           role: roleKey,
-          roleLabel: ROLE_LABEL[roleKey] || roleKey,
+          roleLabel: roleLabel(roleKey),
           avatar: avatar,
           color: color,
           title: title,
@@ -774,7 +854,7 @@
           compressedDigest: digestObj,
           assignedGoal: assignedGoalStr,
           filesOwned: rawFilesOwned,
-          nextGoal: (overrideApproval && overrideApproval.nextGoal) || raw.nextGoal || raw.next_goal || meta.nextGoal || '继续推进下一波次契约验证与回归闭环',
+          nextGoal: (overrideApproval && overrideApproval.nextGoal) || raw.nextGoal || raw.next_goal || t(meta.nextGoal, meta.nextGoalEn),
           tokenLabel: tokLbl,
           costLabel: costVal,
           durationLabel: durLbl,
@@ -782,7 +862,7 @@
           ctxPct: ctxPctVal,
           prompt: assignedGoalStr,
           inputPrompt: assignedGoalStr,
-          output: raw.output || raw.summary || raw.lastDecision || digestObj.whatWasDone || meta.output,
+          output: raw.output || raw.summary || raw.lastDecision || digestObj.whatWasDone || t(meta.output, meta.outputEn),
         })
       }
 
@@ -801,10 +881,10 @@
             id: ra.id || ra.sessionId,
             sessionId: ra.sessionId || ra.id,
             role: inferChildRole(ra.role, ra.label),
-            title: ra.label || 'Wave2 assess 架构与分片',
+            title: ra.label || t('Wave2 assess 架构与分片', 'Wave2 assess Architecture & Shards'),
             status: 'running',
             tokenLabel: ra.tokenLabel,
-            durationLabel: ra.durationLabel || '运行中',
+            durationLabel: ra.durationLabel || t('运行中', 'Running'),
           })
         }
         if (dagState) {
@@ -834,7 +914,7 @@
                   id: dn.worker_id || dn.id,
                   role: dn.role || dn.id,
                   wave: dn.wave,
-                  title: dn.title || dn.name || (P4_ROLE_META[dn.id] && P4_ROLE_META[dn.id].defaultTitle),
+                  title: dn.title || dn.name || (P4_ROLE_META[dn.id] && t(P4_ROLE_META[dn.id].defaultTitle, P4_ROLE_META[dn.id].defaultTitleEn)),
                   status: st,
                   steps: dn.steps,
                   assigned_goal: dn.assigned_goal || dn.prompt,
@@ -880,8 +960,8 @@
       const activeHostSess = hostSessions.find((hs) => hs.id === (sessionId || domTel.sessionId)) || hostSessions[0] || null
       const workspaceDisplayTitle = (props.engagementName && !isRawUuidName(props.engagementName) ? props.engagementName : null)
         || (snapshot && snapshot.engagement && snapshot.engagement.name && !isRawUuidName(snapshot.engagement.name) ? snapshot.engagement.name : null)
-        || (eng ? ((activeHostSess && (activeHostSess.displayLabel || activeHostSess.title)) || sessionTitle || eng) : (sessionTitle || '待初始化会话'))
-        || 'LMTAgent 主控工作台'
+        || (eng ? ((activeHostSess && (activeHostSess.displayLabel || activeHostSess.title)) || sessionTitle || eng) : (sessionTitle || t('待初始化会话', 'Pending Session')))
+        || t('LMTAgent 主控工作台', 'LMTAgent Workbench')
       const rootTokens = domTel.tokens > 0
         ? domTel.tokens
         : ((activeHostSess && activeHostSess.tokens > 0) ? activeHostSess.tokens : 0)
@@ -892,8 +972,8 @@
       const rootSteps = domTel.steps > 0
         ? domTel.steps
         : ((activeHostSess && activeHostSess.steps > 0) ? activeHostSess.steps : (Number(stats.steps) || 0))
-      const rootDuration = (activeHostSess && activeHostSess.durationLabel) || (rootSteps > 0 ? '实时同步' : '待命')
-      const rootCtxPct = domTel.contextPct || (rootTokens > 0 ? '实时' : '0%')
+      const rootDuration = (activeHostSess && activeHostSess.durationLabel) || (rootSteps > 0 ? t('实时同步', 'Live Sync') : t('待命', 'Idle'))
+      const rootCtxPct = domTel.contextPct || (rootTokens > 0 ? t('实时', 'Live') : '0%')
       const childTokSum = fusedChildren.reduce((s, c) => s + (Number(c.tokens) || 0), 0)
       const ctxSumLabel = fmtTokNum((parseTokNum(domTel.contextUsedLabel) || rootTokens) + childTokSum)
       const totalAgents = eng ? (1 + fusedChildren.length) : 0
@@ -925,7 +1005,7 @@
 
       const visibleLanes = [
         {
-          id: 'root', avatar: '主控', title: workspaceDisplayTitle, color: '#3b82f6', isRoot: true,
+          id: 'root', avatar: t('主控', 'Lead'), title: workspaceDisplayTitle, color: '#3b82f6', isRoot: true,
           wave: 0, role: 'plan',
           compressionPct: fusedChildren.length > 0 ? 85 : 0, approvalState: 'approved', tokenLabel: rootTokensLabel,
         },
@@ -942,8 +1022,8 @@
         status: c.status === 'running' ? 'run' : (c.status === 'pending' || c.status === 'error' ? 'wait' : 'done'),
         rawStatus: c.status,
         statusBadge: c.status === 'error'
-          ? '异常待修复'
-          : (c.status === 'running' ? '● 进行中' : (c.status === 'pending' ? '○ 待执行' : '● 已完成')),
+          ? t('异常待修复', 'Needs Fix')
+          : (c.status === 'running' ? t('● 进行中', '● Running') : (c.status === 'pending' ? t('○ 待执行', '○ Pending') : t('● 已完成', '● Done'))),
         prompt: c.prompt, output: c.output, tokenLabel: c.tokenLabel, durationLabel: c.durationLabel, steps: c.steps,
         assignedGoal: c.assignedGoal, filesOwned: c.filesOwned,
       }))
@@ -1161,10 +1241,10 @@
       const treeZoom = Math.round((panZoom.scale || 1) * 100)
 
       const P4_WAVE_META = [
-        { id: 1, wave: 1, shortLabel: 'Wave 1', subTitle: '立项与需求探索', title: 'Wave 1 · 立项与需求探索', color: '#ec4899' },
-        { id: 2, wave: 2, shortLabel: 'Wave 2', subTitle: '架构与数据契约', title: 'Wave 2 · 架构与数据契约', color: '#f59e0b' },
-        { id: 3, wave: 3, shortLabel: 'Wave 3', subTitle: '并发分片构建', title: 'Wave 3 · 并发分片构建', color: '#3b82f6' },
-        { id: 4, wave: 4, shortLabel: 'Wave 4', subTitle: '审查修复与质量门禁', title: 'Wave 4 · 审查修复与质量门禁', color: '#10b981' },
+        { id: 1, wave: 1, shortLabel: 'Wave 1', subTitle: t('立项与需求探索', 'Discovery & Specs'), title: t('Wave 1 · 立项与需求探索', 'Wave 1 · Discovery & Specs'), color: '#ec4899' },
+        { id: 2, wave: 2, shortLabel: 'Wave 2', subTitle: t('架构与数据契约', 'Architecture & Contracts'), title: t('Wave 2 · 架构与数据契约', 'Wave 2 · Architecture & Contracts'), color: '#f59e0b' },
+        { id: 3, wave: 3, shortLabel: 'Wave 3', subTitle: t('并发分片构建', 'Parallel Build'), title: t('Wave 3 · 并发分片构建', 'Wave 3 · Parallel Build'), color: '#3b82f6' },
+        { id: 4, wave: 4, shortLabel: 'Wave 4', subTitle: t('审查修复与质量门禁', 'Review & QA Gate'), title: t('Wave 4 · 审查修复与质量门禁', 'Wave 4 · Review & QA Gate'), color: '#10b981' },
       ]
 
       const waveGroupsAll = P4_WAVE_META.map((wm) => {
@@ -1180,7 +1260,7 @@
         return {
           id: wm.wave,
           wave: wm.wave,
-          shortLabel: isNovice ? ('步骤 ' + wm.wave) : wm.shortLabel,
+          shortLabel: isNovice ? (t('步骤 ', 'Step ') + wm.wave) : wm.shortLabel,
           subTitle: wm.subTitle,
           title: formatWaveHeaderByMode(wm.wave, wm.title, uiMode),
           color: errorInWave > 0 ? '#ef4444' : wm.color,
@@ -1379,7 +1459,7 @@
         if (!targetAgent || targetAgent.isRoot || dispatchingId) return
         const targetId = targetAgent.id
         setDispatchingId(targetId)
-        setToast('正在拉起子代理分片：' + (targetAgent.title || targetId) + '…')
+        setToast(t('正在拉起子代理分片：', 'Dispatching shard: ') + (targetAgent.title || targetId) + '…')
         api({
           op: 'dispatchWorkerTask',
           engagement_id: activeEngagementId,
@@ -1394,21 +1474,21 @@
         }).then((res) => {
           setDispatchingId(null)
           if (!res || res.ok === false) {
-            setToast('拉起子代理失败：' + ((res && (res.message || res.error)) || '后端返回异常'))
+            setToast(t('拉起子代理失败：', 'Dispatch failed: ') + ((res && (res.message || res.error)) || t('后端返回异常', 'Backend error')))
             return
           }
           const sid = res.session_id || res.sessionId || (res.child && (res.child.session_id || res.child.id)) || (res.worker && res.worker.session_id) || ''
-          setToast(res.note || ('已拉起执行：' + (targetAgent.title || targetId) + (sid ? ('（子会话 ' + sid + '）') : '')))
+          setToast(res.note || (t('已拉起执行：', 'Dispatched: ') + (targetAgent.title || targetId) + (sid ? (t('（子会话 ', ' (session ') + sid + t('）', ')')) : '')))
           reloadDag()
         }, () => {
           setDispatchingId(null)
-          setToast('拉起子代理失败：请求异常')
+          setToast(t('拉起子代理失败：请求异常', 'Dispatch failed: request error'))
         })
       }
 
       const handleCreateCustomShard = () => {
         const titleStr = String(newShardTitle || '').trim()
-        if (!titleStr) { setToast('请填写新增分片节点的标题'); return }
+        if (!titleStr) { setToast(t('请填写新增分片节点的标题', 'Please enter a title for the new shard')); return }
         const filesArr = String(newShardFiles || '').split(/[,，\n]+/).map((s) => s.trim()).filter(Boolean)
         const goalStr = String(newShardGoal || titleStr).trim()
         setAddingShardBusy(true)
@@ -1425,7 +1505,7 @@
         }).then((res) => {
           setAddingShardBusy(false)
           if (res && res.ok === false && !/unknown op/i.test(String(res.error || ''))) {
-            setToast('新增分片节点失败：' + (res.error || '请检查分片冲突'))
+            setToast(t('新增分片节点失败：', 'Add shard failed: ') + (res.error || t('请检查分片冲突', 'Check shard conflict')))
             return
           }
           const createdId = (res && (res.worker_id || res.id)) || ('custom-worker-' + (customWorkerNodes.length + 1))
@@ -1436,7 +1516,7 @@
           }]))
           setNewShardTitle(''); setNewShardGoal(''); setNewShardFiles('')
           setShowAddShardForm(false)
-          setToast('已新增分片节点：' + titleStr + (createdSid ? ('（子会话 ' + createdSid + '）') : ''))
+          setToast(t('已新增分片节点：', 'Added shard: ') + titleStr + (createdSid ? (t('（子会话 ', ' (session ') + createdSid + t('）', ')')) : ''))
           reloadDag()
         })
       }
@@ -1445,7 +1525,7 @@
         if (!targetAgent) return
         const goalStr = String(editGoalDraft || '').trim()
         const filesArr = String(editFilesDraft || '').split(/[,，\n]+/).map((s) => s.trim()).filter(Boolean)
-        if (!goalStr) { setToast('分片目标不能为空'); return }
+        if (!goalStr) { setToast(t('分片目标不能为空', 'Shard goal cannot be empty')); return }
         setSavingGoalBusy(true)
         api({
           op: 'updateWorkerGoal',
@@ -1458,14 +1538,14 @@
         }).then((res) => {
           setSavingGoalBusy(false)
           if (res && res.ok === false && !/unknown op/i.test(String(res.error || ''))) {
-            setToast('保存目标失败：' + (res.error || '分片锁冲突'))
+            setToast(t('保存目标失败：', 'Save goal failed: ') + (res.error || t('分片锁冲突', 'Shard lock conflict')))
             return
           }
           setWorkerGoalOverrides((prev) => Object.assign({}, prev, {
             [targetAgent.id]: { assignedGoal: goalStr, filesOwned: filesArr },
           }))
           setEditingGoalOpen(false)
-          setToast((res && res.note) || ('已更新分片目标与独占文件：' + (targetAgent.title || targetAgent.id)))
+          setToast((res && res.note) || (t('已更新分片目标与独占文件：', 'Updated shard goal & files: ') + (targetAgent.title || targetAgent.id)))
           reloadDag()
         })
       }
@@ -1473,7 +1553,7 @@
       const handlePlanApproveWorker = (detailTarget, decisionOverride) => {
         if (!detailTarget || approvingBusy) return
         const decision = decisionOverride === 'revision_requested' ? 'revision_requested' : 'approved'
-        const nextGoalStr = String(customNextGoal || detailTarget.nextGoal || '继续推进下一波次契约验证与回归闭环').trim()
+        const nextGoalStr = String(customNextGoal || detailTarget.nextGoal || t('继续推进下一波次契约验证与回归闭环', 'Proceed to next wave contract verification')).trim()
         const noteStr = String(reviewNote || '').trim()
         setApprovingBusy(true)
         api({
@@ -1491,7 +1571,7 @@
         }).then((res) => {
           setApprovingBusy(false)
           if (!res || res.ok === false) {
-            setToast('审批操作未生效：' + ((res && res.error) || '后端返回异常'))
+            setToast(t('审批操作未生效：', 'Approval failed: ') + ((res && res.error) || t('后端返回异常', 'Backend error')))
             return
           }
           setApprovedWorkerMap((prev) => Object.assign({}, prev, {
@@ -1506,11 +1586,11 @@
             ? res.dispatched_sessions.map((s) => (typeof s === 'string' ? s : (s && (s.session_id || s.id)))).filter(Boolean)
             : []
           const sidSuffix = dispatchedList.length > 0
-            ? ('，已联动派发：' + dispatchedList.join(', '))
-            : ((res && (res.session_id || res.sessionId)) ? ('（子会话 ' + (res.session_id || res.sessionId) + '）') : '')
+            ? (t('，已联动派发：', ', dispatched: ') + dispatchedList.join(', '))
+            : ((res && (res.session_id || res.sessionId)) ? (t('（子会话 ', ' (session ') + (res.session_id || res.sessionId) + t('）', ')')) : '')
           setToast(decision === 'revision_requested'
-            ? ('已驳回重做 ' + (detailTarget.name || detailTarget.title) + '：' + nextGoalStr)
-            : ('已审批通过 ' + (detailTarget.name || detailTarget.title) + '，下达目标：' + ((res && res.next_goal) || nextGoalStr) + sidSuffix))
+            ? (t('已驳回重做 ', 'Revision requested for ') + (detailTarget.name || detailTarget.title) + '：' + nextGoalStr)
+            : (t('已审批通过 ', 'Approved ') + (detailTarget.name || detailTarget.title) + t('，下达目标：', ', next goal: ') + ((res && res.next_goal) || nextGoalStr) + sidSuffix))
           reloadDag()
         })
       }
@@ -1527,11 +1607,11 @@
         }).then((res) => {
           setRetryingBusy(false)
           if (res && res.ok === false && !/unknown op/i.test(String(res.error || ''))) {
-            setToast('重跑分片失败：' + (res.error || '请稍后重试'))
+            setToast(t('重跑分片失败：', 'Retry failed: ') + (res.error || t('请稍后重试', 'Please try again')))
             return
           }
           const sid = res && (res.session_id || res.sessionId || (res.worker && res.worker.session_id))
-          setToast((res && res.note) || ('已触发单分片重跑：' + (detailTarget.title || detailTarget.id) + (sid ? ('（子会话 ' + sid + '）') : '')))
+          setToast((res && res.note) || (t('已触发单分片重跑：', 'Retried shard: ') + (detailTarget.title || detailTarget.id) + (sid ? (t('（子会话 ', ' (session ') + sid + t('）', ')')) : '')))
           reloadDag()
         })
       }
@@ -1543,8 +1623,8 @@
           fallbackSessionId: domTel.sessionId,
         })
         setToast(res.targetSid
-          ? ('已切换侧边聊天框至 Agent 会话：' + res.targetTitle)
-          : ('已返回宿主聊天窗口（当前节点尚未绑定独立子会话）：' + res.targetTitle))
+          ? (t('已切换侧边聊天框至 Agent 会话：', 'Switched chat sidebar to Agent session: ') + res.targetTitle)
+          : (t('已返回宿主聊天窗口（当前节点尚未绑定独立子会话）：', 'Returned to host chat window (no dedicated sub-session): ') + res.targetTitle))
       }
 
       const resolveInspectorAgent = () => {
@@ -1556,34 +1636,34 @@
           name: workspaceDisplayTitle,
           wave: 0,
           role: 'plan',
-          avatar: '主控',
+          avatar: t('主控', 'Lead'),
           color: '#3b82f6',
           title: workspaceDisplayTitle,
           rawTokens: rootTokens,
           compressedTokens: rootTokens > 0 ? Math.round(rootTokens * 0.14) : 0,
           compressionPct: fusedChildren.length > 0 ? 85 : 0,
           approvalState: 'approved',
-          assignedGoal: '全局需求拆解与 4-Wave 并发调度：统筹需求探索、契约锁定、分片并发构建与质量安全门禁。',
+          assignedGoal: t('全局需求拆解与 4-Wave 并发调度：统筹需求探索、契约锁定、分片并发构建与质量安全门禁。', 'Global requirement decomposition and 4-Wave orchestration across discovery, contracts, parallel build, and QA gates.'),
           filesOwned: [],
           compressedDigest: {
             whatWasDone: fusedChildren.length > 0
-              ? ('已统筹 ' + fusedChildren.length + ' 个子智能体分片目标、摘要压缩与阶段审批派发。')
-              : '主控编排器就绪 —— 可在协同与审批页输入需求一键立项并生成并行分片。',
+              ? t('已统筹 ' + fusedChildren.length + ' 个子智能体分片目标、摘要压缩与阶段审批派发。', 'Coordinated ' + fusedChildren.length + ' subagent shard goals, digests, and approvals.')
+              : t('主控编排器就绪 —— 可在协同与审批页输入需求一键立项并生成并行分片。', 'Orchestrator ready — describe requirements in Collab & Approval to generate parallel shards.'),
             filesTouched: [],
           },
-          nextGoal: '继续推进下一波次契约验证与回归闭环',
+          nextGoal: t('继续推进下一波次契约验证与回归闭环', 'Proceed to next wave contract verification'),
           status: runningCount > 0 ? 'running' : 'done',
-          statusLabel: runningCount > 0 ? '运行中' : '就绪',
+          statusLabel: runningCount > 0 ? t('运行中', 'Running') : t('就绪', 'Ready'),
           tokenLabel: rootTokensLabel,
           costLabel: rootCostLabel,
           durationLabel: rootDuration,
           steps: rootSteps,
           isRoot: true,
-          inputPrompt: '全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。',
-          prompt: '全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。',
+          inputPrompt: t('全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。', 'Orchestrate Wave 1 discovery, Wave 2 architecture contract lock, Wave 3 parallel build, and Wave 4 QA gates.'),
+          prompt: t('全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。', 'Orchestrate Wave 1 discovery, Wave 2 architecture contract lock, Wave 3 parallel build, and Wave 4 QA gates.'),
           output: fusedChildren.length > 0
-            ? ('已调度 ' + fusedChildren.length + ' 个子智能体并同步至事实库。')
-            : '等待立项拆解研发任务。',
+            ? t('已调度 ' + fusedChildren.length + ' 个子智能体并同步至事实库。', 'Dispatched ' + fusedChildren.length + ' subagents synced to fact store.')
+            : t('等待立项拆解研发任务。', 'Awaiting project launch & decomposition.'),
         }
         if (targetId === 'root') return rootObj
         const hitChild = fusedChildren.find((c) => c.id === targetId || c.role === targetId)
@@ -1597,10 +1677,10 @@
         if (detail && Array.isArray(detail.stepTimeline) && detail.stepTimeline.length > 0) {
           return detail.stepTimeline.map((st, idx) => ({
             step: st.step || (idx + 1),
-            phase: st.phase || (idx === 0 ? '环节 ① 委派解析' : (idx === detail.stepTimeline.length - 1 ? '环节 ③ 结论回传' : '环节 ② 工具调用')),
+            phase: st.phase || (idx === 0 ? t('环节 ① 委派解析', 'Step ① Dispatch') : (idx === detail.stepTimeline.length - 1 ? t('环节 ③ 结论回传', 'Step ③ Digest') : t('环节 ② 工具调用', 'Step ② Tool Call'))),
             tool: st.tool || st.toolName || (idx === 0 ? 'view_file' : (idx === 1 ? 'replace_file_content' : 'run_command')),
-            input: st.input || st.args || st.command || st.summary || ('执行 ' + (agent.title || agent.id) + ' 步骤 #' + (idx + 1)),
-            output: st.output || st.result || '步骤执行完成',
+            input: st.input || st.args || st.command || st.summary || (t('执行 ', 'Execute ') + (agent.title || agent.id) + ' #' + (idx + 1)),
+            output: st.output || st.result || t('步骤执行完成', 'Step completed'),
             duration: st.duration || st.elapsed || '—',
             status: st.status || 'done',
           }))
@@ -1610,22 +1690,22 @@
         const isPend = agent && agent.status === 'pending'
         return [
           {
-            step: 1, phase: '环节 ① 委派解析', tool: 'plan_dispatch',
-            input: (agent && (agent.assignedGoal || agent.prompt)) || '解析当前分片目标与依赖边界',
-            output: '已锁定分片范围', duration: '—', status: isPend ? 'pending' : 'done',
+            step: 1, phase: t('环节 ① 委派解析', 'Step ① Dispatch'), tool: 'plan_dispatch',
+            input: (agent && (agent.assignedGoal || agent.prompt)) || t('解析当前分片目标与依赖边界', 'Parse shard goal and boundaries'),
+            output: t('已锁定分片范围', 'Shard scope locked'), duration: '—', status: isPend ? 'pending' : 'done',
           },
           {
-            step: 2, phase: '环节 ② 核心执行', tool: 'shard_exec',
+            step: 2, phase: t('环节 ② 核心执行', 'Step ② Execution'), tool: 'shard_exec',
             input: Array.isArray(agent && agent.filesOwned) && agent.filesOwned.length > 0
-              ? ('独占分片：' + agent.filesOwned.join(', '))
-              : ('执行 ' + ((agent && agent.title) || '当前角色') + ' 核心工作流'),
-            output: isErr ? '执行受阻，等待修复或重跑' : '同步上下文与结构化产物',
+              ? (t('独占分片：', 'Owned files: ') + agent.filesOwned.join(', '))
+              : (t('执行 ', 'Execute ') + ((agent && agent.title) || t('当前角色', 'current role'))),
+            output: isErr ? t('执行受阻，等待修复或重跑', 'Blocked, awaiting fix or retry') : t('同步上下文与结构化产物', 'Sync context & artifacts'),
             duration: '—', status: isErr ? 'error' : (isRun ? 'running' : (isPend ? 'pending' : 'done')),
           },
           {
-            step: 3, phase: '环节 ③ 阶段结论', tool: 'submit_digest',
-            input: '压缩阶段工作摘要并回传主控审批',
-            output: (agent && agent.output) || '等待阶段结论回传',
+            step: 3, phase: t('环节 ③ 阶段结论', 'Step ③ Conclusion'), tool: 'submit_digest',
+            input: t('压缩阶段工作摘要并回传主控审批', 'Compress digest and report for approval'),
+            output: (agent && agent.output) || t('等待阶段结论回传', 'Awaiting stage digest'),
             duration: '—', status: isErr ? 'error' : (isRun || isPend ? 'pending' : 'done'),
           },
         ]
@@ -1669,16 +1749,16 @@
 
       const triggerCheckpoint = (actionLabel, actionCode, targetNodeId) => {
         const targetNode = targetNodeId || selected.id
-        setToast('正在执行：' + actionLabel + ' (' + targetNode + ')…')
+        setToast(t('正在执行：', 'Running: ') + actionLabel + ' (' + targetNode + ')…')
         api({ op: 'dagCheckpoint', engagement: eng || undefined, action: actionCode, node: targetNode }).then((r) => {
           if (r && r.ok === false) {
-            setToast('检查点操作失败：' + (r.error || '请稍后重试'))
+            setToast(t('检查点操作失败：', 'Checkpoint failed: ') + (r.error || t('请稍后重试', 'Please try again')))
             return
           }
-          setToast((r && r.note) || ('已触发「' + actionLabel + '」：节点 ' + targetNode + ' 从检查点恢复执行'))
+          setToast((r && r.note) || (t('已触发「' + actionLabel + '」：节点 ', 'Triggered "' + actionLabel + '" on ') + targetNode))
           reloadDag()
         }, () => {
-          setToast('已触发「' + actionLabel + '」：节点 ' + targetNode + ' 恢复请求已发出')
+          setToast(t('已触发「' + actionLabel + '」：节点 ' + targetNode + ' 恢复请求已发出', 'Triggered "' + actionLabel + '" resume for ' + targetNode))
         })
       }
 
@@ -1687,20 +1767,20 @@
       if (!eng) {
         return h('div', { className: 'rt-bento-card rt-p4-workbench' },
           h('div', { className: 'rt-bento-head' },
-            h('span', { className: 'rt-bento-title' }, '派生树状图 & 多维协同工作台'),
-            h('span', { className: 'rt-tag' }, '待初始化'),
+            h('span', { className: 'rt-bento-title' }, t('派生树状图 & 多维协同工作台', 'Derivation Tree & Multi-Agent Workbench')),
+            h('span', { className: 'rt-tag' }, t('待初始化', 'Pending Init')),
             h('div', { className: 'rt-spacer' }),
             h('button', {
               type: 'button',
               className: 'rt-btn',
               onClick: () => setUI({ tab: 'settings' }),
-            }, '设置'),
+            }, t('设置', 'Settings')),
             (props.onOpenCollab || props.onOpenWishWizard)
               ? h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                }, '前往协同与审批立项 →')
+                }, t('前往协同与审批立项 →', 'Launch in Collab & Approval →'))
               : null),
           h('div', {
             className: 'rt-empty',
@@ -1718,15 +1798,15 @@
             },
           },
             h('div', { style: { fontWeight: 700, fontSize: 13.5, color: 'var(--dsw-alias-label-primary)' } },
-              '当前会话尚未初始化研发任务'),
+              t('当前会话尚未初始化研发任务', 'No engineering tasks initialized in this session')),
             h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', maxWidth: 520, lineHeight: 1.55 } },
-              '请前往「协同与审批」通过 AI 澄清与拆解立项，确认后此处将实时呈现派生树与子代理协同状态。'),
+              t('请前往「协同与审批」通过 AI 澄清与拆解立项，确认后此处将实时呈现派生树与子代理协同状态。', 'Go to "Collab & Approval" to clarify requirements and launch shards. Live DAG and worker telemetry will appear here.')),
             (props.onOpenCollab || props.onOpenWishWizard)
               ? h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                }, '前往「协同与审批」启动立项')
+                }, t('前往「协同与审批」启动立项', 'Open "Collab & Approval"'))
               : null))
       }
 
@@ -1742,8 +1822,8 @@
         const isBusyDispatch = dispatchingId === c.id
         const accentColor = isErrCard ? '#ef4444' : (c.color || '#3b82f6')
         const statusColor = isErrCard ? '#ef4444' : (isRunCard ? '#3b82f6' : (isPendCard ? '#f59e0b' : '#10b981'))
-        const statusText = isErrCard ? '异常' : (isRunCard ? '运行中' : (isPendCard ? '待执行' : '已完成'))
-        const summaryText = (c.compressedDigest && c.compressedDigest.whatWasDone) || c.output || c.assignedGoal || '等待分片执行'
+        const statusText = isErrCard ? t('异常', 'Error') : (isRunCard ? t('运行中', 'Running') : (isPendCard ? t('待执行', 'Pending') : t('已完成', 'Done')))
+        const summaryText = (c.compressedDigest && c.compressedDigest.whatWasDone) || c.output || c.assignedGoal || t('等待分片执行', 'Awaiting execution')
         const portClass = portSide === 'top' ? 'rt-tree-port rt-tree-port-top' : 'rt-tree-port rt-tree-port-left'
         const portStyle = portSide === 'top'
           ? {
@@ -1855,7 +1935,7 @@
           }, summaryText),
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, fontSize: 9.5, flexWrap: 'wrap' } },
             h('span', { className: 'rt-mono', style: { color: 'var(--dsw-alias-label-secondary)' } },
-              c.tokenLabel + ' · ' + (c.durationLabel || '待命') + ' · ' + (c.steps || 0) + ' 步'),
+              c.tokenLabel + ' · ' + (c.durationLabel || t('待命', 'Idle')) + ' · ' + (c.steps || 0) + t(' 步', ' steps')),
             h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
               (isRevReq || !isApproved)
                 ? h('span', {
@@ -1866,7 +1946,7 @@
                       color: isRevReq ? '#ef4444' : '#d97706',
                       fontWeight: 700,
                     },
-                  }, isRevReq ? '待重做' : '待审批')
+                  }, isRevReq ? t('待重做', 'Redo') : t('待审批', 'Pending'))
                 : null,
               (isPendCard && isClusterVariant)
                 ? h('button', {
@@ -1878,22 +1958,22 @@
                       if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
                       handleDispatchWorkerTask(c)
                     },
-                  }, isBusyDispatch ? '拉起中…' : '拉起执行')
+                  }, isBusyDispatch ? t('拉起中…', 'Starting...') : t('拉起执行', 'Dispatch'))
                 : null)))
       }
 
       return h('div', { className: 'rt-bento-card rt-p4-workbench' },
         h('div', { className: 'rt-bento-head' },
-          h('span', { className: 'rt-bento-title' }, isClusterVariant ? '派生树状图 & 多维协同工作台' : '派生树状图 & 实时工作流'),
-          h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent · ' + allTasks.length + ' 协作任务'),
+          h('span', { className: 'rt-bento-title' }, isClusterVariant ? t('派生树状图 & 多维协同工作台', 'Derivation Tree & Multi-Agent Workbench') : t('派生树状图 & 实时工作流', 'Derivation Tree & Live Workflow')),
+          h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent · ' + allTasks.length + t(' 协作任务', ' Tasks')),
           pendingApprovalCount > 0
-            ? h('span', { className: 'rt-tag rt-tag-warn' }, '待审批 ' + pendingApprovalCount)
+            ? h('span', { className: 'rt-tag rt-tag-warn' }, t('待审批 ', 'Pending ') + pendingApprovalCount)
             : null,
           errorCount > 0
             ? h('span', {
                 className: 'rt-tag',
                 style: { background: 'rgba(239,68,68,0.14)', color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)', fontWeight: 700 },
-              }, errorCount + ' 异常待修复')
+              }, errorCount + t(' 异常待修复', ' Errors'))
             : null,
           selAgentId
             ? h('button', {
@@ -1901,60 +1981,60 @@
                 className: 'rt-btn',
                 style: { padding: '1px 7px', fontSize: 10.5 },
                 onClick: () => setSelAgentId(null),
-              }, '清除节点筛选')
+              }, t('清除节点筛选', 'Clear Filter'))
             : null,
           h('div', { className: 'rt-spacer' }),
           isClusterVariant
-            ? h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': '工作流视图切换', style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' } },
+            ? h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': t('工作流视图切换', 'Workflow View'), style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' } },
                 h('button', {
                   type: 'button',
                   className: 'rt-harness-modebtn' + (mode === 'p4' ? ' on' : ''),
                   onClick: () => setMode('p4'),
-                }, '派生树'),
+                }, t('派生树', 'Tree')),
                 h('button', {
                   type: 'button',
                   className: 'rt-harness-modebtn' + (mode === 'swim' ? ' on' : ''),
                   onClick: () => setMode('swim'),
-                }, '泳道矩阵'),
+                }, t('泳道矩阵', 'Swimlanes')),
                 h('button', {
                   type: 'button',
                   className: 'rt-harness-modebtn' + (mode === 'docwall' ? ' on' : ''),
                   onClick: () => setMode('docwall'),
-                }, '角色文稿'),
+                }, t('角色文稿', 'Doc Wall')),
                 (props.onOpenCollab || props.onOpenWishWizard)
                   ? h('button', {
                       type: 'button',
                       className: 'rt-btn',
                       style: { padding: '2px 8px', fontSize: 11 },
                       onClick: props.onOpenCollab || props.onOpenWishWizard,
-                    }, '协同与审批' + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
+                    }, t('协同与审批', 'Collab & Approval') + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
                   : null,
                 h('button', {
                   type: 'button',
                   className: 'rt-btn',
                   style: { padding: '2px 8px', fontSize: 11 },
                   onClick: () => setUI({ tab: 'settings' }),
-                }, '设置'))
+                }, t('设置', 'Settings')))
             : h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                 props.onOpenCollab
                   ? h('button', {
                       type: 'button',
                       className: 'rt-btn',
                       onClick: props.onOpenCollab,
-                    }, '协同与审批' + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
+                    }, t('协同与审批', 'Collab & Approval') + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
                   : null,
                 props.onOpenAgents
                   ? h('button', {
                       type: 'button',
                       className: 'rt-btn',
                       onClick: props.onOpenAgents,
-                    }, '完整拓扑与泳道 →')
+                    }, t('完整拓扑与泳道 →', 'Full Topology & Swimlanes →'))
                   : null,
                 h('button', {
                   type: 'button',
                   className: 'rt-btn',
                   onClick: () => setUI({ tab: 'settings' }),
-                }, '设置'))),
+                }, t('设置', 'Settings')))),
 
         toast
           ? h('div', {
@@ -1978,7 +2058,7 @@
                 className: 'rt-btn',
                 style: { padding: '0 6px', fontSize: 10.5 },
                 onClick: () => setToast(null),
-              }, '关闭'))
+              }, t('关闭', 'Dismiss')))
           : null,
 
         /* ── 模式 1: p4 派生树画布 + 检视器 / 泳道协同 ── */
@@ -2003,16 +2083,16 @@
               },
                 h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, 'Agent 网络 · 派生树状图'),
+                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, t('Agent 网络 · 派生树状图', 'Agent Network · Derivation Tree')),
                     h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
                       isClusterVariant
-                        ? '点击节点检视执行细节、编辑目标、拉起执行或审批放行'
-                        : '点击任意节点预览阶段进展')),
+                        ? t('点击节点检视执行细节、编辑目标、拉起执行或审批放行', 'Click any node to inspect steps, edit goals, dispatch, or approve')
+                        : t('点击任意节点预览阶段进展', 'Click any node to preview progress'))),
                   h('div', { style: { display: 'inline-flex', flexWrap: 'wrap', gap: 6, fontSize: 11 } },
                     h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent'),
-                    h('span', { className: 'rt-tag rt-tag-active' }, runningCount + ' 运行中'),
-                    errorCount > 0 ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' } }, errorCount + ' 异常') : null,
-                    h('span', { className: 'rt-tag' }, '上下文 ' + ctxSumLabel))),
+                    h('span', { className: 'rt-tag rt-tag-active' }, runningCount + t(' 运行中', ' Running')),
+                    errorCount > 0 ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' } }, errorCount + t(' 异常', ' Error')) : null,
+                    h('span', { className: 'rt-tag' }, t('上下文 ', 'Context ') + ctxSumLabel))),
 
                 /* 画布搜索/过滤与交互式新增分片工具栏 */
                 isClusterVariant
@@ -2032,15 +2112,15 @@
                       h('input', {
                         className: 'rt-input',
                         style: { width: 175, height: 24, fontSize: 11, padding: '0 8px' },
-                        placeholder: '搜索节点 / 角色 / 独占文件...',
+                        placeholder: t('搜索节点 / 角色 / 独占文件...', 'Search node / role / files...'),
                         value: canvasSearch,
                         onChange: (e) => setCanvasSearch(e.target.value),
                       }),
                       [
-                        { k: 'all', lbl: '全部 (' + fusedChildren.length + ')' },
-                        { k: 'running', lbl: '运行中' },
-                        { k: 'pending', lbl: '待审批' + (pendingApprovalCount > 0 ? ' (' + pendingApprovalCount + ')' : '') },
-                        { k: 'error', lbl: '异常阻塞' + (errorCount > 0 ? ' (' + errorCount + ')' : '') },
+                        { k: 'all', lbl: t('全部 (' + fusedChildren.length + ')', 'All (' + fusedChildren.length + ')') },
+                        { k: 'running', lbl: t('运行中', 'Running') },
+                        { k: 'pending', lbl: t('待审批', 'Pending') + (pendingApprovalCount > 0 ? ' (' + pendingApprovalCount + ')' : '') },
+                        { k: 'error', lbl: t('异常阻塞', 'Errors') + (errorCount > 0 ? ' (' + errorCount + ')' : '') },
                       ].map((fp) => h('button', {
                         key: 'cf-' + fp.k,
                         type: 'button',
@@ -2055,14 +2135,14 @@
                             className: 'rt-btn',
                             style: { padding: '2px 8px', fontSize: 11, fontWeight: 600 },
                             onClick: props.onOpenCollab || props.onOpenWishWizard,
-                          }, '需求拆解与审批')
+                          }, t('需求拆解与审批', 'Wish & Approval'))
                         : null,
                       h('button', {
                         type: 'button',
                         className: 'rt-btn' + (showAddShardForm ? ' rt-btn-primary' : ''),
                         style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                         onClick: () => setShowAddShardForm((v) => !v),
-                      }, showAddShardForm ? '收起新增分片' : '+ 新增分片节点'))
+                      }, showAddShardForm ? t('收起新增分片', 'Close Form') : t('+ 新增分片节点', '+ Add Shard')))
                   : null,
 
                 isClusterVariant && showAddShardForm
@@ -2080,7 +2160,7 @@
                     },
                       h('input', {
                         className: 'rt-input',
-                        placeholder: '分片标题（如：Wave3 认证中间件重构）',
+                        placeholder: t('分片标题（如：Wave3 认证中间件重构）', 'Shard title (e.g. Wave3 Auth Refactor)'),
                         value: newShardTitle,
                         onChange: (e) => setNewShardTitle(e.target.value),
                       }),
@@ -2089,26 +2169,26 @@
                         value: String(newShardWave),
                         onChange: (e) => setNewShardWave(Number(e.target.value) || 3),
                       },
-                        h('option', { value: '1' }, 'Wave 1 · 立项与设计'),
-                        h('option', { value: '2' }, 'Wave 2 · 架构与分片'),
-                        h('option', { value: '3' }, 'Wave 3 · 并发编码构建'),
-                        h('option', { value: '4' }, 'Wave 4 · 审查与测试门禁')),
+                        h('option', { value: '1' }, t('Wave 1 · 立项与设计', 'Wave 1 · Discovery & UX')),
+                        h('option', { value: '2' }, t('Wave 2 · 架构与分片', 'Wave 2 · Architecture')),
+                        h('option', { value: '3' }, t('Wave 3 · 并发编码构建', 'Wave 3 · Parallel Build')),
+                        h('option', { value: '4' }, t('Wave 4 · 审查与测试门禁', 'Wave 4 · Review & QA'))),
                       h('select', {
                         className: 'rt-input',
                         value: newShardRole,
                         onChange: (e) => setNewShardRole(e.target.value),
                       },
                         Object.keys(P4_ROLE_META).map((rk) => h('option', { key: 'sr-' + rk, value: rk },
-                          rk + ' · ' + P4_ROLE_META[rk].defaultTitle))),
+                          rk + ' · ' + t(P4_ROLE_META[rk].defaultTitle, P4_ROLE_META[rk].defaultTitleEn)))),
                       h('input', {
                         className: 'rt-input',
-                        placeholder: '分片任务目标说明',
+                        placeholder: t('分片任务目标说明', 'Shard goal description'),
                         value: newShardGoal,
                         onChange: (e) => setNewShardGoal(e.target.value),
                       }),
                       h('input', {
                         className: 'rt-input rt-mono',
-                        placeholder: '独占文件路径（逗号分隔）',
+                        placeholder: t('独占文件路径（逗号分隔）', 'Exclusive file paths (comma-separated)'),
                         value: newShardFiles,
                         onChange: (e) => setNewShardFiles(e.target.value),
                       }),
@@ -2117,7 +2197,7 @@
                         className: 'rt-btn rt-btn-primary',
                         disabled: addingShardBusy,
                         onClick: handleCreateCustomShard,
-                      }, addingShardBusy ? '创建中…' : '确认挂载分片'))
+                      }, addingShardBusy ? t('创建中…', 'Creating...') : t('确认挂载分片', 'Create Shard')))
                   : null,
 
                 /* 可平移与缩放的路径树画布视口 (.rt-panzoom-viewport) */
@@ -2134,7 +2214,7 @@
                   h('div', {
                     className: 'rt-panzoom-toolbar',
                     role: 'toolbar',
-                    'aria-label': '路径树画布平移缩放与折叠控制',
+                    'aria-label': t('路径树画布平移缩放与折叠控制', 'Canvas Pan/Zoom & Collapse Controls'),
                     style: { flexWrap: 'wrap' },
                   },
                     h('button', {
@@ -2142,16 +2222,16 @@
                       className: 'rt-btn rt-panzoom-btn rt-tree-layout-setting',
                       style: { padding: '1px 8px', fontSize: 10.5, fontWeight: 600 },
                       onClick: toggleTreeDirection,
-                      title: '切换开发树展开方向（横向向右派生 / 纵向向下派生）',
+                      title: t('切换开发树展开方向（横向向右派生 / 纵向向下派生）', 'Toggle derivation direction (Horizontal / Vertical)'),
                     }, treeDirection === 'horizontal'
-                      ? '⇄ 横向向右派生'
-                      : '⇄ 纵向向下派生'),
+                      ? t('⇄ 横向向右派生', '⇄ Horizontal Tree')
+                      : t('⇄ 纵向向下派生', '⇄ Vertical Tree')),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn rt-panzoom-btn',
                       style: { padding: '1px 6px', fontSize: 11 },
                       onClick: zoomOutCanvas,
-                      title: '缩小画布',
+                      title: t('缩小画布', 'Zoom Out'),
                     }, '-'),
                     h('span', {
                       className: 'rt-mono',
@@ -2162,28 +2242,28 @@
                       className: 'rt-btn rt-panzoom-btn',
                       style: { padding: '1px 6px', fontSize: 11 },
                       onClick: zoomInCanvas,
-                      title: '放大画布',
+                      title: t('放大画布', 'Zoom In'),
                     }, '+'),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn rt-panzoom-btn',
                       style: { padding: '1px 7px', fontSize: 10.5 },
                       onClick: fitCanvasToViewport,
-                      title: '自适应缩放完整放入当前视口',
-                    }, '适应视口'),
+                      title: t('自适应缩放完整放入当前视口', 'Fit graph to viewport'),
+                    }, t('适应视口', 'Fit')),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn rt-panzoom-btn',
                       style: { padding: '1px 7px', fontSize: 10.5 },
                       onClick: resetPanZoom,
-                    }, '1:1 复位'),
+                    }, t('1:1 复位', 'Reset 1:1')),
                     activeWaveGroups.length > 0
                       ? h('button', {
                           type: 'button',
                           className: 'rt-btn' + (allWavesExpanded ? ' rt-btn-primary' : ''),
                           style: { padding: '1px 7px', fontSize: 10.5 },
                           onClick: () => (allWavesExpanded ? (fusedChildren.length > 4 ? autoFoldWaves() : collapseAllWaves()) : expandAllWaves()),
-                        }, allWavesExpanded ? '自动收起' : '全部展开')
+                        }, allWavesExpanded ? t('自动收起', 'Auto Fold') : t('全部展开', 'Expand All'))
                       : null),
 
                   h('div', {
@@ -2255,15 +2335,15 @@
                                 expanded: selAgentId === 'root',
                               })),
                                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                                  h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6, flex: 'none' } }, '主控'),
+                                  h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6, flex: 'none' } }, t('主控', 'Lead')),
                                   h('span', {
                                     style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
                                     title: workspaceDisplayTitle,
                                   }, workspaceDisplayTitle),
-                                  h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0, flex: 'none' } }, runningCount > 0 ? '运行中' : (fusedChildren.length > 0 ? '协同中' : '就绪'))),
+                                  h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0, flex: 'none' } }, runningCount > 0 ? t('运行中', 'Running') : (fusedChildren.length > 0 ? t('协同中', 'Active') : t('就绪', 'Ready')))),
                                 h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)', gap: 6 } },
                                   h('span', { className: 'rt-mono' }, rootTokensLabel + ' · ' + rootCostLabel),
-                                  h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
+                                  h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + t(' 步', ' steps')),
                                   h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
                                 activeWaveGroups.length > 0
                                   ? h('span', {
@@ -2296,12 +2376,12 @@
                                     const isSpawningWave = wg.children.some((c) => Boolean(animatingSpawnIds[c.id]))
                                     const isCompletingWave = wg.children.some((c) => Boolean(animatingCompleteIds[c.id]))
                                     const statusSummary = wg.errorInWave > 0
-                                      ? (wg.errorInWave + ' 异常')
+                                      ? (wg.errorInWave + t(' 异常', ' Error'))
                                       : (wg.runningInWave > 0
-                                        ? (wg.runningInWave + ' 运行中')
+                                        ? (wg.runningInWave + t(' 运行中', ' Running'))
                                         : (wg.pendingInWave > 0 && wg.doneInWave === 0
-                                          ? (wg.pendingInWave + ' 待执行')
-                                          : (wg.doneInWave + '/' + wg.children.length + ' 完成')))
+                                          ? (wg.pendingInWave + t(' 待执行', ' Pending'))
+                                          : (wg.doneInWave + '/' + wg.children.length + t(' 完成', ' Done'))))
                                     const visibleWaveChildren = visibleChildrenByWave[wg.wave] || []
                                     const hiddenWaveCount = Math.max(0, wg.children.length - visibleWaveChildren.length)
 
@@ -2373,7 +2453,7 @@
                                           h('span', {
                                             className: 'rt-tree-wave-card-badge',
                                             style: { color: wg.color, borderColor: wg.color + '55', background: wg.color + '18' },
-                                          }, wg.shortLabel + ' · ' + wg.children.length + ' 节点'),
+                                          }, wg.shortLabel + ' · ' + wg.children.length + t(' 节点', ' nodes')),
                                           h('span', {
                                             className: 'rt-mono',
                                             style: {
@@ -2404,7 +2484,7 @@
                                             gap: 4,
                                           },
                                         },
-                                          h('span', null, wg.runningInWave + ' 运行 · ' + wg.doneInWave + ' 完成' + (wg.pendingInWave > 0 ? (' · ' + wg.pendingInWave + ' 待执行') : '')),
+                                          h('span', null, wg.runningInWave + t(' 运行 · ', ' run · ') + wg.doneInWave + t(' 完成', ' done') + (wg.pendingInWave > 0 ? (' · ' + wg.pendingInWave + t(' 待执行', ' pending')) : '')),
                                           h('span', null, wg.tokenLabel)),
                                         h('div', {
                                           style: { height: 4, borderRadius: 99, background: 'var(--dsw-alias-bg-layer-2)', overflow: 'hidden' },
@@ -2421,7 +2501,7 @@
                                               if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
                                               toggleWaveExpand(wg.wave)
                                             },
-                                          }, expanded ? '收起分片' : '展开分片'))),
+                                          }, expanded ? t('收起分片', 'Collapse') : t('展开分片', 'Expand')))),
 
                                       expanded
                                         ? h('div', {
@@ -2453,7 +2533,7 @@
                                                       [wg.wave]: (prev[wg.wave] || WAVE_PAGE_SIZE) + WAVE_PAGE_SIZE,
                                                     }))
                                                   },
-                                                }, '展开更多 (+' + hiddenWaveCount + ' 个节点)')
+                                                }, t('展开更多 (+' + hiddenWaveCount + ' 个节点)', 'Show More (+' + hiddenWaveCount + ' nodes)'))
                                               : null)
                                         : null)
                                   }))
@@ -2473,24 +2553,24 @@
                                 },
                                   h('div', { style: { fontWeight: 700, fontSize: 13, color: 'var(--dsw-alias-label-primary)' } },
                                     fusedChildren.length > 0
-                                      ? '当前过滤条件下没有匹配的节点'
-                                      : '当前工作台尚无研发分片'),
+                                      ? t('当前过滤条件下没有匹配的节点', 'No nodes match current filter')
+                                      : t('当前工作台尚无研发分片', 'No shards in this workspace yet')),
                                   h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
                                     fusedChildren.length > 0
-                                      ? '点击上方「全部」筛选或清空搜索词即可恢复显示。'
-                                      : '请前往「协同与审批」通过 AI 澄清与拆解立项生成分片，或在工具栏点击「+ 新增分片节点」。'),
+                                      ? t('点击上方「全部」筛选或清空搜索词即可恢复显示。', 'Click "All" or clear search query to restore.')
+                                      : t('请前往「协同与审批」通过 AI 澄清与拆解立项生成分片，或在工具栏点击「+ 新增分片节点」。', 'Decompose a requirement in "Collab & Approval" or click "+ Add Shard".')),
                                   fusedChildren.length > 0
                                     ? h('button', {
                                         type: 'button',
                                         className: 'rt-btn',
                                         onClick: () => { setCanvasFilter('all'); setCanvasSearch('') },
-                                      }, '重置筛选条件')
+                                      }, t('重置筛选条件', 'Reset Filters'))
                                     : ((props.onOpenCollab || props.onOpenWishWizard)
                                       ? h('button', {
                                           type: 'button',
                                           className: 'rt-btn rt-btn-primary',
                                           onClick: props.onOpenCollab || props.onOpenWishWizard,
-                                        }, '前往「协同与审批」立项拆解')
+                                        }, t('前往「协同与审批」立项拆解', 'Open Collab & Approval'))
                                       : null))))
                       : /* ── 备选布局：纵向向下派生树 (.rt-p5-tree-stage.rt-tree-layout-vertical) ── */
                         h('div', {
@@ -2539,16 +2619,16 @@
                                 boxShadow: selAgentId === 'root' ? '0 0 0 3px rgba(59,130,246,0.16)' : '0 2px 6px rgba(0,0,0,0.06)',
                               },
                             }, clickable(() => openAgentInspector('root'), {
-                              label: '检视主控节点 ' + workspaceDisplayTitle + ' 环节细节',
+                              label: t('检视主控节点 ', 'Inspect orchestrator ') + workspaceDisplayTitle,
                               expanded: selAgentId === 'root',
                             })),
                               h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                                h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '主控'),
+                                h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, t('主控', 'Lead')),
                                 h('span', { style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, workspaceDisplayTitle),
-                                h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? '运行中' : (fusedChildren.length > 0 ? '协同中' : '就绪'))),
+                                h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? t('运行中', 'Running') : (fusedChildren.length > 0 ? t('协同中', 'Active') : t('就绪', 'Ready')))),
                               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)', gap: 6 } },
                                 h('span', { className: 'rt-mono' }, rootTokensLabel + ' · ' + rootCostLabel),
-                                h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
+                                h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + t(' 步', ' steps')),
                                 h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
                               activeWaveGroups.length > 0
                                 ? h('span', {
@@ -2584,12 +2664,12 @@
                                     const expanded = Boolean(expandedMap[wg.wave])
                                     const hasSelectedChild = wg.children.some((c) => c.id === selAgentId)
                                     const statusSummary = wg.errorInWave > 0
-                                      ? (wg.errorInWave + ' 异常')
+                                      ? (wg.errorInWave + t(' 异常', ' Error'))
                                       : (wg.runningInWave > 0
-                                        ? (wg.runningInWave + ' 运行中')
+                                        ? (wg.runningInWave + t(' 运行中', ' Running'))
                                         : (wg.pendingInWave > 0 && wg.doneInWave === 0
-                                          ? (wg.pendingInWave + ' 待执行')
-                                          : (wg.doneInWave + '/' + wg.children.length + ' 完成')))
+                                          ? (wg.pendingInWave + t(' 待执行', ' Pending'))
+                                          : (wg.doneInWave + '/' + wg.children.length + t(' 完成', ' Done'))))
                                     const visibleWaveChildren = visibleChildrenByWave[wg.wave] || []
                                     const hiddenWaveCount = Math.max(0, wg.children.length - visibleWaveChildren.length)
                                     return h('div', {
@@ -2612,7 +2692,7 @@
                                           borderColor: (expanded || hasSelectedChild || wg.errorInWave > 0) ? wg.color : 'var(--dsw-alias-border-l1)',
                                         },
                                       }, clickable(() => toggleWaveExpand(wg.wave), {
-                                        label: (expanded ? '收起 ' : '展开 ') + wg.title,
+                                        label: (expanded ? t('收起 ', 'Collapse ') : t('展开 ', 'Expand ')) + wg.title,
                                         expanded: expanded,
                                       })),
                                         h('span', {
@@ -2653,7 +2733,7 @@
                                           : null,
                                         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
                                           h('span', { className: 'rt-tree-wave-card-badge', style: { color: wg.color, borderColor: wg.color + '55', background: wg.color + '18' } },
-                                            wg.shortLabel + ' · ' + wg.children.length + ' 节点'),
+                                            wg.shortLabel + ' · ' + wg.children.length + t(' 节点', ' nodes')),
                                           h('span', {
                                             className: 'rt-mono',
                                             style: {
@@ -2673,7 +2753,7 @@
                                               if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
                                               toggleWaveExpand(wg.wave)
                                             },
-                                          }, expanded ? '收起分片' : '展开分片'))),
+                                          }, expanded ? t('收起分片', 'Collapse') : t('展开分片', 'Expand')))),
                                       expanded
                                         ? h('div', {
                                             className: 'rt-wave-subtree-children rt-p4-children-grid',
@@ -2688,14 +2768,14 @@
                                                   onClick: () => setWavePageLimits((prev) => Object.assign({}, prev, {
                                                     [wg.wave]: (prev[wg.wave] || WAVE_PAGE_SIZE) + WAVE_PAGE_SIZE,
                                                   })),
-                                                }, '展开更多 (+' + hiddenWaveCount + ' 个节点)')
+                                                }, t('展开更多 (+' + hiddenWaveCount + ' 个节点)', 'Show More (+' + hiddenWaveCount + ' nodes)'))
                                               : null)
                                         : null)
                                   }))
                               : h('div', { className: 'rt-empty', style: { marginTop: 12 } },
                                   fusedChildren.length > 0
-                                    ? '当前过滤条件下没有匹配的节点'
-                                    : '当前工作台尚无研发分片 — 前往「协同与审批」立项拆解')))))),
+                                    ? t('当前过滤条件下没有匹配的节点', 'No nodes match current filter')
+                                    : t('当前工作台尚无研发分片 — 前往「协同与审批」立项拆解', 'No shards yet — launch in "Collab & Approval"'))))))),
 
               /* 总览轻量摘要条 (!isClusterVariant) vs 集群下方全宽流程舱 (isClusterVariant) */
               !isClusterVariant
@@ -2703,12 +2783,12 @@
                     ? (() => {
                         const ovSummary = (activeInspectorAgent.compressedDigest && activeInspectorAgent.compressedDigest.whatWasDone)
                           || activeInspectorAgent.output
-                          || '节点已就绪，点击右侧入口可前往审批或展开完整泳道。'
+                          || t('节点已就绪，点击右侧入口可前往审批或展开完整泳道。', 'Node ready. Open Collab & Approval or full swimlanes on the right.')
                         const ovStatusLabel = activeInspectorAgent.status === 'error'
-                          ? '异常待修复'
+                          ? t('异常待修复', 'Needs Fix')
                           : (activeInspectorAgent.status === 'running'
-                            ? '运行中'
-                            : (activeInspectorAgent.status === 'pending' ? '待执行' : '已完成'))
+                            ? t('运行中', 'Running')
+                            : (activeInspectorAgent.status === 'pending' ? t('待执行', 'Pending') : t('已完成', 'Done')))
                         return h('div', { className: 'rt-ov-node-strip' },
                           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 } },
                             h('span', {
@@ -2725,7 +2805,7 @@
                             h('span', { style: { fontWeight: 700, fontSize: 12.5, color: 'var(--dsw-alias-label-primary)' } }, activeInspectorAgent.title),
                             h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } }, ovStatusLabel),
                             h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                              (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || '待命') + ' · ' + (activeInspectorAgent.steps || 0) + ' 步'),
+                              (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || t('待命', 'Idle')) + ' · ' + (activeInspectorAgent.steps || 0) + t(' 步', ' steps')),
                             h('div', { className: 'rt-spacer' }),
                             (props.onOpenCollab || props.onOpenWishWizard)
                               ? h('button', {
@@ -2733,7 +2813,7 @@
                                   className: 'rt-btn rt-btn-primary',
                                   style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                                }, '前往「协同与审批」 →')
+                                }, t('前往「协同与审批」 →', 'Collab & Approval →'))
                               : null,
                             props.onOpenAgents
                               ? h('button', {
@@ -2741,15 +2821,15 @@
                                   className: 'rt-btn',
                                   style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                                   onClick: props.onOpenAgents,
-                                }, '查看完整泳道与检视器 →')
+                                }, t('查看完整泳道与检视器 →', 'Full Swimlanes & Inspector →'))
                               : null,
                             h('button', {
                               type: 'button',
                               className: 'rt-btn',
                               style: { padding: '1px 6px', fontSize: 11 },
-                              title: '收起节点摘要',
+                              title: t('收起节点摘要', 'Hide summary'),
                               onClick: () => openAgentInspector('__closed__'),
-                            }, '收起')),
+                            }, t('收起', 'Hide'))),
                           h('div', {
                             style: {
                               fontSize: 11.5,
@@ -2775,7 +2855,7 @@
               activeInspectorAgent
                 ? (() => {
                     const inspDigest = activeInspectorAgent.compressedDigest || {
-                      whatWasDone: activeInspectorAgent.output || '已完成阶段任务并生成压缩摘要。',
+                      whatWasDone: activeInspectorAgent.output || t('已完成阶段任务并生成压缩摘要。', 'Completed stage and generated compressed digest.'),
                       filesTouched: activeInspectorAgent.filesOwned || [],
                     }
                     const rawTokNum = Number(activeInspectorAgent.rawTokens) || Number(activeInspectorAgent.tokens) || 0
@@ -2819,12 +2899,12 @@
                           activeInspectorAgent.title),
                         h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } },
                           activeInspectorAgent.isRoot
-                            ? 'Wave 0 · 主控'
+                            ? t('Wave 0 · 主控', 'Wave 0 · Orchestrator')
                             : ('Wave ' + (activeInspectorAgent.wave || 1) + ' · ' + activeInspectorAgent.role)),
                         h('span', { className: 'rt-tag rt-mono', style: { margin: 0, fontSize: 10 } },
                           'session: ' + ((activeInspectorDetail && activeInspectorDetail.sessionId) || activeInspectorAgent.sessionId || activeInspectorAgent.id)),
                         h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                          (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || '实时') + ' · ' + (activeInspectorAgent.steps || 0) + ' 步'),
+                          (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || t('实时', 'Live')) + ' · ' + (activeInspectorAgent.steps || 0) + t(' 步', ' steps')),
                         h('div', { className: 'rt-spacer' }),
                         isInspPendingExec
                           ? h('button', {
@@ -2833,7 +2913,7 @@
                               disabled: isInspDispatchBusy,
                               style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
                               onClick: () => handleDispatchWorkerTask(activeInspectorAgent),
-                            }, isInspDispatchBusy ? '拉起中…' : '拉起执行')
+                            }, isInspDispatchBusy ? t('拉起中…', 'Starting...') : t('拉起执行', 'Dispatch'))
                           : null,
                         !activeInspectorAgent.isRoot
                           ? h('button', {
@@ -2841,7 +2921,7 @@
                               className: 'rt-btn',
                               style: { padding: '3px 9px', fontSize: 11, fontWeight: 600 },
                               onClick: () => setEditingGoalOpen((v) => !v),
-                            }, editingGoalOpen ? '收起目标编辑' : '编辑分片目标')
+                            }, editingGoalOpen ? t('收起目标编辑', 'Close Goal Editor') : t('编辑分片目标', 'Edit Goal'))
                           : null,
                         !activeInspectorAgent.isRoot
                           ? h('button', {
@@ -2850,21 +2930,21 @@
                               disabled: retryingBusy,
                               style: { padding: '3px 9px', fontSize: 11, fontWeight: 600 },
                               onClick: () => handleRetryWorkerTask(activeInspectorAgent),
-                            }, retryingBusy ? '重跑中…' : '重跑该分片')
+                            }, retryingBusy ? t('重跑中…', 'Retrying...') : t('重跑该分片', 'Retry Shard'))
                           : null,
                         h('button', {
                           type: 'button',
                           className: 'rt-btn rt-btn-primary rt-jump-chat-btn',
                           style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
                           onClick: () => handleOpenAgentChat(activeInspectorAgent),
-                        }, '跳转会话聊天 ↗'),
+                        }, t('跳转会话聊天 ↗', 'Open Chat ↗')),
                         h('button', {
                           type: 'button',
                           className: 'rt-btn',
                           style: { padding: '2px 7px', fontSize: 11 },
-                          title: '收起检视抽屉',
+                          title: t('收起检视抽屉', 'Collapse inspector'),
                           onClick: () => openAgentInspector('__closed__'),
-                        }, '收起')),
+                        }, t('收起', 'Collapse'))),
 
                       editingGoalOpen && !activeInspectorAgent.isRoot
                         ? h('div', {
@@ -2878,14 +2958,14 @@
                               gap: 6,
                             },
                           },
-                            h('div', { style: { fontSize: 11, fontWeight: 700 } }, '编辑该子智能体的委派目标与独占文件分片'),
+                            h('div', { style: { fontSize: 11, fontWeight: 700 } }, t('编辑该子智能体的委派目标与独占文件分片', 'Edit Worker Goal & Exclusive File Shards')),
                             h('textarea', {
                               className: 'rt-textarea',
                               rows: 2,
                               style: { minHeight: 48, fontSize: 11.5 },
                               value: editGoalDraft,
                               onChange: (e) => setEditGoalDraft(e.target.value),
-                              placeholder: '输入调整后的分片目标说明...',
+                              placeholder: t('输入调整后的分片目标说明...', 'Enter updated shard goal...'),
                             }),
                             h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
                               h('input', {
@@ -2893,19 +2973,19 @@
                                 style: { flex: 1, minWidth: 200, fontSize: 11 },
                                 value: editFilesDraft,
                                 onChange: (e) => setEditFilesDraft(e.target.value),
-                                placeholder: '独占文件分片（逗号分隔）',
+                                placeholder: t('独占文件分片（逗号分隔）', 'Exclusive file shards (comma-separated)'),
                               }),
                               h('button', {
                                 type: 'button',
                                 className: 'rt-btn rt-btn-primary',
                                 disabled: savingGoalBusy,
                                 onClick: () => handleSaveWorkerGoal(activeInspectorAgent),
-                              }, savingGoalBusy ? '保存中…' : '保存目标'),
+                              }, savingGoalBusy ? t('保存中…', 'Saving...') : t('保存目标', 'Save Goal')),
                               h('button', {
                                 type: 'button',
                                 className: 'rt-btn',
                                 onClick: () => setEditingGoalOpen(false),
-                              }, '取消')))
+                              }, t('取消', 'Cancel'))))
                         : null,
 
                       /* 3-Step Horizontal Chain */
@@ -2933,7 +3013,7 @@
                         },
                           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
                             h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                              'Step 1 · 委派目标'),
+                              t('Step 1 · 委派目标', 'Step 1 · Assigned Goal')),
                             h('span', { className: 'rt-mono', style: { fontSize: 10, color: activeInspectorAgent.color || '#3b82f6', fontWeight: 700 } },
                               'Wave ' + (activeInspectorAgent.wave || 0) + ' · ' + activeInspectorAgent.role)),
                           h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
@@ -2954,9 +3034,9 @@
                         },
                           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
                             h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                              'Step 2 · 核心执行'),
+                              t('Step 2 · 核心执行', 'Step 2 · Core Execution')),
                             h('span', { className: 'rt-mono', style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
-                              activeStepTimeline.length + ' 步 · ' + (inspDigest.filesTouched || []).length + ' 文件')),
+                              activeStepTimeline.length + t(' 步 · ', ' steps · ') + (inspDigest.filesTouched || []).length + t(' 文件', ' files'))),
                           h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
                             (inspDigest.filesTouched || []).map((fp) => h('span', {
                               key: 'ft-' + fp,
@@ -2995,7 +3075,7 @@
                                   color: st.status === 'error' ? '#ef4444' : (st.status === 'running' ? '#3b82f6' : (st.status === 'pending' ? '#d97706' : '#10b981')),
                                   fontWeight: 600,
                                 },
-                              }, st.status === 'error' ? '异常' : (st.status === 'running' ? '执行中' : (st.status === 'pending' ? '待执行' : '完成'))))))),
+                              }, st.status === 'error' ? t('异常', 'Error') : (st.status === 'running' ? t('执行中', 'Running') : (st.status === 'pending' ? t('待执行', 'Pending') : t('完成', 'Done')))))))),
 
                         h('div', {
                           className: 'rt-step-node',
@@ -3012,7 +3092,7 @@
                         },
                           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
                             h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                              'Step 3 · 阶段结论与审批'),
+                              t('Step 3 · 阶段结论与审批', 'Step 3 · Stage Digest & Approval')),
                             h('span', {
                               style: {
                                 fontSize: 9.5,
@@ -3022,7 +3102,7 @@
                                 background: isInspRevReq ? 'rgba(239,68,68,0.14)' : (isInspApproved ? 'rgba(16,185,129,0.14)' : 'rgba(245,158,11,0.16)'),
                                 color: isInspRevReq ? '#ef4444' : (isInspApproved ? '#10b981' : '#d97706'),
                               },
-                            }, isInspRevReq ? '已驳回重做' : (isInspApproved ? '已审批' : '待审批'))),
+                            }, isInspRevReq ? t('已驳回重做', 'Revision Req.') : (isInspApproved ? t('已审批', 'Approved') : t('待审批', 'Pending')))),
                           h('div', {
                             className: 'rt-digest-box',
                             style: {
@@ -3039,7 +3119,7 @@
                               inspDigest.whatWasDone || (activeInspectorDetail && activeInspectorDetail.output) || activeInspectorAgent.output),
                             rawTokNum > 0
                               ? h('div', { className: 'rt-mono', style: { fontSize: 10, color: '#3b82f6', fontWeight: 600 } },
-                                  `原始 ${rawTokNum} tok → 压缩后 ${compTokNum} tok (-${compPctNum}%)`)
+                                  t(`原始 ${rawTokNum} tok → 压缩后 ${compTokNum} tok (-${compPctNum}%)`, `Raw ${rawTokNum} tok → Digest ${compTokNum} tok (-${compPctNum}%)`))
                               : null))),
 
                       h('div', {
@@ -3052,20 +3132,20 @@
                           borderTop: '1px dashed var(--dsw-alias-border-l1)',
                         },
                       },
-                        h('span', { style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, '下一阶段目标：'),
+                        h('span', { style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, t('下一阶段目标：', 'Next Goal:')),
                         h('input', {
                           className: 'rt-input',
                           style: { flex: '1 1 220px', height: 26, fontSize: 11.5 },
                           value: customNextGoal,
                           onChange: (e) => setCustomNextGoal(e.target.value),
-                          placeholder: '输入审批通过后下达给下一波次的新目标...',
+                          placeholder: t('输入审批通过后下达给下一波次的新目标...', 'Enter next goal to dispatch upon approval...'),
                         }),
                         h('input', {
                           className: 'rt-input',
                           style: { width: 150, height: 26, fontSize: 11 },
                           value: reviewNote,
                           onChange: (e) => setReviewNote(e.target.value),
-                          placeholder: '审批备注（选填）',
+                          placeholder: t('审批备注（选填）', 'Review note (optional)'),
                         }),
                         h('button', {
                           type: 'button',
@@ -3073,7 +3153,7 @@
                           className: 'rt-btn rt-plan-approve-btn' + (isInspApproved ? '' : ' rt-btn-primary'),
                           style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
                           onClick: () => handlePlanApproveWorker(activeInspectorAgent, 'approved'),
-                        }, approvingBusy ? '提交中…' : '审批通过并下达目标'),
+                        }, approvingBusy ? t('提交中…', 'Submitting...') : t('审批通过并下达目标', 'Approve & Dispatch Next')),
                         !activeInspectorAgent.isRoot
                           ? h('button', {
                               type: 'button',
@@ -3081,14 +3161,14 @@
                               className: 'rt-btn',
                               style: { padding: '3px 9px', fontSize: 11, color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' },
                               onClick: () => handlePlanApproveWorker(activeInspectorAgent, 'revision_requested'),
-                            }, '驳回重做')
+                            }, t('驳回重做', 'Request Revision'))
                           : null,
                         h('button', {
                           type: 'button',
                           className: 'rt-btn',
                           style: { padding: '3px 8px', fontSize: 10.5 },
                           onClick: () => { setSelId(activeInspectorAgent.role || 'plan'); setMode('docwall') },
-                        }, '查看角色文稿 →')))
+                        }, t('查看角色文稿 →', 'View Role Doc →'))))
                   })()
                 : h('div', {
                     className: 'rt-agent-inspector-drawer',
@@ -3105,13 +3185,13 @@
                       color: 'var(--dsw-alias-label-secondary)',
                     },
                   },
-                    h('span', null, '点击派生树节点或泳道行可展开环节执行轨迹与审批抽屉'),
+                    h('span', null, t('点击派生树节点或泳道行可展开环节执行轨迹与审批抽屉', 'Click any tree node or swimlane row to inspect trajectory and approve')),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn',
                       style: { padding: '2px 8px', fontSize: 11 },
                       onClick: () => openAgentInspector('root'),
-                    }, '展开主控预览')),
+                    }, t('展开主控预览', 'Inspect Orchestrator'))),
 
               /* Section 2: 全宽跨 Agent 协作 3 段式泳道 (.rt-swim-pane) */
               h('div', {
@@ -3127,14 +3207,14 @@
                 },
               },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, '跨 Agent 协作泳道'),
+                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, t('跨 Agent 协作泳道', 'Cross-Agent Swimlanes')),
                   h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                    filteredCollabCount + '/' + totalCollabEvents + ' 条记录 · ' + swimFilteredLanes.length + ' 条泳道'),
+                    filteredCollabCount + '/' + totalCollabEvents + t(' 条记录 · ', ' events · ') + swimFilteredLanes.length + t(' 条泳道', ' lanes')),
                   h('div', { className: 'rt-spacer' }),
                   h('input', {
                     className: 'rt-input',
                     style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
-                    placeholder: '搜索 Agent...',
+                    placeholder: t('搜索 Agent...', 'Search agent...'),
                     value: collabSearch,
                     onChange: (e) => setCollabSearch(e.target.value),
                   }),
@@ -3143,22 +3223,22 @@
                     className: 'rt-btn' + (collabSort === 'asc' ? ' rt-btn-primary' : ''),
                     style: { padding: '1px 7px', fontSize: 11 },
                     onClick: () => setCollabSort('asc'),
-                  }, '最早'),
+                  }, t('最早', 'Oldest')),
                   h('button', {
                     type: 'button',
                     className: 'rt-btn' + (collabSort === 'desc' ? ' rt-btn-primary' : ''),
                     style: { padding: '1px 7px', fontSize: 11 },
                     onClick: () => setCollabSort('desc'),
-                  }, '最新')),
+                  }, t('最新', 'Newest'))),
 
                 h('div', { className: 'rt-swim-wave-filter', style: { display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
                   [
-                    { k: 'all', lbl: '全部' },
-                    { k: 'running', lbl: '运行中' },
-                    { k: '1', lbl: 'Wave 1 立项' },
-                    { k: '2', lbl: 'Wave 2 架构' },
-                    { k: '3', lbl: 'Wave 3 构建' },
-                    { k: '4', lbl: 'Wave 4 审查' },
+                    { k: 'all', lbl: t('全部', 'All') },
+                    { k: 'running', lbl: t('运行中', 'Running') },
+                    { k: '1', lbl: t('Wave 1 立项', 'Wave 1 Discovery') },
+                    { k: '2', lbl: t('Wave 2 架构', 'Wave 2 Arch') },
+                    { k: '3', lbl: t('Wave 3 构建', 'Wave 3 Build') },
+                    { k: '4', lbl: t('Wave 4 审查', 'Wave 4 Review') },
                   ].map((wf) => h('button', {
                     key: 'swf-' + wf.k,
                     type: 'button',
@@ -3183,25 +3263,25 @@
                     const isLaneSel = (activeInspectorAgent && activeInspectorAgent.id === lane.id) || selAgentId === lane.id
                     const laneSteps = lane.steps || (lane.isRoot ? rootSteps : 0)
                     const laneTok = lane.tokenLabel || rootTokensLabel
-                    const laneDur = lane.durationLabel || (lane.isRoot ? rootDuration : '待命')
+                    const laneDur = lane.durationLabel || (lane.isRoot ? rootDuration : t('待命', 'Idle'))
                     const laneStatus = lane.isRoot ? (runningCount > 0 ? 'running' : 'done') : (lane.status || 'done')
                     const laneCompPct = lane.compressionPct || 0
                     const laneApproved = (approvedWorkerMap[lane.id] && approvedWorkerMap[lane.id].approved) || lane.approvalState === 'approved'
-                    const step1Text = lane.isRoot ? '全局需求拆解与多波次并发调度' : (lane.prompt || lane.title)
-                    const step2Text = laneSteps + ' 步工具调用 · ' + laneTok + ' · ' + laneDur
+                    const step1Text = lane.isRoot ? t('全局需求拆解与多波次并发调度', 'Global requirement decomposition & multi-wave dispatch') : (lane.prompt || lane.title)
+                    const step2Text = laneSteps + t(' 步工具调用 · ', ' tool calls · ') + laneTok + ' · ' + laneDur
                     const step3Text = lane.isRoot
-                      ? (fusedChildren.length > 0 ? ('已统筹 ' + fusedChildren.length + ' 个子代理压缩摘要与审批') : '主控编排器就绪，等待拆解任务')
-                      : ((lane.output || '等待同步产物') + (laneCompPct > 0 ? (' · 压缩 -' + laneCompPct + '%') : ''))
+                      ? (fusedChildren.length > 0 ? t('已统筹 ' + fusedChildren.length + ' 个子代理压缩摘要与审批', 'Coordinated ' + fusedChildren.length + ' worker digests & approvals') : t('主控编排器就绪，等待拆解任务', 'Orchestrator ready, awaiting decomposition'))
+                      : ((lane.output || t('等待同步产物', 'Awaiting output')) + (laneCompPct > 0 ? (t(' · 压缩 -', ' · Digest -') + laneCompPct + '%') : ''))
                     const orderedStages = collabSort === 'desc'
                       ? [
-                          { key: 's3', tag: '阶段结论', text: step3Text, isConclusion: true },
-                          { key: 's2', tag: '核心执行', text: step2Text, isConclusion: false },
-                          { key: 's1', tag: '委派目标', text: step1Text, isConclusion: false },
+                          { key: 's3', tag: t('阶段结论', 'Conclusion'), text: step3Text, isConclusion: true },
+                          { key: 's2', tag: t('核心执行', 'Execution'), text: step2Text, isConclusion: false },
+                          { key: 's1', tag: t('委派目标', 'Assigned Goal'), text: step1Text, isConclusion: false },
                         ]
                       : [
-                          { key: 's1', tag: '委派目标', text: step1Text, isConclusion: false },
-                          { key: 's2', tag: '核心执行', text: step2Text, isConclusion: false },
-                          { key: 's3', tag: '阶段结论', text: step3Text, isConclusion: true },
+                          { key: 's1', tag: t('委派目标', 'Assigned Goal'), text: step1Text, isConclusion: false },
+                          { key: 's2', tag: t('核心执行', 'Execution'), text: step2Text, isConclusion: false },
+                          { key: 's3', tag: t('阶段结论', 'Conclusion'), text: step3Text, isConclusion: true },
                         ]
 
                     return h('div', Object.assign({
@@ -3217,7 +3297,7 @@
                         cursor: 'pointer',
                         position: 'relative',
                       },
-                    }, clickable(() => openAgentInspector(lane.id), { label: '梳理 Agent 环节详情 ' + lane.title, expanded: isLaneSel })),
+                    }, clickable(() => openAgentInspector(lane.id), { label: t('梳理 Agent 环节详情 ', 'Inspect agent ') + lane.title, expanded: isLaneSel })),
                       h('div', {
                         className: 'rt-swim-meta',
                         style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRight: '1px solid var(--dsw-alias-border-l1)', minWidth: 0 },
@@ -3249,13 +3329,13 @@
                               color: 'var(--dsw-alias-label-primary)',
                             },
                             title: lane.title,
-                          }, lane.isRoot ? ('主控 · ' + lane.title) : lane.title),
+                          }, lane.isRoot ? (t('主控 · ', 'Lead · ') + lane.title) : lane.title),
                           h('span', {
                             className: 'rt-mono',
                             style: { fontSize: 9.5, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
                           }, (lane.isRoot ? 'Wave 0' : ('Wave ' + (lane.wave || 1) + ' · ' + lane.role))
                             + (laneCompPct > 0 ? (' · -' + laneCompPct + '%') : '')
-                            + ' · ' + (laneApproved ? '已审' : '待审')))),
+                            + ' · ' + (laneApproved ? t('已审', 'Approved') : t('待审', 'Pending'))))),
                       h('div', {
                         className: 'rt-swim-track',
                         style: { position: 'relative', display: 'flex', alignItems: 'center', padding: '6px 10px', minWidth: 0 },
@@ -3303,7 +3383,7 @@
                             }, clickable((e) => {
                               if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
                               openAgentInspector(lane.id)
-                            }, { label: '展开 ' + lane.title + ' ' + stg.tag + ' 详情', expanded: isLaneSel })),
+                            }, { label: t('展开 ', 'Expand ') + lane.title + ' ' + stg.tag, expanded: isLaneSel })),
                               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
                                 h('span', { style: { fontSize: 10, fontWeight: 700, color: lane.color, whiteSpace: 'nowrap' } }, stg.tag),
                                 stg.isConclusion
@@ -3319,7 +3399,7 @@
                                           : (laneStatus === 'running' ? 'rgba(59,130,246,0.14)' : (laneStatus === 'pending' ? 'rgba(245,158,11,0.14)' : 'rgba(16,185,129,0.14)')),
                                         color: laneStatus === 'error' ? '#ef4444' : (laneStatus === 'running' ? '#3b82f6' : (laneStatus === 'pending' ? '#d97706' : '#10b981')),
                                       },
-                                    }, laneStatus === 'error' ? '异常待修复' : (laneStatus === 'running' ? '运行中' : (laneStatus === 'pending' ? '待执行' : '已完成')))
+                                    }, laneStatus === 'error' ? t('异常待修复', 'Needs Fix') : (laneStatus === 'running' ? t('运行中', 'Running') : (laneStatus === 'pending' ? t('待执行', 'Pending') : t('已完成', 'Done'))))
                                   : null),
                               h('span', {
                                 style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -3342,23 +3422,23 @@
                 },
               },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, '协作任务'),
+                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, t('协作任务', 'Collab Tasks')),
                   h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                    filteredTasks.length + '/' + allTasks.length + ' 个工作项'),
+                    filteredTasks.length + '/' + allTasks.length + t(' 个工作项', ' work items')),
                   h('div', { className: 'rt-spacer' }),
                   h('input', {
                     className: 'rt-input',
                     style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
-                    placeholder: '搜索工作项...',
+                    placeholder: t('搜索工作项...', 'Search tasks...'),
                     value: taskSearch,
                     onChange: (e) => setTaskSearch(e.target.value),
                   })),
                 h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
                   [
-                    { k: 'all', lbl: '全部 ' + allTasks.length },
-                    { k: 'run', lbl: '进行中 ' + runTaskCount },
-                    { k: 'wait', lbl: '待处理 ' + waitTaskCount },
-                    { k: 'done', lbl: '已完成 ' + doneTaskCount },
+                    { k: 'all', lbl: t('全部 ', 'All ') + allTasks.length },
+                    { k: 'run', lbl: t('进行中 ', 'Running ') + runTaskCount },
+                    { k: 'wait', lbl: t('待处理 ', 'Pending ') + waitTaskCount },
+                    { k: 'done', lbl: t('已完成 ', 'Done ') + doneTaskCount },
                   ].map((fp) => h('button', {
                     key: fp.k,
                     type: 'button',
@@ -3367,7 +3447,7 @@
                     onClick: () => setTaskFilter(fp.k),
                   }, fp.lbl))),
                 filteredTasks.length === 0
-                  ? h('div', { className: 'rt-empty' }, '当前暂无协作工作项 —— 在「协同与审批」拆解需求或新增分片后将自动生成。')
+                  ? h('div', { className: 'rt-empty' }, t('当前暂无协作工作项 —— 在「协同与审批」拆解需求或新增分片后将自动生成。', 'No collab tasks yet — decompose requirements in "Collab & Approval" or add a shard.'))
                   : h('div', {
                       style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 },
                     },
@@ -3389,7 +3469,7 @@
                             flexDirection: 'column',
                             gap: 5,
                           },
-                        }, clickable(() => setExpandedTaskId(isExp ? null : tk.id), { label: '展开协作任务详情 ' + tk.title, expanded: isExp })),
+                        }, clickable(() => setExpandedTaskId(isExp ? null : tk.id), { label: t('展开协作任务详情 ', 'Toggle task ') + tk.title, expanded: isExp })),
                           h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                             h('span', {
                               style: { background: tk.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 5, fontFamily: 'ui-monospace,Menlo,monospace' },
@@ -3426,7 +3506,7 @@
                                       filesOwned: tk.filesOwned,
                                     })
                                   },
-                                }, isTaskBusy ? '拉起中…' : '拉起执行')
+                                }, isTaskBusy ? t('拉起中…', 'Starting...') : t('拉起执行', 'Dispatch'))
                               : null),
                           h('div', {
                             style: {
@@ -3437,42 +3517,42 @@
                               whiteSpace: isExp ? 'normal' : 'nowrap',
                               lineHeight: 1.5,
                             },
-                          }, '委派: ' + tk.prompt),
+                          }, t('委派: ', 'Goal: ') + tk.prompt),
                           isExp
                             ? h('div', {
                                 style: { marginTop: 4, paddingTop: 6, borderTop: '1px dashed var(--dsw-alias-border-l1)', display: 'flex', flexDirection: 'column', gap: 5, fontSize: 11.5 },
                               },
                                 h('div', { style: { color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55 } },
-                                  h('b', null, '产出摘要：'), tk.output),
+                                  h('b', null, t('产出摘要：', 'Output Digest: ')), tk.output),
                                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                                  h('span', { className: 'rt-mono' }, '用量 ' + tk.tokenLabel),
-                                  h('span', { className: 'rt-mono' }, '耗时 ' + tk.durationLabel),
-                                  h('span', { className: 'rt-mono' }, tk.steps + ' 步'),
+                                  h('span', { className: 'rt-mono' }, t('用量 ', 'Tokens ') + tk.tokenLabel),
+                                  h('span', { className: 'rt-mono' }, t('耗时 ', 'Duration ') + tk.durationLabel),
+                                  h('span', { className: 'rt-mono' }, tk.steps + t(' 步', ' steps')),
                                   h('div', { className: 'rt-spacer' }),
                                   h('button', {
                                     type: 'button',
                                     className: 'rt-btn',
                                     style: { padding: '1px 7px', fontSize: 10.5 },
                                     onClick: (e) => { e.stopPropagation(); openAgentInspector(tk.agentId) },
-                                  }, '检视环节细节'),
+                                  }, t('检视环节细节', 'Inspect Steps')),
                                   h('button', {
                                     type: 'button',
                                     className: 'rt-btn rt-jump-chat-btn',
                                     style: { padding: '1px 7px', fontSize: 10.5 },
                                     onClick: (e) => { e.stopPropagation(); handleOpenAgentChat(tk) },
-                                  }, '跳转会话聊天 ↗'),
+                                  }, t('跳转会话聊天 ↗', 'Open Chat ↗')),
                                   h('button', {
                                     type: 'button',
                                     className: 'rt-btn',
                                     style: { padding: '1px 7px', fontSize: 10.5 },
                                     onClick: (e) => { e.stopPropagation(); setSelId(tk.role); setMode('docwall') },
-                                  }, '查看角色文稿 →'),
+                                  }, t('查看角色文稿 →', 'View Role Doc →')),
                                   h('button', {
                                     type: 'button',
                                     className: 'rt-btn rt-btn-primary',
                                     style: { padding: '1px 7px', fontSize: 10.5 },
-                                    onClick: (e) => { e.stopPropagation(); triggerCheckpoint('断点续跑', 'resume', tk.agentId || tk.role) },
-                                  }, '断点续跑')))
+                                    onClick: (e) => { e.stopPropagation(); triggerCheckpoint(t('断点续跑', 'Checkpoint Resume'), 'resume', tk.agentId || tk.role) },
+                                  }, t('断点续跑', 'Resume'))))
                             : null)
                       }))))
           : null,
@@ -3484,7 +3564,7 @@
                 allNodes.map((n) => h('div', Object.assign({
                   key: 'doc' + n.id,
                   className: 'rt-doc-item' + (selId === n.id ? ' on' : ''),
-                }, clickable(() => setSelId(n.id), { label: '预览文稿 ' + n.docTitle, expanded: selId === n.id })),
+                }, clickable(() => setSelId(n.id), { label: t('预览文稿 ', 'Preview ') + n.docTitle, expanded: selId === n.id })),
                   h('div', { className: 'rt-doc-item-title' }, n.code + ' · ' + n.docTitle),
                   h('div', { className: 'rt-doc-item-sub' }, n.name + ' (' + n.statusLabel + ')')))),
               h('div', { className: 'rt-doc-preview' },
@@ -3496,8 +3576,8 @@
                     type: 'button',
                     className: 'rt-btn',
                     onClick: () => copyWithFeedback(selected.docBody, selected.docTitle, (okFlag, m) => setToast(m)),
-                  }, '复制文稿'),
-                  h('button', { type: 'button', className: 'rt-btn', onClick: () => setMode('p4') }, '返回派生树')),
+                  }, t('复制文稿', 'Copy Doc')),
+                  h('button', { type: 'button', className: 'rt-btn', onClick: () => setMode('p4') }, t('返回派生树', 'Back to Tree'))),
                 h(Markdown, { className: 'rt-markdown', text: selected.docBody })))
           : null)
     }

@@ -6,7 +6,7 @@
  * 基座外无依赖：只用平台 seed 里的 react 与 ctx.slots。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-redteam-ui',
+  id: 'dsh-lmtagent-ui',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
@@ -88,7 +88,7 @@ window.__ModuleLoader__.load({
     function SecretText(props) {
       const value = String(props.value === undefined || props.value === null ? '' : props.value)
       const [shown, setShown] = React.useState(false)
-      if (value === '') return h('span', { className: 'rt-secret-none' }, props.empty || '未记录')
+      if (value === '') return h('span', { className: 'rt-secret-none' }, props.empty || t('未记录', 'Not recorded'))
       return h('span', {
         className: props.className || 'rt-mono',
         style: { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%' },
@@ -97,7 +97,7 @@ window.__ModuleLoader__.load({
         h('button', {
           className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
           onClick: (e) => { e.stopPropagation(); setShown((v) => !v) },
-        }, shown ? '隐藏' : '显示'))
+        }, shown ? t('隐藏', 'Hide') : t('显示', 'Show')))
     }
 
     const splitTableRow = (line) => {
@@ -251,5 +251,5 @@ window.__ModuleLoader__.load({
 
     /* 样式表在 ./styles.js（唯一维护点）。浏览器半侧不能运行期 import，
        这里放占位符，由 bundle 的 build.mjs 在生成产物时替换成正文。 */
-    const CLIENT_PLUGIN_VERSION = '0.23.2'
+    const CLIENT_PLUGIN_VERSION = '1.0.0'
     const CSS = '__RT_STYLES__'

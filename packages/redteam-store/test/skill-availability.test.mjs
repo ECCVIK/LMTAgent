@@ -153,7 +153,7 @@ console.log('— 与工具/面板共用同一份实现')
   const tools = readFileSync(new URL('../../redteam-tools/lib/index.js', import.meta.url), 'utf8')
   const ui = readFileSync(new URL('../../redteam-ui/lib/index.js', import.meta.url), 'utf8')
   ok(/from '\.\.\/\.\.\/redteam-store\/lib\/skill-availability\.js'/.test(tools),
-    'redteam_preflight 用共享判定模块')
+    'lmt_preflight 用共享判定模块')
   ok(/from '\.\.\/\.\.\/redteam-store\/lib\/skill-availability\.js'/.test(ui),
     '面板技能库用同一份共享判定模块')
   const bundleTools = readFileSync(new URL('../../redteam-bundle/lib/tools.js', import.meta.url), 'utf8')

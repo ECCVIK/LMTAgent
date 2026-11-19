@@ -1,61 +1,65 @@
 English | [简体中文](README.zh-CN.md)
 
-# LMTAgent (`v0.23.2`)
+# LMTAgent (`v1.0.0` · `dsh-lmtagent`)
 
 Multi-agent software engineering orchestrator and docked workbench plugin for DeepSeek Harness (DSH Desktop).
 
-Built around a deterministic 4-Wave DAG engineering pipeline (`Wish Clarification -> File-Disjoint Sharding -> Master-Worker Concurrent Dispatch -> Digest Compression -> Approval & Wave Advance`), LMTAgent prevents requirement drift, cross-session workspace collisions, concurrent write conflicts, and opaque background execution.
+Built around a **4-Wave Bounded DAG engineering pipeline** (`Wish Clarification -> File-Disjoint Sharding -> Concurrent Master-Worker Dispatch -> Digest Compression -> Approval & Wave Advance`), LMTAgent turns ambiguous feature wishes into structured specifications, enforces file-level write isolation across parallel subagents, guards workspace token/cost budgets, and keeps host telemetry and storage completely isolated in an independent namespace (`dsh-lmtagent`) that coexists cleanly with `dsh-redteam-mode`.
 
-## UI Preview (`v0.23.2`)
+---
 
-Captured directly in headless Edge from the compiled `packages/redteam-ui/lib/client.js` and `styles.js` bundles:
+## UI Preview (`v1.0.0`)
 
-| Overview & Expandable Context Table (`Overview`) | Cluster Scheduling & Topology Tree (`Cluster -> Agents & Concurrency`) |
+Captured directly in headless Chromium from the compiled `packages/redteam-ui/lib/client.js` and `styles.js` bundles in `en-US` locale:
+
+| Overview & Expandable Context Drawer (`Overview`) | Cluster Scheduling & Topology Tree (`Cluster -> Agents & Slots`) |
 | :---: | :---: |
-| ![Overview & Expandable Context Table](docs/assets/ui-overview-workbench.png) | ![Cluster Scheduling & Topology Tree](docs/assets/ui-agents-dag.png) |
-| **Collaboration & Approval Queue (`Collab & Approval`)** | **Unified Settings Center (`Settings`)** |
-| ![Collaboration & Approval Queue](docs/assets/ui-assets-pg.png) | ![Unified Settings Center](docs/assets/ui-report-v2.png) |
+| ![Overview & Expandable Context Drawer](docs/assets/ui-overview-workbench-en.png) | ![Cluster Scheduling & Topology Tree](docs/assets/ui-agents-dag-en.png) |
+| **Collaboration, Quick Demos & Scope Rollback (`Collab & Approval`)** | **Unified Settings & Dispatch Policy (`Settings`)** |
+| ![Collaboration, Quick Demos & Scope Rollback](docs/assets/ui-assets-pg-en.png) | ![Unified Settings & Dispatch Policy](docs/assets/ui-report-v2-en.png) |
 
 ---
 
-## 1. Core Capabilities & Architecture
+## 1. What Is New in `v1.0.0`
 
-1. **1:1 Session-Isolated Workspaces**
-   - Maintains an independent `uninitialized / skipped / initialized` state machine per active DSH session (`props.sessionId` + `$DSH_HOME/redteam/sessions.json`), ensuring new sessions never bind to unrelated projects. Supports skipping onboarding and reopening it anytime before conversation starts.
-2. **Real-Time AI Clarification, Sharding & Truncated JSON Repair (`packages/redteam-ui/lib/llm-planner.js`)**
-   - `clarifyWishWithAI` and `decomposeWishWithAI` run live inference via `invokeDshLlmJson` (`ctx.get('llm')`) with an `8192`-token output budget, `<think>` block stripping, unclosed fence handling, and automatic repair of truncated trailing JSON (`extractJsonFromLlmText`).
-3. **Strategy A Master-Worker Dispatch & Wave Auto-Advance (`packages/redteam-ui/lib/dsh-dispatch.js`)**
-   - Spawns Wave 1 workers via `subagents.startActivation`, records real `childId` values in the fact store, and syncs the Captain root agent via `rootAgent.followup`.
-   - When `autoAdvanceWave` is enabled in Settings, approving all tasks in the current wave automatically launches the next wave's concurrent workers and notifies the root agent.
-4. **Runtime `ShardLock` & Post-Write Scope Audit (`packages/redteam-store/lib/core.js`)**
-   - Blocks overlapping `files_owned` declarations within the same wave at dispatch time. When a worker submits a `worker_digest`, `auditWorkerScopeViolation` checks `files_touched` against `files_owned` and surfaces `scope_violations` warnings in the approval queue card.
-   - Built-in `3min` heartbeat lease reaper (`reapExpiredAgentLeases`) reclaims stalled worker slots automatically.
-5. **Compact Overview & On-Demand Detail Drawers (`05-overview-tab.js`)**
-   - Displays 4 concise KPI cards (`Execution`, `Concurrency`, `Context & Cache`, `Delivery`) above the derivation tree canvas; clicking any KPI card expands an inline SVG donut chart (`RtMiniDonut`), stacked ratio bar (`RtStackedBar`), and breakdown table.
-6. **Zoom-Invariant 1:1 Stage SVG Derivation Tree (`04-workflow-deck.js`)**
-   - Computes node coordinates via `measureBoxInStage` and draws edges in an overlay `svg.rt-tree-edges-svg`, supporting horizontal/vertical layout switching and per-node controls.
-7. **Unified Settings Center & Host-Client Version Guard (`06-engineering-tabs.js` / `07-cluster-shell.js`)**
-   - Consolidates team concurrency & dispatch policy (`maxAgents`, `maxDepth`, `thinkingEffort`, `autoAdvanceWave`), AI Planner model selection, PostgreSQL connection, Feishu webhook notifications, and workspace bindings into a 5-section settings view mounted into DSH `settings.section`.
-   - Automatically alerts the top bar to restart `DSH NEXT` when `CLIENT_PLUGIN_VERSION` differs from backend `hostVersion`.
+1. **Independent Coexistence Namespace (`dsh-lmtagent`) & Safe Migration**
+   - Uses clean Cordis service and route identifiers (`lmtagent-mode`, `ctx.lmtagent`, `lmtagent-tools`, `lmtagent-ui`, `dsh-lmtagent-ui`, `POST /lmtagent/api`, `GET /lmtagent/events`, `preset-lmtagent*`, and `$DSH_HOME/lmtagent`) so installing LMTAgent alongside `dsh-redteam-mode` produces zero plugin, slot, route, or storage collisions.
+   - Automatically performs a non-destructive first-run copy migration (`migrateLegacyRedteamDir`) if legacy data exists in `$DSH_HOME/redteam` and `$DSH_HOME/lmtagent` does not yet exist.
+2. **Clean 12-Skill Engineering Pack & 12-Tool Catalog (`11,645` Bytes Schema)**
+   - Ships strictly **12 engineering & workflow skills** (`eng-wish-spec`, `eng-ui-design-tokens`, `eng-api-contract-sharding`, `eng-fullstack-builder`, `eng-code-review-security`, `eng-test-verification-gate`, `eng-release-changelog`, `eng-git-recovery`, `campaign-planning`, `browser-automation`, `opsec-hygiene`, `supply-chain`) while excluding legacy pentest handbooks from the default distribution via `OMITTED_SKILLS` in `packages/redteam-bundle/tools/distribution.mjs`.
+   - Consolidates legacy tools down to **12 lean `lmt_*` tools** (`lmt_workflow`, `lmt_agent_slot`, `lmt_engagement_open`, `lmt_session_bind`, `lmt_session_info`, `lmt_sessions`, `lmt_preflight`, `lmt_role_prompt`, `lmt_roles`, `lmt_artifact_record`, `lmt_artifact_query`, `lmt_report_export`), serializing to **`11,645` bytes** (`58%` smaller than the `28,000`-byte baseline) with explicit `additionalProperties: false` across all 26 object schema nodes.
+3. **High-Performance Modular Core (`core.js` + `ui/lib/index.js`)**
+   - Split store monolith (`packages/redteam-store/lib/core.js` reduced to `6,415` lines) into focused modules (`shard-policy.js`, `session-bindings.js`, `dag-workflow.js`, `settings.js`, `pg-engine.js`, `prompts.js`) with write-versioned read memoization (`_bumpWriteSeq`, SQLite `total_changes()`, `workflow-dag.json` `mtimeMs` checks).
+   - Split UI host bridge (`packages/redteam-ui/lib/index.js` reduced from `7,504` to `3,538` lines) into `scope-rollback.js`, `dag-scheduler.js`, `settings-bridge.js`, `update-manager.js`, `telemetry-jsonl.js`, `dsh-dispatch.js`, and `llm-planner.js`.
+4. **Pre/Post-Write `ShardLock` + Safe Git Scope Rollback**
+   - `checkFileAgainstShardLocks` checks target paths before writes (`lmt_workflow({ action: "check_scope" })`), while post-write `auditWorkerScopeViolation` flags out-of-shard edits in the Approval Queue.
+   - `rollbackScopeViolations` (`packages/redteam-ui/lib/scope-rollback.js`) uses `execFileSync('git', ...)` without shell interpolation, rejects path traversal and symlink escapes outside the repository root, and offers one-click rollback right inside the Collab Approval card.
+5. **Budget Circuit Breaker, Auto-Retry & Experimental Speculative DAG Pipelining**
+   - **Budget Circuit Breaker** (`evaluateWorkspaceBudgetGuard`): enforces `maxTokensPerWorkspace` and `maxCostPerWorkspace` caps with live Overview alerts and automatic pause on dispatch (overrideable explicitly per action).
+   - **Exponential Backoff Auto-Retry** (`maxAutoRetries` `0-3`): automatically retries transient worker failures and injects prior failure context into the replacement worker prompt.
+   - **Experimental Speculative DAG Pipelining** (`speculativeWaveDispatch` + `depends_on` + `detectDagCycles`): dispatches unblocked downstream workers whose `depends_on` dependencies and shard locks clear early without waiting for an entire wave barrier.
+6. **Full Bilingual Web Console & 1-Minute Quick Demos**
+   - Reactive `00b-i18n.js` localization (`lmt_ui_locale`, `zh-CN` / `en-US`, top-bar `ZH / EN` language toggle + Settings selector) with zero mixed-language leakage across tabs.
+   - Added 1-Minute Demo Preset Chips (`OrderFlow-Demo` and `CliRefactor-Demo`) in `WishRefinerWizard` plus live `perfMetrics` drawers (`digestCompressionRatioPct`, `parallelismEfficiencyPct`, `schemaTokenSavedEstimate`, `scopeCompliancePct`).
 
 ---
 
-## 2. 4-Wave Closed-Loop Workflow
+## 2. 4-Wave Closed-Loop Engineering Pipeline
 
 ```text
-[User Requirement]
+[User Requirement / 1-Min Demo Preset]
       │
-      ▼  Step 1: AI Clarification & Sharding (clarifyWishWithAI / decomposeWishWithAI)
-[Structured refined_prompt + 4-Wave File-Disjoint goals]
+      ▼  Step 1: AI Clarification & File-Disjoint Sharding (clarifyWishWithAI / decomposeWishWithAI)
+[Structured refined_prompt + 4-Wave non-overlapping files_owned shards + depends_on DAG]
       │
-      ▼  Step 2: ShardLock Check & Strategy A Dispatch (ShardLock + startActivation + rootAgent.followup)
-[Wave 1..4 Concurrent Subagents (with optional autoAdvanceWave)]
+      ▼  Step 2: Budget Guard & Master-Worker Dispatch (evaluateWorkspaceBudgetGuard + ShardLock + startActivation)
+[Wave 1..4 Concurrent Subagents (wave-barrier or experimental speculativeWaveDispatch)]
       │
       ▼  Step 3: Digest Compression & Scope Audit (submit_digest + auditWorkerScopeViolation)
-[Compact what_was_done / files_touched / verification -> worker_digests + scope_ok]
+[Compact what_was_done / files_touched / verification -> worker_digests + scope_ok / rollback option]
       │
-      ▼  Step 4: Approval & Progression (planApproveWorker / updateWorkerGoal / retryWorkerTask)
-[Human or Captain Approval -> Advance Next Wave -> Final Delivery Report]
+      ▼  Step 4: Approval, Auto-Advance & Delivery Report (planApproveWorker / lmt_report_export)
+[Human or Captain Approval -> Advance Downstream Ready Shards -> Reproducible Delivery Report]
 ```
 
 ---
@@ -64,22 +68,22 @@ Captured directly in headless Edge from the compiled `packages/redteam-ui/lib/cl
 
 | # | Role ID | Preset Name | Core Responsibility & Output Contract |
 | :---: | :--- | :--- | :--- |
-| 0 | `plan` | `LMTAgent Cluster` | Master Coordinator: orchestrates sharding, digest approval, and next-wave dispatch |
-| 1 | `recon` | `CEO / Product & Planning` | Audits requirements and repository boundaries; outputs structured specs |
-| 2 | `designer` | `Designer / UX & Visual` | Defines layout, visual tokens, and component interaction contracts |
-| 3 | `assess` | `Eng Manager / Architecture` | Freezes API schemas and locks exclusive `shard_locks` file slices |
-| 4 | `vuln-scan` | `Reviewer & CSO / Security` | Performs static code review, concurrency checks, and security audits |
-| 5 | `exploit` | `Builder / Full-Stack Dev` | Implements features strictly within `files_owned` and submits `worker_digest` |
-| 6 | `qa` | `QA Lead / Quality & Tests` | Runs full test suites, build parity checks, and confidential scans |
-| 7 | `internal` | `Doc & Release / Delivery` | Compiles delivery reports from `worker_digests` and sends Feishu alerts |
+| 0 | `plan` | `lmtagent` (`LMTAgent Cluster`) | Master Orchestrator: decomposes wishes, schedules 4-Wave DAGs, approves digests |
+| 1 | `recon` | `lmtagent-worker-recon` | CEO / Product & Discovery: maps repo modules, API contracts, and P0/P1 priorities |
+| 2 | `designer` | `lmtagent-worker-designer` | Designer / UX & Visual: defines design tokens, component hierarchy, and UI states |
+| 3 | `assess` | `lmtagent-worker-assess` | Eng Manager / Architecture: freezes schemas and allocates file-disjoint `shard_locks` |
+| 4 | `vuln-scan` | `lmtagent-worker-vuln-scan` | Reviewer & CSO / Security: audits defects, concurrency safety, and security gates |
+| 5 | `exploit` | `lmtagent-worker-exploit` | Builder / Full-Stack Dev: implements shards inside `files_owned` and submits digests |
+| 6 | `qa` | `lmtagent-worker-qa` | QA Lead / Quality & Tests: runs full build, confidential, and regression suites |
+| 7 | `internal` | `lmtagent-worker-internal` | Doc & Release / Delivery: updates docs, generates changelogs, and exports reports |
 
 ---
 
 ## 4. Host Slots, Storage & Real-Time Event Stream
 
-- **6 Host Mount Slots**: `shell.overlay`, `main`, `sidebar.panellist`, `conversation.view`, `conversation.session.header.utilities`, and `settings.section`.
-- **Incremental Telemetry & SSE**: Byte-offset `.jsonl` tailing plus `GET /redteam/events` SSE streaming for node and fact-store updates.
-- **Dual-Mode Storage**: Connects to external PostgreSQL (Wire Protocol v3) when `REDTEAM_PG_URL`, `DSH_PG_URL`, `DATABASE_URL`, or `PGHOST` is set; otherwise uses local SQLite in WAL mode under `$DSH_HOME/redteam` with zero external runtime dependencies. `settings.js` includes an `mtimeMs`-based in-process config cache.
+- **6 Clean `lmtagent-*` Host Slots**: `lmtagent-console` (`shell.overlay`), `lmtagent-workbench` (`main`), `lmtagent-panellist` (`sidebar.panellist`), `lmtagent-view` (`conversation.view`), `lmtagent-header-toggle` (`conversation.session.header.utilities`), and `lmtagent-settings` (`settings.section`).
+- **Incremental Telemetry & SSE**: Byte-offset `.jsonl` tailing (`packages/redteam-ui/lib/telemetry-jsonl.js`) plus `GET /lmtagent/events` SSE streaming and `POST /lmtagent/api` RPC bridge.
+- **Dual-Mode Storage**: Connects to external PostgreSQL (Wire Protocol v3) when `LMTAGENT_PG_URL`, `REDTEAM_PG_URL`, `DSH_PG_URL`, `DATABASE_URL`, or `PGHOST` is set; otherwise runs local SQLite in WAL mode under `$DSH_HOME/lmtagent` with zero external runtime dependencies.
 
 ---
 
@@ -93,21 +97,23 @@ dsh plugin add github:ECCVIK/LMTAgent
 
 ### DSH Desktop Plugin Market
 
-Search for `lmtagent` in the DSH Desktop Plugin Market or import `github:ECCVIK/LMTAgent` directly (pre-built `dsh-redteam-mode-<version>.tgz` tarballs are also available on GitHub Releases).
+Search for `dsh-lmtagent` / `LMTAgent` in the DSH Desktop Plugin Market or import `github:ECCVIK/LMTAgent` directly (`pre-built dsh-lmtagent-<version>.tgz` tarballs are published on GitHub Releases).
 
 ---
 
 ## 6. Build, Gates & Tests
 
 ```bash
-# Assemble client/styles bundles and sync to packages/redteam-bundle & repo root
+# Assemble styles/client bundles and sync to packages/redteam-bundle & repo root
 npm run build
 node packages/redteam-bundle/tools/build.mjs --check
+node packages/redteam-ui/tools/assemble-client.mjs --check
+node packages/redteam-ui/tools/assemble-styles.mjs --check
 
 # Confidential gate self-test & full repository scan (0 hits)
 node scripts/check-no-confidential.mjs --selftest
 node scripts/check-no-confidential.mjs --all
 
-# Run all 22 zero-dependency test suites (22 files / 1,193 assertions passing on Windows & Linux)
+# Run all 22 zero-dependency test suites (22 files / 1,289 assertions passing)
 npm test
 ```

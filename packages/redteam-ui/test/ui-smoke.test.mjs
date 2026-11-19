@@ -15,7 +15,17 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveRootSessionId } from '../lib/index.js'
+import {
+  apply as applyHost,
+  name as hostPluginName,
+  inject as hostPluginInject,
+  resolveRootSessionId,
+  sanitizeRepoRelativePath,
+  detectDagCycles,
+  evaluateWorkspaceBudgetGuard,
+  computeWorkspacePerfMetrics,
+} from '../lib/index.js'
+import { pluginIdentity } from '../lib/update-manager.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const clientPath = join(here, '..', 'lib', 'client.js')
@@ -103,7 +113,7 @@ ok(/__ModuleLoader__\.load\(/.test(source), 'client.js 通过 __ModuleLoader__.l
   }
   ok(threw === null, 'client.js 工厂函数执行不报错' + (threw ? '：' + threw.message : ''))
 }
-ok(registered !== null && registered.id === 'dsh-redteam-ui', `注册模块 id 为 dsh-redteam-ui（实际：${registered && registered.id}）`)
+ok(registered !== null && registered.id === 'dsh-lmtagent-ui', `注册模块 id 为 dsh-lmtagent-ui（实际：${registered && registered.id}）`)
 
 const moduleExports = registered.factory((name) => {
   if (name === 'react') return reactStub
@@ -397,6 +407,45 @@ ok(
     && source.includes('写盘越界警告：'),
   '包含 CLIENT_PLUGIN_VERSION 宿主版本守卫、autoAdvanceWave 设置项与写盘越界警告 UI 契约',
 )
+
+/* ── 10. v1.0.0 宿主模块化拆分、路由契约、回滚与调度基准冒烟 ─────────────────── */
+console.log('— 冒烟十：v1.0.0 @lmtagent/ui 宿主插件身份、/lmtagent/* 路由与调度基准契约')
+{
+  const uiPkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
+  ok(uiPkg.name === '@lmtagent/ui' && uiPkg.version === '1.0.0', `package.json 为 @lmtagent/ui@1.0.0（实际：${uiPkg.name}@${uiPkg.version}）`)
+  ok(hostPluginName === 'lmtagent-ui', `index.js export name === "lmtagent-ui"（实际：${hostPluginName}）`)
+  ok(Array.isArray(hostPluginInject) && hostPluginInject[0] === 'lmtagent', `index.js export inject 首项为 "lmtagent"（实际：${hostPluginInject.join(',')}）`)
+
+  const regRoutes = new Map()
+  const hostDisposers = []
+  applyHost({
+    lmtagent: null,
+    skills: { list: () => [], get: async () => undefined },
+    agentPresets: { standingKeyFor: async () => 'scope-smoke' },
+    get: () => null,
+    effect(fn) {
+      const d = fn()
+      if (typeof d === 'function') hostDisposers.push(d)
+    },
+    webServer: {
+      register(spec) {
+        regRoutes.set(spec.path, spec.handler)
+        return () => regRoutes.delete(spec.path)
+      },
+    },
+  })
+  ok(regRoutes.has('/lmtagent/api') && regRoutes.has('/lmtagent/events'), '注册 /lmtagent/api 与 /lmtagent/events 路由')
+  ok(!regRoutes.has('/redteam/api') && !regRoutes.has('/redteam/events'), '不再注册遗留 /redteam/api 与 /redteam/events 路由')
+  for (const d of hostDisposers) {
+    try { d() } catch { /* ignore */ }
+  }
+
+  ok(pluginIdentity({ lmtagent: null }).name === 'dsh-lmtagent', 'update-manager 默认包名回退为 dsh-lmtagent')
+  ok(sanitizeRepoRelativePath('/repo', '../evil').ok === false && sanitizeRepoRelativePath('/repo', 'src/a.js') === 'src/a.js', 'sanitizeRepoRelativePath 守卫生效')
+  ok(detectDagCycles([{ id: 'a', depends_on: ['b'] }, { id: 'b', depends_on: ['a'] }]).hasCycle === true, 'detectDagCycles 检测环路生效')
+  ok(evaluateWorkspaceBudgetGuard({ totalTokens: 1000 }, { maxTokensPerWorkspace: 500 }).tripped === true, 'evaluateWorkspaceBudgetGuard 熔断判定生效')
+  ok(computeWorkspacePerfMetrics({}, []).schemaTokenSavedEstimate > 0, 'computeWorkspacePerfMetrics 基准计算生效')
+}
 
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)

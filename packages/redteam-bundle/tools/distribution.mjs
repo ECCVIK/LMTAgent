@@ -19,16 +19,41 @@
  * 改这里就等于改发行形态，请连带更新 README / DISCLOSURE / Release 说明。
  */
 
-/** npm 包里**不含**的技能（攻击操作手册型）。仍留在仓库，随 Release 附件分发。 */
+/** npm 包里**不含**的技能（渗透攻击/探测操作手册型）。仍留在仓库，随 Release 附件分发。 */
 export const OMITTED_SKILLS = [
+  'active-scan.md',
+  'ad-attack.md',
+  'ai-agent-attack.md',
+  'api-data-exfil.md',
+  'asset-correlation.md',
+  'c2-infra.md',
   'chisel-tunnel.md',
+  'cloud-k8s.md',
+  'cn-proxy-pool.md',
   'credential-attack.md',
+  'deepseek-web-intel.md',
+  'dir-bruteforce.md',
+  'fofa-recon.md',
   'frp-tunnel.md',
+  'fscan-intranet.md',
+  'gogo-intranet.md',
+  'kimi-webbridge.md',
   'lateral-movement.md',
+  'mobile-code-recon.md',
+  'netspy-recon.md',
+  'network-device.md',
+  'nuclei-scan.md',
+  'oob-verify.md',
+  'passive-recon.md',
+  'recon-pipeline.md',
+  'redteam-setup.md',
+  'score-coverage.md',
   'shell-handler.md',
+  'specialist-paths.md',
   'suo5-tunnel.md',
   'unauth-exploit.md',
   'vps-reverse-shell.md',
+  'web-fingerprint.md',
   'webshell-toolkit.md',
 ]
 
@@ -38,13 +63,13 @@ export const OMITTED_SCRIPTS = [
 ]
 
 /** 完整工具箱附件的文件名（Release 附件），给人看的说明用。 */
-export const EXTRA_TOOLKIT_NAME = 'dsh-redteam-mode-<版本>-toolkit.tar.gz'
+export const EXTRA_TOOLKIT_NAME = 'dsh-lmtagent-<版本>-security-toolkit.tar.gz'
 
-/** 附件里给用户看的说明（`redteam_preflight` 与文档共用同一段口径）。 */
+/** 附件里给用户看的说明（`lmt_preflight` 与文档共用同一段口径）。 */
 export const EXTRA_TOOLKIT_HINT =
-  '完整工具箱（工具自动安装脚本 + 9 份攻击链技能）不随 npm 包分发：'
-  + '从 GitHub Release 附件 ' + EXTRA_TOOLKIT_NAME + ' 取值，解压后按其中的 README 手动执行。'
-  + '本包不会替用户下载或安装任何安全工具。'
+  '可选安全审计扩展工具箱（安装脚本 + 渗透探测技能）不随 npm 默认工程包分发：'
+  + '如需使用，请从 GitHub Release 附件 ' + EXTRA_TOOLKIT_NAME + ' 按需获取并手动解压。'
+  + '本包默认仅随包提供 12 份软件工程与 CI/工作流核心技能。'
 
 /** 技能是否随 npm 包分发。 */
 export function isSkillShipped (fileName) {

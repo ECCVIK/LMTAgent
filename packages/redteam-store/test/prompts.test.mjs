@@ -38,11 +38,11 @@ try {
     '八个角色里只有一个主会话（plan），它不参与派活')
   ok(fresh.every((p) => p.stale === false && p.injected === (p.role !== 'plan')),
     '新靶标 stale=false；只有执行角色标记 injected=true')
-  ok(DEFAULT_PROMPTS.plan.includes('campaign-planning') && DEFAULT_PROMPTS.assess.includes('specialist-paths')
-    && DEFAULT_PROMPTS.exploit.includes('specialist-paths') && DEFAULT_PROMPTS.qa.includes('specialist-paths')
-    && DEFAULT_PROMPTS.internal.includes('specialist-paths'),
-    '角色提示词已接入作战规划/专项路径技能')
-  ok(DEFAULT_PROMPTS.internal.includes('netspy-recon'), '内网提示词接入 netspy 可达网段发现')
+  ok(DEFAULT_PROMPTS.plan.includes('campaign-planning') && DEFAULT_PROMPTS.assess.includes('eng-api-contract-sharding')
+    && DEFAULT_PROMPTS.exploit.includes('eng-fullstack-builder') && DEFAULT_PROMPTS.qa.includes('eng-test-verification-gate')
+    && DEFAULT_PROMPTS.internal.includes('eng-release-changelog'),
+    '角色提示词已接入干净工程规划/分片/构建/测试/发布技能')
+  ok(DEFAULT_PROMPTS.internal.includes('eng-git-recovery'), '发布收尾提示词接入 eng-git-recovery 回滚恢复技能')
   ok(roles.every((r) => typeof DEFAULT_PROMPTS[r] === 'string' && DEFAULT_PROMPTS[r].trim() !== ''),
     '每个角色都有内置默认提示词（不会出现空角色）')
 

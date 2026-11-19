@@ -14,23 +14,24 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { readFileSync } from 'node:fs'
-import { RedteamStore } from './core.js'
+import { RedteamStore, migrateLegacyRedteamDir } from './core.js'
 
 /** Cordis 插件名。 */
-export const name = 'redteam-store'
+export const name = 'lmtagent-store'
 
 /** 无硬依赖：数据层不依赖其它服务即可激活。 */
 export const inject = []
 
 /**
- * 解析数据根目录：显式配置 > REDTEAM_HOME > $DSH_HOME/redteam。
- * 组合层通常用 `!!js dshHomePath('redteam')` 直接给出绝对路径。
+ * 解析数据根目录：显式配置 > LMTAGENT_HOME > REDTEAM_HOME > $DSH_HOME/lmtagent。
+ * 组合层通常用 `!!js dshHomePath('lmtagent')` 直接给出绝对路径。
  */
 function resolveRoot(config) {
   if (config && typeof config.root === 'string' && config.root.length > 0) return config.root
+  if (process.env.LMTAGENT_HOME) return process.env.LMTAGENT_HOME
   if (process.env.REDTEAM_HOME) return process.env.REDTEAM_HOME
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-  return join(home, 'redteam')
+  return join(home, 'lmtagent')
 }
 
 /**
@@ -63,8 +64,9 @@ function readSelfPackage() {
  */
 export function apply(ctx, config = {}) {
   const root = resolveRoot(config)
+  migrateLegacyRedteamDir(root)
   const store = new RedteamStore(root)
-  /* 包身份挂在 store 上：界面桥接层（redteam-ui）的版本显示与更新逻辑都从这里读，
+  /* 包身份挂在 store 上：界面桥接层（lmtagent-ui）的版本显示与更新逻辑都从这里读，
      不用在生成物里硬编码版本号。 */
   const self = readSelfPackage()
   if (self !== null) {
@@ -74,7 +76,7 @@ export function apply(ctx, config = {}) {
   // 服务随 fiber 卸载而关闭：所有 SQLite 句柄在同一处释放。
   ctx.effect(() => () => store.close())
 
-  ctx.provide('redteam', store)
+  ctx.provide('lmtagent', store)
 }
 
-export { RedteamStore }
+export { RedteamStore, RedteamStore as LmtStore }

@@ -54,19 +54,32 @@ export const DEFAULT_DISPATCH_POLICY = {
   subagentProvider: 'spawn',
   autoWakeOnApprove: true,
   autoAdvanceWave: false,
+  speculativeWaveDispatch: false,
+  maxTokensPerWorkspace: 0,
+  maxCostPerWorkspace: 0,
+  maxAutoRetries: 1,
 }
 
-/** 默认界面视图与拓扑方向偏好。 */
+export const MAX_AUTO_RETRIES_LIMIT = 3
+
+/** 默认界面视图、拓扑方向与语言偏好。 */
 export const DEFAULT_UI_PREFERENCES = {
   defaultViewMode: 'novice',
   defaultTreeDirection: 'horizontal',
+  locale: 'auto',
 }
 
 function defaultRedteamRoot(env = process.env) {
+  if (env && typeof env.LMTAGENT_HOME === 'string' && env.LMTAGENT_HOME.trim() !== '') {
+    return env.LMTAGENT_HOME.trim()
+  }
+  if (env && typeof env.REDTEAM_HOME === 'string' && env.REDTEAM_HOME.trim() !== '') {
+    return env.REDTEAM_HOME.trim()
+  }
   const dshHome = (env && typeof env.DSH_HOME === 'string' && env.DSH_HOME.trim() !== '')
     ? env.DSH_HOME.trim()
     : join(homedir(), '.dsh')
-  return join(dshHome, 'redteam')
+  return join(dshHome, 'lmtagent')
 }
 
 function resolveRootDir(root, env = process.env) {
@@ -164,7 +177,7 @@ export function maxAgentsOf(root, env = process.env) {
   const s = readSettings(root, env)
   const fromFile = Number(s.maxAgents ?? s.max_agents)
   if (Number.isFinite(fromFile) && fromFile > 0) return clampMaxAgents(fromFile)
-  const fromEnv = Number(env && env.REDTEAM_MAX_AGENTS)
+  const fromEnv = Number((env && env.LMTAGENT_MAX_AGENTS) || (env && env.REDTEAM_MAX_AGENTS))
   if (Number.isFinite(fromEnv) && fromEnv > 0) return clampMaxAgents(fromEnv)
   return DEFAULT_MAX_AGENTS
 }
@@ -174,7 +187,7 @@ export function maxAgentsSourceOf(root, env = process.env) {
   const s = readSettings(root, env)
   const fromFile = Number(s.maxAgents ?? s.max_agents)
   if (Number.isFinite(fromFile) && fromFile > 0) return 'settings'
-  const fromEnv = Number(env && env.REDTEAM_MAX_AGENTS)
+  const fromEnv = Number((env && env.LMTAGENT_MAX_AGENTS) || (env && env.REDTEAM_MAX_AGENTS))
   if (Number.isFinite(fromEnv) && fromEnv > 0) return 'env'
   return 'default'
 }
@@ -192,6 +205,10 @@ export function thinkingEffortOf(root, env = process.env) {
   if (isRecognizedThinkingInput(rawFile)) {
     return normalizeThinkingEffort(rawFile)
   }
+  const rawLmtEnv = env && env.LMTAGENT_THINKING_EFFORT
+  if (isRecognizedThinkingInput(rawLmtEnv)) {
+    return normalizeThinkingEffort(rawLmtEnv)
+  }
   const rawRedteamEnv = env && env.REDTEAM_THINKING_EFFORT
   if (isRecognizedThinkingInput(rawRedteamEnv)) {
     return normalizeThinkingEffort(rawRedteamEnv)
@@ -208,7 +225,7 @@ export function maxDepthOf(root, env = process.env) {
   const s = readSettings(root, env)
   const fromFile = Number(s.maxDepth ?? s.max_depth)
   if (Number.isFinite(fromFile) && fromFile >= 1) return clampMaxDepth(fromFile)
-  const fromEnv = Number(env && env.REDTEAM_MAX_DEPTH)
+  const fromEnv = Number((env && env.LMTAGENT_MAX_DEPTH) || (env && env.REDTEAM_MAX_DEPTH))
   if (Number.isFinite(fromEnv) && fromEnv >= 1) return clampMaxDepth(fromEnv)
   return DEFAULT_MAX_DEPTH
 }
@@ -352,6 +369,20 @@ export function normalizeAiPlannerConfig(raw) {
 }
 
 /** 规范化子智能体派发策略配置。 */
+function normalizeNonNegInt(raw, fallback = 0, maxCap = Number.MAX_SAFE_INTEGER) {
+  if (raw === undefined || raw === null || raw === '') return fallback
+  const n = Math.floor(Number(raw))
+  if (!Number.isFinite(n) || n < 0) return fallback
+  return Math.min(n, maxCap)
+}
+
+function normalizeNonNegFloat(raw, fallback = 0) {
+  if (raw === undefined || raw === null || raw === '') return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return fallback
+  return Math.round(n * 10000) / 10000
+}
+
 export function normalizeDispatchPolicy(raw) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const rawDispatchMode = src.dispatchMode ?? src.dispatch_mode
@@ -374,16 +405,37 @@ export function normalizeDispatchPolicy(raw) {
     src.autoAdvanceWave ?? src.auto_advance_wave,
     DEFAULT_DISPATCH_POLICY.autoAdvanceWave,
   )
+  const speculativeWaveDispatch = normalizeBoolFlag(
+    src.speculativeWaveDispatch ?? src.speculative_wave_dispatch,
+    DEFAULT_DISPATCH_POLICY.speculativeWaveDispatch,
+  )
+  const maxTokensPerWorkspace = normalizeNonNegInt(
+    src.maxTokensPerWorkspace ?? src.max_tokens_per_workspace,
+    DEFAULT_DISPATCH_POLICY.maxTokensPerWorkspace,
+  )
+  const maxCostPerWorkspace = normalizeNonNegFloat(
+    src.maxCostPerWorkspace ?? src.max_cost_per_workspace,
+    DEFAULT_DISPATCH_POLICY.maxCostPerWorkspace,
+  )
+  const maxAutoRetries = normalizeNonNegInt(
+    src.maxAutoRetries ?? src.max_auto_retries,
+    DEFAULT_DISPATCH_POLICY.maxAutoRetries,
+    MAX_AUTO_RETRIES_LIMIT,
+  )
 
   return {
     dispatchMode,
     subagentProvider,
     autoWakeOnApprove,
     autoAdvanceWave,
+    speculativeWaveDispatch,
+    maxTokensPerWorkspace,
+    maxCostPerWorkspace,
+    maxAutoRetries,
   }
 }
 
-/** 规范化 UI 视图与拓扑方向偏好设置。 */
+/** 规范化 UI 视图、拓扑方向与语言偏好设置。 */
 export function normalizeUiPreferences(raw) {
   const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const rawViewMode = src.defaultViewMode ?? src.default_view_mode
@@ -398,9 +450,16 @@ export function normalizeUiPreferences(raw) {
     ? 'vertical'
     : DEFAULT_UI_PREFERENCES.defaultTreeDirection
 
+  const rawLocale = typeof src.locale === 'string' ? src.locale.trim().toLowerCase() : ''
+  let locale = DEFAULT_UI_PREFERENCES.locale
+  if (rawLocale === 'zh-cn' || rawLocale === 'zh') locale = 'zh-CN'
+  else if (rawLocale === 'en-us' || rawLocale === 'en') locale = 'en-US'
+  else if (rawLocale === 'auto') locale = 'auto'
+
   return {
     defaultViewMode,
     defaultTreeDirection,
+    locale,
   }
 }
 
@@ -449,7 +508,7 @@ function resolvePgUrlRaw(root, env = process.env) {
   if (typeof s.pgUrl === 'string' && /^postgres(?:ql)?:\/\//i.test(s.pgUrl.trim())) {
     return s.pgUrl.trim()
   }
-  const envCandidates = [env?.REDTEAM_PG_URL, env?.DSH_PG_URL, env?.DATABASE_URL]
+  const envCandidates = [env?.LMTAGENT_PG_URL, env?.REDTEAM_PG_URL, env?.DSH_PG_URL, env?.DATABASE_URL]
   for (const cand of envCandidates) {
     if (typeof cand === 'string' && /^postgres(?:ql)?:\/\//i.test(cand.trim())) {
       return cand.trim()
@@ -527,6 +586,18 @@ export function saveUnifiedSettings(root, patch, env = process.env) {
       }
       if (rawPolicy.auto_advance_wave !== undefined && rawPolicy.autoAdvanceWave === undefined) {
         mergedPolicy.autoAdvanceWave = rawPolicy.auto_advance_wave
+      }
+      if (rawPolicy.speculative_wave_dispatch !== undefined && rawPolicy.speculativeWaveDispatch === undefined) {
+        mergedPolicy.speculativeWaveDispatch = rawPolicy.speculative_wave_dispatch
+      }
+      if (rawPolicy.max_tokens_per_workspace !== undefined && rawPolicy.maxTokensPerWorkspace === undefined) {
+        mergedPolicy.maxTokensPerWorkspace = rawPolicy.max_tokens_per_workspace
+      }
+      if (rawPolicy.max_cost_per_workspace !== undefined && rawPolicy.maxCostPerWorkspace === undefined) {
+        mergedPolicy.maxCostPerWorkspace = rawPolicy.max_cost_per_workspace
+      }
+      if (rawPolicy.max_auto_retries !== undefined && rawPolicy.maxAutoRetries === undefined) {
+        mergedPolicy.maxAutoRetries = rawPolicy.max_auto_retries
       }
       nextPatch.dispatchPolicy = normalizeDispatchPolicy(mergedPolicy)
     }

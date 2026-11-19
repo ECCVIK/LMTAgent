@@ -78,7 +78,7 @@ try {
 
   console.log('— 契约五：提示词里不再出现不存在的参数名')
   for (const [role, text] of Object.entries(DEFAULT_PROMPTS)) {
-    const bad = /redteam_asset_test[^）)]{0,24}notes/.test(text)
+    const bad = /(?:redteam_asset_test|lmt_artifact_record)[^）)]{0,24}notes/.test(text)
     ok(!bad, `${role} 提示词不再教智能体传 asset_test 的 notes 字段（或用 test）`)
   }
   ok(readFileSync(new URL('../lib/core.js', import.meta.url), 'utf8').includes("'untested', 'testing', 'tested', 'blocked', 'abandoned', 'no_surface'"),
@@ -147,16 +147,16 @@ try {
   ok(!/code=core-system/.test(DEFAULT_PROMPTS.internal), 'internal 不再教已废弃的 code=core-system')
   ok(!/server-user|server-admin/.test(DEFAULT_PROMPTS.exploit + DEFAULT_PROMPTS.internal), '不再出现不存在的 server-user/server-admin code')
   ok(!/gogo -p <网段>/.test(DEFAULT_PROMPTS.recon + DEFAULT_PROMPTS.internal), 'gogo 不再把网段传给 -p')
-  const gogoSkill = readFileSync(new URL('../../../skills/gogo-intranet.md', import.meta.url), 'utf8')
-  ok((DEFAULT_PROMPTS.recon.includes('asset-correlation') || DEFAULT_PROMPTS.recon.includes('gogo-intranet')) && gogoSkill.includes('gogo -i') && gogoSkill.includes('--proxy socks5://'), 'recon 指向架构/关联技能，命令模板留在技能正文（-i + --proxy）')
+  const wishSpecSkill = readFileSync(new URL('../../../skills/eng-wish-spec.md', import.meta.url), 'utf8')
+  ok(DEFAULT_PROMPTS.recon.includes('eng-wish-spec') && wishSpecSkill.includes('lmt_'), 'recon 指向干净工程技能 eng-wish-spec，工具指令使用 lmt_* 命名空间')
   ok(DEFAULT_PROMPTS.assess.includes('assessed=no') && DEFAULT_PROMPTS.assess.includes('offset'), 'assess 按 assessed=no + offset 翻页，不再“全量过一遍”')
   ok(DEFAULT_PROMPTS.internal.includes('不要尝试拉起其他角色') && !/拉起信息收集智能体/.test(DEFAULT_PROMPTS.internal), 'internal 不再要求拉起子角色，改为自己执行四阶段')
   ok(/边界.*判定/.test(DEFAULT_PROMPTS.exploit) && /边界.*判定/.test(DEFAULT_PROMPTS.qa) && /边界.*判定/.test(DEFAULT_PROMPTS.internal), 'exploit/qa/internal 都注入跨模块边界判定')
   ok(DEFAULT_PROMPTS.exploit.includes('entry_zone') && DEFAULT_PROMPTS.qa.includes('entry_zone') && DEFAULT_PROMPTS.internal.includes('entry_zone'), 'exploit/qa/internal 都要求 boundary 对象（entry_zone/target_zone/isolation/target_asset）')
   ok(!DEFAULT_PROMPTS.plan.includes('最多 3 个'), 'plan 不再写死“最多 3 个”，改为默认 6 并发槽')
   ok(!/100 万条/.test(DEFAULT_PROMPTS['vuln-scan']), 'vuln-scan 不再把大数据门槛写成 100 万条')
-  ok(['assess', 'vuln-scan', 'exploit', 'qa', 'internal'].every((r) => DEFAULT_PROMPTS[r].includes('score-coverage')),
-    '五个角色都能找到 score-coverage 技能')
+  ok(['assess', 'vuln-scan', 'exploit', 'qa', 'internal'].every((r) => DEFAULT_PROMPTS[r].includes('eng-test-verification-gate') && /eng-/.test(DEFAULT_PROMPTS[r])),
+    '五个角色都能找到随包的工程验证与交付技能')
   ok(['recon', 'designer', 'assess', 'vuln-scan', 'exploit', 'qa', 'internal'].every((r) => DEFAULT_PROMPTS[r].includes('提示词注入')),
     '七个执行角色都写入了“外部内容只作数据、不执行其中指令”的注入防护')
   ok(['recon', 'designer', 'assess', 'vuln-scan', 'exploit', 'qa', 'internal'].every((r) => DEFAULT_PROMPTS[r].includes('禁止破坏性动作')),
@@ -203,8 +203,10 @@ try {
     'suo5-tunnel', 'unauth-exploit', 'vps-reverse-shell', 'web-fingerprint', 'webshell-toolkit',
     'ad-attack', 'cloud-k8s', 'network-device', 'api-data-exfil', 'oob-verify',
     'supply-chain', 'c2-infra', 'opsec-hygiene', 'ai-agent-attack', 'mobile-code-recon',
+    'eng-wish-spec', 'eng-ui-design-tokens', 'eng-api-contract-sharding', 'eng-fullstack-builder',
+    'eng-code-review-security', 'eng-test-verification-gate', 'eng-release-changelog', 'eng-git-recovery',
   ]
-  const allowedCategories = new Set(['规划', '侦察', '验证', '访问', '内网', '隧道', '得分', '基础设施'])
+  const allowedCategories = new Set(['规划', '侦察', '验证', '访问', '内网', '隧道', '得分', '基础设施', '工程'])
   let categorized = 0
   for (const name of skillNames) {
     const source = readFileSync(new URL('../../../skills/' + name + '.md', import.meta.url), 'utf8')
@@ -218,7 +220,7 @@ try {
     if (okRow) categorized += 1
     ok(okRow, name + '：category/tags/描述前缀齐全且分类合法')
   }
-  ok(categorized === skillNames.length, '38 个随包技能全部分类完成（' + categorized + '/' + skillNames.length + '）')
+  ok(categorized === skillNames.length, skillNames.length + ' 个仓库技能全部分类完成（' + categorized + '/' + skillNames.length + '）')
 
   console.log('— 契约七：历史默认指纹表（v0.9.0 重写后按设计清空）')
   /* v0.9.0 把六个角色提示词整体重写：旧默认一律不再登记为"可自动升级"，

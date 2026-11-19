@@ -1,23 +1,8 @@
 /**
- * dsh-redteam-mode —— 插件自举（host 半侧）
+ * dsh-lmtagent —— 插件自举（host 半侧）
  *
- * 这个包是**自包含**的：资产库、工具、控制台、预设、技能全在包内，
- * 装一个包就齐活。本文件负责四件事：
- *
- *   0. **新会话里的「红队模式」入口不在这里**：DSH 0.1.7-rc.2 起 agent preset
- *      只认 `@deepseek-ai/dsh-agent-preset` 声明行，由随包补丁
- *      `cordis.patch.yml` 生成区（build.mjs 生成）注册；注册表既不扫目录、
- *      也不接受预设路径。本文件下面那套"落地到用户预设目录"的机制只对
- *      **DSH < 0.1.7** 生效，留着给老版本机器。
- *   1. 首次启动时把包内自带的 `redteam` 预设装到用户的 preset 根
- *      （`$DSH_HOME/.agent-presets/redteam/`），并把预设里的
- *      `{{REDTEAM_SKILLS_DIR}}` 占位符替换成包内 skills/ 的**真实绝对路径**。
- *      老版本的目录扫描按这个路径读；新版本读不到它，改用声明行 +
- *      `redteamMode` 服务（见下）在运行时解析技能目录。
- *   2. 已经存在同名预设时**不动它**（用户自己的改动优先），只提示。
- *   3. 把包内路径挂到 ctx 上，方便排障与其它行复用 —— 声明行里的
- *      `skill-filesystem.customSkillDirs` 就是靠 `ctx.get('redteamMode').paths.skills`
- *      拿到随包技能目录的（`import.meta.url` 解析，包搬到哪都对）。
+ * 这个包是**自包含**的：工程事实库、精简工具集、双语控制台、预设、干净工程技能全在包内，
+ * 与历史包 `dsh-redteam-mode` 完全独立命名空间，可共存安装。
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -25,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** Cordis 插件名。 */
-export const name = 'redteam-mode'
+export const name = 'lmtagent-mode'
 
 /** 无硬依赖：即使 skills 服务缺失也不该阻断挂载。 */
 export const inject = []
@@ -36,63 +21,50 @@ export function packagePaths() {
   return {
     root,
     presets: join(root, 'presets'),
-    presetDir: join(root, 'presets', 'redteam'),
+    presetDir: join(root, 'presets', 'lmtagent'),
     skills: join(root, 'skills'),
     setupScript: join(root, 'scripts', 'redteam-setup.sh'),
   }
 }
 
-/** 环境数据目录（与 store/tools 用的同一份约定）。 */
-export function redteamDataDir() {
+/** 环境数据目录（默认 $DSH_HOME/lmtagent）。 */
+export function lmtagentDataDir() {
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
-  return join(home, 'redteam')
+  return join(home, 'lmtagent')
 }
+
+export { lmtagentDataDir as redteamDataDir }
 
 /**
  * 历史环境安装脚本已于 v0.12.0 移出分发包，此函数保留为空操作返回 `{ action: 'missing', path }`。
- *
- * @returns `{ action: 'missing', path }`
  */
 export function installSetupScript() {
-  return { action: 'missing', path: join(redteamDataDir(), 'setup.sh') }
+  return { action: 'missing', path: join(lmtagentDataDir(), 'setup.sh') }
 }
 
-/**
- * 用户 preset 根（老版本 DSH 的 `dsh-agent-presets` 用的 USER_PRESET_DIR）。
- * DSH >= 0.1.7 不再读这个目录，仅作老版本兼容路径保留。
- */
+/** 用户 preset 根（DSH < 0.1.7 兼容目录）。 */
 export function userPresetRoot() {
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
   return join(home, '.agent-presets')
 }
 
-/**
- * 预设模板里技能目录的占位符（build.mjs 写进打包预设，落地时才替换）。
- * 扩展名等都不允许写成别的形式，否则替换会漏。
- */
-const SKILLS_PLACEHOLDER = '{{REDTEAM_SKILLS_DIR}}'
+/** 预设模板里技能目录的占位符（build.mjs 写进打包预设，落地时才替换）。 */
+const SKILLS_PLACEHOLDER = '{{LMTAGENT_SKILLS_DIR}}'
+const LEGACY_PLACEHOLDER = '{{REDTEAM_SKILLS_DIR}}'
 
-/** customSkillDirs 里"像本包 skills/ 目录"的那一行（老的绝对路径 / 占位符都算）。 */
+/** customSkillDirs 里指向本包或旧包 skills/ 目录的那一行。 */
 function isSkillsDirLine(line) {
   const text = line.trim().replace(/^-\s*/, '')
-  if (text === SKILLS_PLACEHOLDER) return true
-  /* 历史安装留下的绝对路径：<...>/dsh-redteam-mode/skills 或 <...>/redteam-bundle/skills */
-  return /[/\\](dsh-redteam-mode|redteam-bundle)[/\\]skills\/?$/.test(text)
+  if (text === SKILLS_PLACEHOLDER || text === LEGACY_PLACEHOLDER) return true
+  return /[/\\](dsh-lmtagent|dsh-redteam-mode|redteam-bundle)[/\\]skills\/?$/.test(text)
 }
 
-/**
- * 把预设正文里的技能目录占位符 / 失效的绝对路径渲染成**当前**包内 skills/ 路径。
- *
- * 为什么不能只替换占位符：
- *   · 占位符没被替换时，YAML 会把它解析成对象 → `skill-filesystem` 配置校验失败
- *     → **整个预设挂载失败** → 该会话建不了、发不出消息（打包模板不能直接 cp 进用户预设目录）；
- *   · 包换过位置（npx 缓存换了 hash、profile 重装、从源码包切到市场包）时，上次写下的
- *     绝对路径会指向不存在的目录 —— 技能"静默变少"，比直接报错更难发现。
- * 两种都在这里就地修正；只有真的改动了才写盘。
- */
 function renderSkillsDir(text, skillsDir) {
   if (text.includes(SKILLS_PLACEHOLDER)) {
     return { text: text.split(SKILLS_PLACEHOLDER).join(skillsDir), changed: true, reason: 'placeholder' }
+  }
+  if (text.includes(LEGACY_PLACEHOLDER)) {
+    return { text: text.split(LEGACY_PLACEHOLDER).join(skillsDir), changed: true, reason: 'placeholder' }
   }
   let changed = false
   const out = text.split('\n').map((line) => {
@@ -107,21 +79,11 @@ function renderSkillsDir(text, skillsDir) {
 }
 
 /**
- * 把包内预设落地到用户 preset 根。
- *
- * 语义（v0.9.0 起）：
- *   · 目标不存在 → 完整安装（占位符替换成真实路径）；
- *   · 目标已存在 → **默认不覆盖用户内容，但会自愈**：只要里面还留着
- *     `{{REDTEAM_SKILLS_DIR}}` 或指向不存在的旧包路径，就就地修正（这是唯一必需字段，
- *     不改就会整个预设挂载失败）。其余内容一律保留 —— 用户可以就地改预设。
- *   · `force: true` 才用包内模板整体覆盖。
- *
- * @param options - `{ force?: boolean, log?: (msg: string) => void }`
- * @returns `{ action: 'installed'|'kept'|'repaired', dir, skillsDir, skills, repaired? }`
+ * 把包内预设落地到用户 preset 根（仅老版本 DSH < 0.1.7 兼容路径，带占位符自愈）。
  */
 export function installPreset(options = {}) {
   const paths = packagePaths()
-  const target = join(userPresetRoot(), 'redteam')
+  const target = join(userPresetRoot(), 'lmtagent')
   const log = options.log ?? (() => {})
   const skillCount = existsSync(paths.skills)
     ? readdirSync(paths.skills).filter((f) => f.endsWith('.md')).length
@@ -129,7 +91,6 @@ export function installPreset(options = {}) {
   const presetFile = join(target, 'agent.cordis.yml')
 
   if (existsSync(presetFile) && options.force !== true) {
-    /* 自愈：占位符没替换 / 技能目录指向已失效的旧包路径 → 就地修好 */
     let text
     try {
       text = readFileSync(presetFile, 'utf8')
@@ -142,7 +103,7 @@ export function installPreset(options = {}) {
       writeFileSync(presetFile, rendered.text, 'utf8')
       log(
         (rendered.reason === 'placeholder'
-          ? '预设里还留着 ' + SKILLS_PLACEHOLDER + '（会导致整个预设挂载失败）'
+          ? '预设里还留着 ' + SKILLS_PLACEHOLDER
           : '预设里的技能目录指向已失效的旧包路径')
         + `，已就地修正为 ${paths.skills}`,
       )
@@ -151,7 +112,7 @@ export function installPreset(options = {}) {
         repaired: rendered.reason,
       }
     }
-    log(`已存在用户自己的预设 ${target}，保留不动（要覆盖：REDTEAM_PRESET_REFRESH=1 启动一次）`)
+    log(`已存在用户自己的预设 ${target}，保留不动（要覆盖：LMTAGENT_PRESET_REFRESH=1 启动一次）`)
     return { action: 'kept', dir: target, skillsDir: paths.skills, skills: skillCount }
   }
 
@@ -164,32 +125,29 @@ export function installPreset(options = {}) {
   return { action: 'installed', dir: target, skillsDir: paths.skills, skills: skillCount }
 }
 
-/**
- * @param ctx - 插件上下文。
- */
+/** @param ctx - 插件上下文。 */
 export function apply(ctx) {
   const paths = packagePaths()
   let result
-  /* DSH >= 0.1.7 只读 cordis.patch.yml 声明行，默认跳过旧版目录预设写盘以减少启动 I/O */
-  if (process.env.REDTEAM_LEGACY_PRESET === '1' || process.env.REDTEAM_PRESET_REFRESH === '1') {
+  const forceRefresh = process.env.LMTAGENT_PRESET_REFRESH === '1' || process.env.REDTEAM_PRESET_REFRESH === '1'
+  const enableLegacy = process.env.LMTAGENT_LEGACY_PRESET === '1' || process.env.REDTEAM_LEGACY_PRESET === '1'
+  if (enableLegacy || forceRefresh) {
     try {
       result = installPreset({
-        force: process.env.REDTEAM_PRESET_REFRESH === '1',
-        log: (msg) => ctx.logger?.info?.('redteam-mode: ' + msg),
+        force: forceRefresh,
+        log: (msg) => ctx.logger?.info?.('lmtagent-mode: ' + msg),
       })
     } catch (error) {
-      /* 装不上不该拖垮整个 harness：把原因说清楚，面板与资产库照常可用 */
-      ctx.logger?.error?.('redteam-mode: 预设安装失败：%s', error && error.message ? error.message : String(error))
-      result = { action: 'failed', dir: join(userPresetRoot(), 'redteam'), skillsDir: paths.skills, skills: 0 }
+      ctx.logger?.error?.('lmtagent-mode: 预设安装失败：%s', error && error.message ? error.message : String(error))
+      result = { action: 'failed', dir: join(userPresetRoot(), 'lmtagent'), skillsDir: paths.skills, skills: 0 }
     }
   } else {
-    result = { action: 'skipped', dir: join(userPresetRoot(), 'redteam'), skillsDir: paths.skills, skills: 0 }
+    result = { action: 'skipped', dir: join(userPresetRoot(), 'lmtagent'), skillsDir: paths.skills, skills: 0 }
   }
   const setupResult = installSetupScript()
-  /* Cordis 要求服务走 provide（直接赋值会报 "cannot set property without provide"） */
-  ctx.provide('redteamMode', Object.freeze({ paths, preset: result, setup: setupResult }))
+  ctx.provide('lmtagentMode', Object.freeze({ paths, preset: result, setup: setupResult }))
   ctx.logger?.info?.(
-    'redteam-mode: 就绪（数据目录默认 $DSH_HOME/redteam；预设 %s；技能目录 %s）',
+    'lmtagent-mode: 就绪（数据目录默认 $DSH_HOME/lmtagent；预设 %s；技能目录 %s）',
     result.dir, result.skillsDir,
   )
 }

@@ -4,7 +4,7 @@
  * 运行方式：
  *   node packages/redteam-store/test/closed-loop-and-shardlock.test.mjs
  */
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1007,6 +1007,72 @@ try {
       && dagBadDigest?.scope_violations.includes('packages/redteam-ui/lib/app.js'),
     'submitWorkerDigest 与 workflowDag.worker_digests 均正确附加 scope_ok 与 scope_violations 审计结果',
   )
+
+  /* ── v1.0.0 新增：checkFileAgainstShardLocks / migrateLegacyRedteamDir / recordScopeRollback / 写版本读缓存 ── */
+  const { checkFileAgainstShardLocks, migrateLegacyRedteamDir } = await import('../lib/core.js')
+  const checkAllowed = checkFileAgainstShardLocks(
+    ['packages/redteam-store/**'],
+    [{ worker_name: 'other-worker', file_pattern: 'packages/redteam-ui/**', status: 'active' }],
+    'my-worker',
+    'packages/redteam-store/lib/settings.js',
+  )
+  const checkLocked = checkFileAgainstShardLocks(
+    ['packages/**'],
+    [{ worker_name: 'other-worker', file_pattern: 'packages/redteam-ui/**', status: 'active' }],
+    'my-worker',
+    'packages/redteam-ui/lib/index.js',
+  )
+  const checkOut = checkFileAgainstShardLocks(
+    ['packages/redteam-store/**'],
+    [],
+    'my-worker',
+    'README.md',
+  )
+  ok(
+    checkAllowed.allowed === true
+      && checkLocked.allowed === false && checkLocked.reason === 'locked_by_other'
+      && checkOut.allowed === false && checkOut.reason === 'outside_files_owned',
+    'checkFileAgainstShardLocks 精准放行 owned 路径、拦截他人锁及越界路径',
+  )
+
+  const rbRes = store.recordScopeRollback(scopeEngId, badTaskRes.worker_task.id, {
+    rolled_back: ['packages/redteam-ui/lib/app.js'],
+    skipped_untracked: [],
+  })
+  const dagAfterRb = store.workflowDag(scopeEngId)
+  const rbDigest = dagAfterRb.worker_digests.find((d) => String(d.id) === String(badDigestRes.digest.id))
+  ok(
+    rbRes.ok === true && rbRes.updated >= 1 && rbDigest?.scope_remediated === true && rbDigest?.scope_ok === true,
+    'recordScopeRollback 记录回滚历史并将 scope_remediated 与 scope_ok 设为 true',
+  )
+
+  const dagMemoHit = store.workflowDag(scopeEngId)
+  ok(
+    dagMemoHit.worker_digests.length === dagAfterRb.worker_digests.length
+      && dagMemoHit.worker_tasks.length === dagAfterRb.worker_tasks.length,
+    'workflowDag 连续读取命中写版本化内存缓存且返回一致数据',
+  )
+
+  const migParent = mkdtempSync(join(tmpdir(), 'lmt-mig-'))
+  try {
+    const legacyDir = join(migParent, 'redteam')
+    const targetDir = join(migParent, 'lmtagent')
+    mkdirSync(join(legacyDir, 'engagements', 'demo-eng'), { recursive: true })
+    writeFileSync(join(legacyDir, 'settings.json'), JSON.stringify({ maxAgents: 8 }), 'utf8')
+    writeFileSync(join(legacyDir, 'sessions.json'), JSON.stringify({ v: 1, agents: {} }), 'utf8')
+    writeFileSync(join(legacyDir, 'engagements', 'demo-eng', 'engagement.yaml'), 'target_name: demo\n', 'utf8')
+    const migRes = migrateLegacyRedteamDir(targetDir)
+    const migAgain = migrateLegacyRedteamDir(targetDir)
+    ok(
+      migRes.migrated === true && migRes.files_copied >= 3
+        && existsSync(join(targetDir, 'settings.json'))
+        && existsSync(join(targetDir, 'engagements', 'demo-eng', 'engagement.yaml'))
+        && migAgain.migrated === false,
+      'migrateLegacyRedteamDir 无损复制旧 $DSH_HOME/redteam 数据并写入防重复迁移标记',
+    )
+  } finally {
+    rmSync(migParent, { recursive: true, force: true })
+  }
 
   store.close()
 } finally {

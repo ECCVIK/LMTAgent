@@ -1,31 +1,68 @@
 /**
- * 工具 schema 结构自检（零依赖）
+ * 工具 schema 结构与精简瘦身回归测试（零依赖）
  *
  * 跑法：node packages/redteam-tools/test/tool-schema.test.mjs
- *
- * 为什么要有这个测试：DSH 在**挂载预设**时校验每个工具的参数 schema，
- * 一旦有不合法的地方（例如 object 没有显式 additionalProperties），
- * 整个预设 mount 失败 → 该会话任何 resume 都失败 → 客户端命令菜单不停重试
- * → 每次重试都要整份解码会话日志，把 dsh 进程 CPU 打满、界面卡死（v0.6.1 真实事故）。
- *
- * 所以这里把"schema 合法性"做成回归测试：新增工具时只要犯同类错误，测试立刻红。
  */
 import { register } from 'node:module'
 
-register(new URL(
-  'data:text/javascript,export function resolve(s,c,n){if(s==="@deepseek-ai/dsh-tools")return{shortCircuit:true,url:"data:text/javascript,export const defineTool=(t)=>t"};return n(s,c)}',
-), import.meta.url)
+const stubSource = `
+function convertNode(node) {
+  if (!node || typeof node !== 'object') return node
+  if (Array.isArray(node)) return node.map(convertNode)
+  const out = {}
+  if (node.type === 'object' && node.properties && typeof node.properties === 'object' && !Array.isArray(node.properties)) {
+    const nextProps = {}
+    const req = []
+    for (const [k, v] of Object.entries(node.properties)) {
+      if (v && typeof v === 'object' && v.required === true) req.push(k)
+      nextProps[k] = convertNode(v)
+    }
+    for (const [k, v] of Object.entries(node)) {
+      if (k === 'properties' || k === 'required') continue
+      out[k] = v
+    }
+    out.properties = nextProps
+    if (Array.isArray(node.required)) out.required = node.required
+    else if (req.length > 0) out.required = req
+    return out
+  }
+  for (const [k, v] of Object.entries(node)) {
+    if (k === 'required' && typeof v === 'boolean') continue
+    out[k] = k === 'items' ? convertNode(v) : v
+  }
+  return out
+}
+export const defineTool = (t) => {
+  const properties = {}
+  const required = []
+  for (const [k, v] of Object.entries(t.parameters || {})) {
+    if (v && typeof v === 'object' && v.required === true) required.push(k)
+    properties[k] = convertNode(v)
+  }
+  const inputSchema = { type: 'object', additionalProperties: false, properties }
+  if (required.length > 0) inputSchema.required = required
+  return { ...t, inputSchema }
+}
+`
+const stubUrl = 'data:text/javascript,' + encodeURIComponent(stubSource)
+const hookSource = `export function resolve(s,c,n){if(s==="@deepseek-ai/dsh-tools")return{shortCircuit:true,url:${JSON.stringify(stubUrl)}};return n(s,c)}`
+register(new URL('data:text/javascript,' + encodeURIComponent(hookSource)), import.meta.url)
 
-const { apply } = await import('../lib/index.js')
-const { ROLE_ORDER } = await import('../../redteam-store/lib/core.js')
+const {
+  apply,
+  name: pluginName,
+  inject: pluginInject,
+  RESERVATION_TTL_MS,
+  TOOL_SCHEMA_BASELINE_LEGACY_BYTES,
+  sessionBindings,
+  activeReservations,
+  withStructuredErrors,
+} = await import('../lib/index.js')
+const { ROLE_ORDER, PLANNER_ROLE } = await import('../../redteam-store/lib/core.js')
 const { existsSync, readdirSync } = await import('node:fs')
 const { join } = await import('node:path')
 const { pathToFileURL } = await import('node:url')
 
-/**
- * 找 DSH 自己的 schema 校验器（有就用它做权威校验，没有就只跑上面的结构自检）。
- * 为什么值得：挂载预设时用的就是它，能 100% 复现"预设 mount 失败"的条件。
- */
 async function loadOfficialValidator() {
   const candidates = []
   if (process.env.DSH_TOOLS_PATH) candidates.push(process.env.DSH_TOOLS_PATH)
@@ -41,7 +78,7 @@ async function loadOfficialValidator() {
       try {
         const mod = await import(pathToFileURL(c).href)
         if (typeof mod.assertSupportedJsonSchema === 'function') return mod
-      } catch { /* 换下一个候选 */ }
+      } catch { /* next */ }
     }
   }
   return undefined
@@ -51,21 +88,50 @@ let pass = 0
 let fail = 0
 const ok = (cond, msg) => { if (cond) { pass += 1; console.log(`  ✓ ${msg}`) } else { fail += 1; console.log(`  ✗ ${msg}`) } }
 
+ok(pluginName === 'lmtagent-tools', `插件名导出为 lmtagent-tools（${pluginName}）`)
+ok(Array.isArray(pluginInject) && pluginInject.includes('lmtagent') && pluginInject.includes('tools'),
+  `inject 包含 lmtagent 与 tools（${JSON.stringify(pluginInject)}）`)
+ok(TOOL_SCHEMA_BASELINE_LEGACY_BYTES === 28000, `旧版 schema 基准常量为 28000`)
+ok(RESERVATION_TTL_MS > 0 && sessionBindings instanceof Map && activeReservations instanceof Map && typeof withStructuredErrors === 'function',
+  '保留 sessionBindings / activeReservations / RESERVATION_TTL_MS / withStructuredErrors 导出')
+
 const tools = new Map()
-apply({ redteam: {}, tools: { register: (t) => tools.set(t.name, t) } })
+apply({ lmtagent: {}, tools: { register: (t) => tools.set(t.name, t) } })
+
+const legacyCtxTools = new Map()
+apply({ redteam: {}, tools: { register: (t) => legacyCtxTools.set(t.name, t) } })
+ok(legacyCtxTools.size === 12, '兼容 ctx.redteam 旧版测试桩注入（12 个工具）')
+
+const EXPECTED_TOOLS = [
+  'lmt_workflow',
+  'lmt_agent_slot',
+  'lmt_engagement_open',
+  'lmt_session_bind',
+  'lmt_session_info',
+  'lmt_sessions',
+  'lmt_preflight',
+  'lmt_role_prompt',
+  'lmt_roles',
+  'lmt_artifact_record',
+  'lmt_artifact_query',
+  'lmt_report_export',
+]
+
+ok(tools.size === 12, `精确注册 12 个精简 lmt_* 工具（实际 ${tools.size} 个）`)
+ok(Array.from(tools.keys()).every((n) => n.startsWith('lmt_')), '所有工具名称均以 lmt_ 开头')
+ok(EXPECTED_TOOLS.every((n) => tools.has(n)), '包含全部 12 个规定工具')
 
 const problems = []
 const seenObjects = { count: 0 }
 
-/** 递归检查一个 schema 节点。path 用于报错定位。 */
 function checkSchema(node, path) {
   if (node === null || typeof node !== 'object') return
   if (Array.isArray(node)) { node.forEach((x, i) => checkSchema(x, `${path}[${i}]`)); return }
 
   if (node.type === 'object') {
     seenObjects.count += 1
-    if (node.additionalProperties !== true && node.additionalProperties !== false) {
-      problems.push(`${path}: type=object 必须显式 additionalProperties: true|false（缺失会导致预设挂载失败）`)
+    if (node.additionalProperties !== false) {
+      problems.push(`${path}: type=object 必须显式 additionalProperties: false`)
     }
     if (node.properties !== undefined) {
       if (typeof node.properties !== 'object' || Array.isArray(node.properties)) problems.push(`${path}.properties 必须是对象`)
@@ -83,7 +149,6 @@ function checkSchema(node, path) {
     if (!Array.isArray(node.enum) || node.enum.length === 0) problems.push(`${path}.enum 必须是非空数组`)
     else if (node.enum.some((v) => typeof v !== 'string')) problems.push(`${path}.enum 只允许字符串枚举`)
   }
-  /* 递归 items/properties 之外的常见包裹 */
   for (const key of ['items', 'additionalProperties']) {
     if (key === 'items' && node.type === 'array') continue
     if (node[key] !== undefined && typeof node[key] === 'object') checkSchema(node[key], `${path}.${key}`)
@@ -95,21 +160,21 @@ for (const [name, tool] of tools) {
     problems.push(`${name}: 缺少 name/description/execute`)
     continue
   }
-  if (tool.parameters === undefined) continue
-  for (const [pname, schema] of Object.entries(tool.parameters)) {
-    checkSchema(schema, `${name}.parameters.${pname}`)
+  if (tool.inputSchema !== undefined) checkSchema(tool.inputSchema, `${name}.inputSchema`)
+  if (tool.parameters !== undefined) {
+    for (const [pname, schema] of Object.entries(tool.parameters)) {
+      checkSchema(schema, `${name}.parameters.${pname}`)
+    }
   }
 }
 
-ok(tools.size > 0, `工具集可加载（${tools.size} 个）`)
 ok(seenObjects.count > 0, `检查到 ${seenObjects.count} 个 object 类型 schema 节点`)
-ok(problems.length === 0, problems.length === 0 ? '所有工具 schema 合法（object 均显式声明 additionalProperties、array 均有 items）' : `发现 ${problems.length} 处 schema 问题`)
+ok(problems.length === 0, problems.length === 0 ? '全部 12 个工具的所有 object 节点均显式声明 additionalProperties: false 且结构合法' : `发现 ${problems.length} 处 schema 问题`)
 for (const p of problems.slice(0, 20)) console.log('      · ' + p)
 
-/* 权威校验：用 DSH 挂载预设时用的同一套校验器跑一遍（找得到才跑） */
 const official = await loadOfficialValidator()
 if (official === undefined) {
-  console.log('  · 未找到 DSH 的 schema 校验器（跳过权威校验，只跑了结构自检）')
+  console.log('  · 未找到 DSH 的 schema 校验器（跳过官方校验，已通过完整结构自检）')
 } else {
   const bad = []
   for (const [name, tool] of tools) {
@@ -124,85 +189,72 @@ if (official === undefined) {
     }
   }
   ok(bad.length === 0, bad.length === 0
-    ? `全部 ${tools.size} 个工具通过 DSH 官方 schema 校验器（预设挂载不会再失败）`
+    ? `全部 ${tools.size} 个工具通过 DSH 官方 assertSupportedJsonSchema 校验`
     : `${bad.length} 个工具未通过官方校验`)
   for (const b of bad.slice(0, 10)) console.log('      · ' + b)
 }
 
-/* 关键工具的 schema 必须真的带上规则说明（避免以后被静默改掉） */
-const byName = tools
-ok(!/patch: \{ type: 'object' \}/.test(String(byName.get('redteam_poc_update'))), 'redteam_poc_update.patch 不再缺少 additionalProperties')
-const scoreHit = byName.get('redteam_score_hit')
-ok(String(scoreHit.description).includes('自己注册的账号不算得分权限'), 'redteam_score_hit 仍带"自建账号不计分"红线')
-ok(scoreHit.parameters.self_created !== undefined, 'redteam_score_hit 提供 self_created 参数')
-ok(/同一系统只算最高权限一次|整个目标只算一次|上限/.test(String(scoreHit.description)),
-  'redteam_score_hit 说明计分口径（取高/上限）红线')
-ok(scoreHit.parameters.points !== undefined, 'redteam_score_hit 提供 points（多档条目按档位记分）')
-ok(scoreHit.parameters.port !== undefined, 'redteam_score_hit 提供 port 参数（服务封顶的判定粒度）')
-const tunnelAdd = byName.get('redteam_tunnel_add')
-ok(tunnelAdd.parameters.entry_kind !== undefined, 'redteam_tunnel_add 提供 entry_kind 参数')
-ok(String(tunnelAdd.description).includes('不算隧道'), 'redteam_tunnel_add 仍带"自己的服务器不算隧道"红线')
-/* ── 角色白名单必须覆盖 ROLE_ORDER（让"写死 enum 漏掉 assess"不再复发）────────
-   预设明确要求主会话用 redteam_role_prompt 取**资产梳理**角色的提示词写进子任务描述，
-   而 enum 写死 4 个值时会直接拒绝 assess —— 子智能体拿不到角色约束，
-   表面只是"取不到提示词"，实际是整条资产梳理流水线失去角色约束。 */
-const rolePrompt = byName.get('redteam_role_prompt')
-const roleReset = byName.get('redteam_role_prompt_reset')
-ok(Array.isArray(rolePrompt.parameters.role.enum), 'redteam_role_prompt.role 是白名单 enum')
-ok(ROLE_ORDER.every((r) => rolePrompt.parameters.role.enum.includes(r)),
-  'redteam_role_prompt 的 enum 覆盖全部作战角色（' + ROLE_ORDER.join('/') + '）')
-ok(rolePrompt.parameters.role.enum.includes('assess'),
-  'enum 里含 assess（曾经漏掉它，导致资产梳理提示词永远取不到）')
-ok(Array.isArray(roleReset.parameters.role.enum) && ROLE_ORDER.every((r) => roleReset.parameters.role.enum.includes(r)),
-  'redteam_role_prompt_reset 的 enum 同样覆盖全部作战角色')
+const schemaBytes = Buffer.byteLength(
+  JSON.stringify(Array.from(tools.values()).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))),
+)
+ok(schemaBytes > 1000 && schemaBytes < 14000, `12 个工具完整序列化 Schema 体积 ${schemaBytes} bytes < 14000 bytes（较旧基准 28000 下降 ${Math.round((1 - schemaBytes / TOOL_SCHEMA_BASELINE_LEGACY_BYTES) * 100)}%）`)
 
-/* ── 描述里必须写明合法值（自由 string 写错一个空格就变 legit=null，界面无从分辨）── */
-const wsAdd = byName.get('redteam_webshell_add')
-ok(wsAdd.parameters.shell_type !== undefined, 'redteam_webshell_add 提供 shell_type')
-ok(/behinder|godzilla|冰蝎|哥斯拉/.test(String(wsAdd.parameters.shell_type.description)),
-  'shell_type 描述里写明合法值（behinder / godzilla）')
-ok(/self-only|target-outbound|target-http|target-agent/.test(String(tunnelAdd.parameters.entry_kind.description)),
-  'entry_kind 描述里写明四种合法值')
+console.log('— 关键工具规则与参数契约')
+const wf = tools.get('lmt_workflow')
+ok(['refine_wish', 'decompose', 'submit_digest', 'approve_worker', 'update_goal', 'add_worker', 'retry_worker', 'sync_workers', 'check_scope', 'dag', 'status'].every((a) => wf.parameters.action.enum.includes(a)),
+  'lmt_workflow.action 覆盖 4-Wave DAG 全部编排与 check_scope 动作')
+ok(wf.parameters.depends_on !== undefined && wf.parameters.candidate_path !== undefined && wf.parameters.path !== undefined && wf.parameters.file !== undefined,
+  'lmt_workflow 支持 depends_on 与 check_scope 的 candidate_path/path/file 参数')
 
+const slot = tools.get('lmt_agent_slot')
+ok(['status', 'acquire', 'heartbeat', 'release', 'list_locks'].every((a) => slot.parameters.action.enum.includes(a)),
+  'lmt_agent_slot.action 支持 status/acquire/heartbeat/release/list_locks')
+ok(slot.parameters.files_owned !== undefined && slot.parameters.worker_task_id !== undefined && slot.parameters.wave !== undefined,
+  'lmt_agent_slot 支持 files_owned / worker_task_id / wave')
 
+const rec = tools.get('lmt_artifact_record')
+ok(['module', 'contract', 'finding', 'evidence', 'pattern'].every((k) => rec.parameters.kind.enum.includes(k)),
+  'lmt_artifact_record.kind 覆盖 module/contract/finding/evidence/pattern')
+ok(String(rec.description).includes('自己注册的账号不算得分权限') && rec.parameters.self_created !== undefined,
+  'lmt_artifact_record 保留自建账号不计分（self_created）防作弊红线')
+ok(/同一系统只算最高权限一次/.test(String(rec.description)) && rec.parameters.points !== undefined && rec.parameters.port !== undefined,
+  'lmt_artifact_record 保留系统权限封顶（points/port）红线')
+ok(String(rec.description).includes('不算隧道') && rec.parameters.entry_kind.enum.includes('self-only'),
+  'lmt_artifact_record 保留隧道 self-only 红线')
+ok(rec.parameters.data_scale.enum.includes('large') && rec.parameters.ip_version.enum.includes('6') && rec.parameters.boundary.additionalProperties === false,
+  'lmt_artifact_record 支持 data_scale / ip_version / boundary(additionalProperties:false)')
 
-console.log('— 审计修复：评估翻页 / G5-G6 / 边界证据参数')
-const aq = byName.get('redteam_asset_query')
-ok(aq.parameters.offset !== undefined, 'redteam_asset_query 提供 offset 分页')
-ok(aq.parameters.assessed !== undefined && aq.parameters.assessed.enum.includes('no'), 'redteam_asset_query 提供 assessed=no 过滤')
-ok(aq.parameters.sort.enum.includes('unassessed'), 'redteam_asset_query 支持 sort=unassessed')
-const sh = byName.get('redteam_score_hit')
-ok(sh.parameters.data_scale !== undefined && sh.parameters.data_scale.enum.includes('large'), 'redteam_score_hit 提供 G5 data_scale')
-ok(sh.parameters.ip_version !== undefined && sh.parameters.ip_version.enum.includes('6'), 'redteam_score_hit 提供 G6 ip_version')
-ok(sh.parameters.boundary_evidence !== undefined, 'redteam_score_hit 提供 boundary_evidence')
-ok(!byName.has('redteam_chain_add') && !byName.has('redteam_chain'), '已移除 chain_add / chain 工具，动作记录由 score_hit 自动生成')
-ok(sh.parameters.command !== undefined && sh.parameters.result !== undefined, 'redteam_score_hit 支持 command/result 自动生成动作记录')
-ok(byName.get('redteam_vuln_add').parameters.request !== undefined && byName.get('redteam_vuln_add').parameters.response !== undefined, 'redteam_vuln_add 支持 request/response 自动存 HTTP 证据')
+const qry = tools.get('lmt_artifact_query')
+ok(['module', 'finding', 'pattern', 'timeline', 'stats', 'chain', 'graph'].every((k) => qry.parameters.kind.enum.includes(k)),
+  'lmt_artifact_query.kind 覆盖 module/finding/pattern/timeline/stats/chain/graph')
+ok(qry.parameters.offset !== undefined && qry.parameters.assessed.enum.includes('no') && qry.parameters.sort.enum.includes('unassessed'),
+  'lmt_artifact_query 支持 offset 分页与 assessed=no / sort=unassessed')
 
+const rolePrompt = tools.get('lmt_role_prompt')
+ok(Array.isArray(rolePrompt.parameters.role.enum)
+  && ROLE_ORDER.every((r) => rolePrompt.parameters.role.enum.includes(r))
+  && rolePrompt.parameters.role.enum.includes(PLANNER_ROLE),
+'lmt_role_prompt.role 枚举覆盖全部 8 个角色（含 assess / plan）')
+ok(rolePrompt.parameters.reset && rolePrompt.parameters.reset.type === 'boolean',
+  'lmt_role_prompt 支持 reset 布尔参数')
+
+const rolesRes = JSON.parse(await tools.get('lmt_roles').execute({}, {}))
+ok(rolesRes.ok === true && Array.isArray(rolesRes.roles) && rolesRes.roles.length === 8 && rolesRes.roles.every((r) => typeof r.wave === 'number'),
+  'lmt_roles 返回 8 个角色及 Wave 波次归属')
 
 console.log('— 角色工具裁剪（profile）')
 const collect = (profile) => {
   const map = new Map()
-  apply({ redteam: {}, tools: { register: (t) => map.set(t.name, t) } }, { profile })
+  apply({ lmtagent: {}, tools: { register: (t) => map.set(t.name, t) } }, { profile })
   return map
 }
-const allTools = collect('all')
 const reconTools = collect('recon')
-const designerTools = collect('designer')
-const assessTools = collect('assess')
-const vulnTools = collect('vuln-scan')
-const qaTools = collect('qa')
-ok(allTools.size === 60 && allTools.has('redteam_workflow'), 'profile=all 不裁剪（60 个工具，含 redteam_workflow 闭环编排）')
-ok(reconTools.size < allTools.size && !reconTools.has('redteam_score_hit') && !reconTools.has('redteam_tunnel_add') && reconTools.has('redteam_asset_add'),
-  'recon profile 裁掉记分/隧道等越界写操作，保留资产入库（' + reconTools.size + ' 个）')
-ok(designerTools.size < allTools.size && designerTools.has('redteam_asset_add') && designerTools.has('redteam_asset_assess') && !designerTools.has('redteam_tunnel_add'),
-  'designer profile 保留资产与评估工具，裁掉隧道等写操作（' + designerTools.size + ' 个）')
-ok(assessTools.has('redteam_asset_assess') && !assessTools.has('redteam_vuln_add') && !assessTools.has('redteam_webshell_add'),
-  'assess profile 保留评估工具、裁掉漏洞/入口写操作（' + assessTools.size + ' 个）')
-ok(vulnTools.has('redteam_vuln_add') && vulnTools.has('redteam_score_hit') && !vulnTools.has('redteam_tunnel_add'),
-  'vuln-scan profile 保留缺陷登记/记分，裁掉隧道（' + vulnTools.size + ' 个）')
-ok(qaTools.has('redteam_vuln_add') && qaTools.has('redteam_vuln_update') && qaTools.has('redteam_score_hit') && !qaTools.has('redteam_tunnel_add'),
-  'qa profile 保留缺陷登记/验证更新/验收记分，裁掉隧道（' + qaTools.size + ' 个）')
+const internalTools = collect('internal')
+ok(collect('all').size === 12, 'profile=all 保留全部 12 个工具')
+ok(reconTools.size === 9 && !reconTools.has('lmt_report_export') && !reconTools.has('lmt_engagement_open') && reconTools.has('lmt_artifact_record'),
+  `执行角色 profile=recon 裁掉立项/报告导出，保留 9 个核心工具（实际 ${reconTools.size}）`)
+ok(internalTools.size === 10 && internalTools.has('lmt_report_export') && !internalTools.has('lmt_engagement_open'),
+  `收尾角色 profile=internal 保留 lmt_report_export（实际 ${internalTools.size}）`)
 
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)

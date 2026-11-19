@@ -51,10 +51,11 @@ function createMockPluginHost({ store, getSessions = () => [], getSubagents = ()
   }
 
   const ctx = {
-    redteam: store,
+    lmtagent: store,
     skills: { list: () => [], get: async () => undefined },
     agentPresets: { standingKeyFor: async () => 'scope-v022-test' },
     get(name) {
+      if (name === 'lmtagent') return store
       return services[name] ?? null
     },
     on(evt, fn) {
@@ -79,7 +80,7 @@ function createMockPluginHost({ store, getSessions = () => [], getSubagents = ()
   apply(ctx)
 
   async function callApi(payload, opts = {}) {
-    const handler = routes.get('/redteam/api')
+    const handler = routes.get('/lmtagent/api')
     const rawBody = typeof payload === 'string' ? payload : JSON.stringify(payload)
     const req = new EventEmitter()
     req.method = opts.method || 'POST'
@@ -534,6 +535,8 @@ describe('LMTAgent v0.22.0 — Backend Session 1:1 Isolation & Stale Lease Reape
     assert.deepEqual(unboundAgents.json.running, [], 'unbound session MUST report running: []')
     assert.deepEqual(unboundAgents.json.children, [], 'unbound session MUST not leak other project children')
     assert.deepEqual(unboundAgents.json.agentNetwork.children, [])
+    assert.ok(unboundAgents.json.budgetGuard && unboundAgents.json.budgetGuard.tripped === false)
+    assert.ok(unboundAgents.json.perfMetrics && unboundAgents.json.perfMetrics.totalTasks === 0)
 
     const unboundDag = await host.callApi({ op: 'workflowDag', session: 'sess-exa-unbound' })
     assert.equal(unboundDag.status, 200)
@@ -541,6 +544,8 @@ describe('LMTAgent v0.22.0 — Backend Session 1:1 Isolation & Stale Lease Reape
     assert.equal(unboundDag.json.active_engagement, null)
     assert.deepEqual(unboundDag.json.nodes, [])
     assert.deepEqual(unboundDag.json.worker_tasks, [])
+    assert.ok(unboundDag.json.budgetGuard && unboundDag.json.budgetGuard.tripped === false)
+    assert.ok(unboundDag.json.perfMetrics && unboundDag.json.perfMetrics.totalTasks === 0)
 
     const unboundProbe = await host.callApi({ op: 'pgWriteProbe', session: 'sess-exa-unbound' })
     assert.equal(unboundProbe.status, 200)
@@ -559,6 +564,8 @@ describe('LMTAgent v0.22.0 — Backend Session 1:1 Isolation & Stale Lease Reape
     assert.equal(boundAgents.json.used, 1, 'bound session accurately sees its 1 live subagent worker')
     assert.equal(boundAgents.json.running.length, 1)
     assert.equal(boundAgents.json.running[0].id, 'sess-qingji-live-worker')
+    assert.ok(boundAgents.json.budgetGuard && typeof boundAgents.json.budgetGuard.tripped === 'boolean')
+    assert.ok(boundAgents.json.perfMetrics && boundAgents.json.perfMetrics.totalTasks >= 1)
   })
 
   it('5. Stale 17h16m16s RUNNING worker_tasks, shard_locks, DAG nodes & child sessions are reaped and freeze duration at actual runtime', async () => {

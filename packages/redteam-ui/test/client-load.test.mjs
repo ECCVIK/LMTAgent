@@ -87,7 +87,7 @@ ok(/__ModuleLoader__\.load\(/.test(source), 'client.js 通过 __ModuleLoader__.l
   ok(threw === null, '工厂函数执行完不报错' + (threw ? '：' + threw.message : ''))
 }
 ok(registered !== null && typeof registered.factory === 'function', '拿到了 factory')
-ok(registered !== null && registered.id === 'dsh-redteam-ui', `注册 id 是 UI 包名（${registered && registered.id}）`)
+ok(registered !== null && registered.id === 'dsh-lmtagent-ui', `注册 id 是 UI 包名（${registered && registered.id}）`)
 
 const moduleExports = registered.factory((name) => {
   if (name === 'react') return reactStub
@@ -98,6 +98,13 @@ ok(typeof moduleExports.apply === 'function', '导出 apply')
 ok(Array.isArray(moduleExports.inject), '导出 inject 数组')
 ok(moduleExports.inject.every((k) => ['slots', 'react'].includes(k)),
   `inject 只声明平台种子提供的服务（${moduleExports.inject.join(', ')}）`)
+ok(typeof moduleExports.getLocale === 'function' && moduleExports.getLocale() === 'zh-CN',
+  '纯 Node 无 navigator 时默认语言解析为 zh-CN')
+ok(moduleExports.t('中文', 'English') === '中文'
+  && moduleExports.setLocale('en-US') === 'en-US'
+  && moduleExports.t('中文', 'English') === 'English'
+  && moduleExports.setLocale('zh-CN') === 'zh-CN',
+  'setLocale / t 响应式多语言 helper 正常工作')
 
 console.log('— apply(ctx) 挂载与卸载')
 const registeredSlots = []
@@ -117,12 +124,26 @@ ok(registeredSlots.every((s) => typeof s.render === 'function' && s.meta && s.me
   '每个槽位都带 name/id 与渲染函数')
 {
   const slotNames = registeredSlots.map((s) => s.meta.name)
+  const slotIds = registeredSlots.map((s) => s.meta.id)
+  const viewSlot = registeredSlots.find((s) => s.meta.name === 'conversation.view')
   ok(
     ['shell.overlay', 'main', 'sidebar.panellist', 'conversation.view', 'conversation.session.header.utilities', 'settings.section']
       .every((n) => slotNames.includes(n)),
     `6 个槽位覆盖完整且已移除重复底部/顶栏胶囊（${slotNames.join(', ')}）`,
   )
+  ok(
+    ['lmtagent-console', 'lmtagent-workbench', 'lmtagent-panellist', 'lmtagent-view', 'lmtagent-header-toggle', 'lmtagent-settings']
+      .every((id) => slotIds.includes(id))
+      && slotIds.every((id) => !id.includes('redteam')),
+    `6 个槽位 ID 全部规范化为 lmtagent-* 且无 redteam-* 遗留（${slotIds.join(', ')}）`,
+  )
+  ok(viewSlot && viewSlot.meta && viewSlot.meta.label === 'LMTAgent Workbench',
+    `conversation.view 标签为 LMTAgent Workbench 且不含闪电符号（${viewSlot && viewSlot.meta && viewSlot.meta.label}）`)
 }
+ok(/\/lmtagent\/api/.test(source) && /\/lmtagent\/events/.test(source) && /#lmtagent-full/.test(source)
+  && !/\/redteam\/(api|events)/.test(source) && !source.includes('⚡'),
+  'client.js 使用 /lmtagent/api + /lmtagent/events + #lmtagent-full，零 /redteam/* 路由与 ⚡ 图标')
+ok(/CLIENT_PLUGIN_VERSION\s*=\s*['"]1\.0\.0['"]/.test(source), 'CLIENT_PLUGIN_VERSION 为 1.0.0')
 ok(appended.length >= 2, `注入了样式标签（${appended.length} 个）`)
 for (const dispose of cleanups) { try { dispose() } catch { /* 忽略 */ } }
 ok(removed.length >= 2, `卸载时把样式标签移除了（${removed.length} 个）`)

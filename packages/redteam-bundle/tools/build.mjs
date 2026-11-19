@@ -62,8 +62,12 @@ const write = (rel, text) => {
    无需改写导入路径 —— 只要把这 5 个文件都放进 lib/ 即可。 */
 const core = read('redteam-store/lib/core.js')
 write('lib/store-core.js', core)
-/* 1a) core.js 依赖的模块（纯函数、提示词与 PostgreSQL 引擎，零外部依赖） */
-for (const name of ['ip-utils', 'schema', 'validate', 'score-rules', 'report-replay', 'settings', 'pg-engine', 'prompts']) {
+/* 1a) core.js 依赖的模块（纯函数、分片策略、会话状态机、DAG工作流、提示词与 PostgreSQL 引擎，零外部依赖） */
+const STORE_SUB_MODULES = [
+  'ip-utils', 'schema', 'validate', 'score-rules', 'report-replay',
+  'settings', 'pg-engine', 'prompts', 'shard-policy', 'session-bindings', 'dag-workflow',
+]
+for (const name of STORE_SUB_MODULES) {
   if (existsSync(join(packagesDir, 'redteam-store/lib/' + name + '.js'))) {
     write('lib/' + name + '.js', read('redteam-store/lib/' + name + '.js'))
   }
@@ -77,18 +81,27 @@ const storeIndex = read('redteam-store/lib/index.js')
   .replace("from './core.js'", "from './store-core.js'")
 write('lib/store.js', storeIndex)
 
-/* 2) 控制台 host 半侧：把跨包的 core 引用改成本地 store-core */
-const uiIndex = read('redteam-ui/lib/index.js')
-  .replace("from '../../redteam-store/lib/core.js'", "from './store-core.js'")
-  .replace("from '../../redteam-store/lib/skill-availability.js'", "from './skill-availability.js'")
-  .replace("from '../../redteam-store/lib/settings.js'", "from './settings.js'")
-  .replace("from '../../redteam-store/lib/pg-engine.js'", "from './pg-engine.js'")
-  .replace("from '../../redteam-store/lib/skill-fixes.js'", "from './skill-fixes.js'")
-  .replace("from '../../redteam-store/lib/prompts.js'", "from './prompts.js'")
+function rewriteStoreImports(text) {
+  let out = text.replace(/from '\.\.\/\.\.\/redteam-store\/lib\/core\.js'/g, "from './store-core.js'")
+  for (const modName of [...STORE_SUB_MODULES, 'skill-availability', 'skill-fixes']) {
+    out = out.replace(
+      new RegExp(`from '\\.\\./\\.\\./redteam-store/lib/${modName}\\.js'`, 'g'),
+      `from './${modName}.js'`,
+    )
+  }
+  return out
+}
+
+/* 2) 控制台 host 半侧：把跨包的 core/store 引用改成本地兄弟文件 */
+const uiIndex = rewriteStoreImports(read('redteam-ui/lib/index.js'))
 write('lib/ui.js', uiIndex)
-for (const uiSub of ['llm-planner.js', 'dsh-dispatch.js']) {
+const UI_SUB_MODULES = [
+  'llm-planner.js', 'dsh-dispatch.js', 'telemetry-jsonl.js',
+  'settings-bridge.js', 'update-manager.js', 'scope-rollback.js', 'dag-scheduler.js',
+]
+for (const uiSub of UI_SUB_MODULES) {
   if (existsSync(join(packagesDir, 'redteam-ui/lib/' + uiSub))) {
-    write('lib/' + uiSub, read('redteam-ui/lib/' + uiSub))
+    write('lib/' + uiSub, rewriteStoreImports(read('redteam-ui/lib/' + uiSub)))
   }
 }
 
@@ -124,14 +137,8 @@ if (!new RegExp(`__ModuleLoader__\\.load\\(\\{\\s*id:\\s*'${clientId}'`).test(cl
 }
 write('lib/client.js', clientOut)
 
-/* 4) 工具集：跨包引用 ROLE_TITLES，改成本地 store-core */
-const tools = read('redteam-tools/lib/index.js')
-  .replace("from '../../redteam-store/lib/core.js'", "from './store-core.js'")
-  .replace("from '../../redteam-store/lib/skill-availability.js'", "from './skill-availability.js'")
-  .replace("from '../../redteam-store/lib/settings.js'", "from './settings.js'")
-  .replace("from '../../redteam-store/lib/pg-engine.js'", "from './pg-engine.js'")
-  .replace("from '../../redteam-store/lib/skill-fixes.js'", "from './skill-fixes.js'")
-  .replace("from '../../redteam-store/lib/prompts.js'", "from './prompts.js'")
+/* 4) 工具集：跨包引用改成本地兄弟文件 */
+const tools = rewriteStoreImports(read('redteam-tools/lib/index.js'))
 write('lib/tools.js', tools)
 
 /* 5) 预设：源码是仓库根的 `preset/agent.cordis.yml`（指挥者）与
@@ -147,31 +154,29 @@ write('lib/tools.js', tools)
           不单开补丁文件的原因见 cordis.patch.yml 里的说明（数组形式旧版会崩）。
    工具行都改成本包子路径；skill-filesystem 行注入技能目录。 */
 /* 预设：工具行改成本包子路径；skill-filesystem 行注入包内技能目录占位符。
-   占位符由这里注入（而不是写在源码预设里），这样 redteam-sync-repo 从线上
-   覆盖仓库预设时不会把 build 弄坏。 */
+   占位符由这里注入（而不是写在源码预设里），避免仓库预设耦合运行期路径。 */
 const SKILL_ROW = "- id: skill-filesystem\n  name: '@deepseek-ai/dsh-skill-filesystem'"
-const SKILLS_LINE = '      - {{REDTEAM_SKILLS_DIR}}'
+const SKILLS_LINE = '      - {{LMTAGENT_SKILLS_DIR}}'
 
 /** 读一份源预设，把工具行改成本包子路径，并注入技能目录配置。 */
 function renderPreset(rel) {
   const source = read(rel)
   if (!source.includes(SKILL_ROW)) throw new Error(rel + ' 里找不到 skill-filesystem 行')
   const rendered = source
-    .replace('  name: dsh-redteam-tools', '  name: dsh-redteam-mode/tools')
+    .replace('  name: dsh-lmtagent-tools', '  name: dsh-lmtagent/tools')
     .replace(SKILL_ROW, SKILL_ROW + `
-  # 红队技能随包分发：__REDTEAM_SKILLS_DIR__ 由插件首次启动时替换成包内 skills/ 的绝对路径。
-  # 技能根**顺序即优先级**（同名技能取先出现的那份）：$DSH_HOME/skills 必须排在包内目录前面，
-  # 否则用户在自己那份里配好的 VPS 地址 / 密钥会被随包模板（里面是 \`<你的VPS_IP>\` 这类占位符）盖住，
-  # 连技能可用性判定都会误报成"技能坏了"。
+  # 工程技能随包分发：{{LMTAGENT_SKILLS_DIR}} 由插件首次启动时替换成包内 skills/ 的绝对路径。
+  # 技能根顺序即优先级（同名技能取先出现的那份）：$DSH_HOME/skills 排在包内目录前面，
+  # 方便用户覆盖或扩充自有工程规范，同时保证随包工程技能开箱即用。
   config:
-    # 只扫描"$DSH_HOME/skills + 本插件自带的"两个根：
-    # 关掉 includeDefaultRoots，避免把 .agents/skills、项目级的大技能包（动辄数百个）
-    # 一起吞进红队会话——那既污染模型上下文，也让技能页看起来像被塞了几百个技能。
+    # 只扫描 "$DSH_HOME/skills + 本插件自带的干净工程技能包" 两个根：
+    # 关掉 includeDefaultRoots，避免把项目级无关技能全部吞进会话上下文。
     includeDefaultRoots: false
     customSkillDirs:
       - !!js dshHomePath('skills')
-      - {{REDTEAM_SKILLS_DIR}}`)
-  if (!rendered.includes('{{REDTEAM_SKILLS_DIR}}')) throw new Error(rel + ' 技能目录占位符注入失败')
+      - {{LMTAGENT_SKILLS_DIR}}`)
+  if (!rendered.includes('  name: dsh-lmtagent/tools')) throw new Error(rel + ' 工具名改写 dsh-lmtagent/tools 失败')
+  if (!rendered.includes('{{LMTAGENT_SKILLS_DIR}}')) throw new Error(rel + ' 技能目录占位符注入失败')
   return rendered
 }
 
@@ -179,7 +184,7 @@ const preset = renderPreset('../preset/agent.cordis.yml')
 const workerPreset = renderPreset('../preset/worker.cordis.yml')
 
 /* 7 个按角色裁剪工具的执行预设：同一份 worker 模板，只改 persona 标题与
-   redteam-tools 的 config.profile。工具裁剪在插件里按排除集实现；profile 没被
+   lmtagent-tools 的 config.profile。工具裁剪在插件里按排除集实现；profile 没被
    宿主传进来时回退 all，所以即使这里配置失效也只是“多看见工具”，不会少工具。 */
 const ROLE_PROFILES = [
   { profile: 'recon', title: '产品与需求规划（CEO）' },
@@ -193,7 +198,7 @@ const ROLE_PROFILES = [
 const workerMeta = read('../preset/worker.preset.yml')
 function renderWorkerVariant(role) {
   let text = workerPreset
-  text = text.replace('  name: dsh-redteam-mode/tools', '  name: dsh-redteam-mode/tools\n  config:\n    profile: ' + role.profile)
+  text = text.replace('  name: dsh-lmtagent/tools', '  name: dsh-lmtagent/tools\n  config:\n    profile: ' + role.profile)
   text = text
     .replace('你是 **LMTAgent 软件工程研发集群的执行角色** 智能体',
       '你是 **LMTAgent 软件工程研发集群 · ' + role.title + '执行角色** 智能体')
@@ -210,31 +215,31 @@ const workerVariants = ROLE_PROFILES.map((role) => ({ ...role, text: renderWorke
 for (const role of workerVariants) {
   /* 目录预设是给 DSH <0.1.7 的旧安装路径看的；角色变体没有 installPreset 替换占位符，
      写文件时直接落到 $DSH_HOME/skills（包内技能根由声明行负责）。 */
-  write('presets/redteam/worker-' + role.profile + '.cordis.yml',
-    role.text.replace('      - {{REDTEAM_SKILLS_DIR}}\n', ''))
+  write('presets/lmtagent/worker-' + role.profile + '.cordis.yml',
+    role.text.replace('      - {{LMTAGENT_SKILLS_DIR}}\n', ''))
 }
-write('presets/redteam/agent.cordis.yml', preset)
+write('presets/lmtagent/agent.cordis.yml', preset)
 const presetMeta = read('../preset/preset.yml')
-const presetMetaPath = join(pkgRoot, 'presets/redteam/preset.yml')
+const presetMetaPath = join(pkgRoot, 'presets/lmtagent/preset.yml')
 if (CHECK) {
   let current
   try { current = readFileSync(presetMetaPath, 'utf8').replace(/\r\n/g, '\n') } catch { current = undefined }
-  if (current !== presetMeta) drift.push('presets/redteam/preset.yml')
+  if (current !== presetMeta) drift.push('presets/lmtagent/preset.yml')
+  if (existsSync(join(pkgRoot, 'presets/redteam'))) drift.push('presets/redteam（旧命名空间目录，应删除）')
+  if (existsSync(join(repoRoot, 'presets/redteam'))) drift.push('repoRoot/presets/redteam（旧命名空间目录，应删除）')
 } else {
+  rmSync(join(pkgRoot, 'presets/redteam'), { recursive: true, force: true })
+  rmSync(join(repoRoot, 'presets/redteam'), { recursive: true, force: true })
   mkdirSync(dirname(presetMetaPath), { recursive: true })
   writeFileSync(presetMetaPath, presetMeta, 'utf8')
 }
 
 /* 5b) 声明行（产物 b 的内容，写回 cordis.patch.yml 的生成区）。
-     技能目录不能再靠"安装时替换占位符"——声明行是静态 YAML，插件启动时不会去改
-     profile 的补丁层。改成**运行时**解析，两级：
-       ① 本包 host 半侧 `dsh-redteam-mode` 提供的 `redteamMode` 服务，它用
-          `import.meta.url` 解析包内路径，包被搬到哪（npx 缓存换 hash、profile 重装、
-          软链开发态）都对；
-       ② 兜底按 profile base 解析本包（`baseUrl` 即 profile 目录）。
-     两者都拿不到时宁可让 skill-filesystem 配置校验报错（预设激活失败、模式列表里
-     带诊断），也不要写死一个会静默失效的绝对路径 —— v0.9.0 的事故就是这么来的。 */
-const SKILLS_EXPR = "ctx.get('redteamMode')?.paths?.skills ?? process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-redteam-mode/package.json')), 'skills')"
+     技能目录改为运行时解析，两级：
+       ① 本包 host 半侧 `dsh-lmtagent` 提供的 `lmtagentMode` 服务，它用
+          `import.meta.url` 解析包内路径；
+       ② 兜底按 profile base 解析 `dsh-lmtagent/package.json`。 */
+const SKILLS_EXPR = "ctx.get('lmtagentMode')?.paths?.skills ?? process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-lmtagent/package.json')), 'skills')"
 
 /** 剥离生成区 YAML 中的纯注释行与空行，保留 block scalar（如 `prefix: |`）内的 Markdown 正文。 */
 function stripYamlCommentsOutsideBlockScalars(yamlText) {
@@ -289,23 +294,23 @@ ${declaredPlugins.split('\n').map((line) => (line.trim() === '' ? '' : '        
 
 /* 生成区从起始标记整段替换：标记之前的内容（迁移补丁 + 三个挂载行）是手写的，
    这里原样保留，所以 patches 文件平时仍然可以手工编辑。 */
-const DECL_START = '# >>> preset-redteam declaration'
-const DECL_END = '# <<< preset-redteam declaration <<<'
+const DECL_START = '# >>> preset-lmtagent declaration'
+const DECL_END = '# <<< preset-lmtagent declaration <<<'
 const declBody = declarePreset({
-  entryId: 'preset-redteam',
-  id: 'redteam',
+  entryId: 'preset-lmtagent',
+  id: 'lmtagent',
   metaRel: '../preset/preset.yml',
   order: 10,
   plugins: preset,
 }) + declarePreset({
-  entryId: 'preset-redteam-worker',
-  id: 'redteam-worker',
+  entryId: 'preset-lmtagent-worker',
+  id: 'lmtagent-worker',
   metaRel: '../preset/worker.preset.yml',
   order: 90,
   plugins: workerPreset,
 }) + workerVariants.map((role, i) => declarePreset({
-  entryId: 'preset-redteam-worker-' + role.profile,
-  id: 'redteam-worker-' + role.profile,
+  entryId: 'preset-lmtagent-worker-' + role.profile,
+  id: 'lmtagent-worker-' + role.profile,
   metaRel: '../preset/worker.preset.yml',
   metaText: workerVariantMeta(role),
   order: 91 + i,
@@ -388,25 +393,24 @@ if (!isScriptShipped('redteam-setup.sh')) {
 
 /* 校验：生成的 lib 里不允许再出现跨包的相对路径 */
 const generated = [
-  'lib/store-core.js', 'lib/ip-utils.js', 'lib/schema.js', 'lib/validate.js', 'lib/score-rules.js',
-  'lib/report-replay.js', 'lib/pg-engine.js',
-  'lib/skill-availability.js', 'lib/skill-fixes.js', 'lib/settings.js', 'lib/store.js', 'lib/ui.js', 'lib/llm-planner.js', 'lib/dsh-dispatch.js', 'lib/tools.js', 'lib/client.js',
-  'lib/prompts.js',
+  'lib/store-core.js', 'lib/store.js', 'lib/ui.js', 'lib/tools.js', 'lib/client.js',
+  ...STORE_SUB_MODULES.map((m) => `lib/${m}.js`),
+  'lib/skill-availability.js', 'lib/skill-fixes.js',
+  ...UI_SUB_MODULES.map((m) => `lib/${m}`),
 ].filter((rel) => existsSync(join(pkgRoot, rel)))
 const offenders = []
 for (const rel of generated) {
   const text = readFileSync(join(pkgRoot, rel), 'utf8')
   for (const m of text.matchAll(/from\s+'([^']*\.\.\/[^']*)'/g)) offenders.push(`${rel}: ${m[1]}`)
-  /* 同目录相对导入（./ip-utils.js 等）是允许的：它们随包一起分发。
-     真正要拦的是"跳出本包"的引用（../ 或裸包名），上面两条已经覆盖。 */
-  for (const m of text.matchAll(/from\s+'([^']*redteam-(store|ui|tools)[^']*)'/g)) offenders.push(`${rel}: ${m[1]}`)
+  for (const m of text.matchAll(/from\s+'([^']*(?:redteam|lmtagent)-(store|ui|tools)[^']*)'/g)) offenders.push(`${rel}: ${m[1]}`)
+  for (const m of text.matchAll(/from\s+'(@lmtagent\/[^']+)'/g)) offenders.push(`${rel}: ${m[1]}`)
 }
 if (offenders.length > 0) {
   console.error('✗ 生成结果仍含跨包引用：')
   for (const o of offenders) console.error('   ' + o)
   process.exit(1)
 }
-if (!existsSync(join(pkgRoot, 'presets/redteam/agent.cordis.yml'))) {
+if (!existsSync(join(pkgRoot, 'presets/lmtagent/agent.cordis.yml'))) {
   console.error('✗ 预设未生成（目录预设给 DSH < 0.1.7，声明行写在 cordis.patch.yml 里）')
   process.exit(1)
 }
@@ -415,12 +419,12 @@ if (!preset.includes('maxDepth: 3') || !workerPreset.includes('maxDepth: 3')) {
   process.exit(1)
 }
 const patchGenerated = readFileSync(join(pkgRoot, 'cordis.patch.yml'), 'utf8')
-if (!patchGenerated.includes('id: preset-redteam')) {
-  console.error('✗ cordis.patch.yml 里没有生成出 preset-redteam 声明行')
+if (!patchGenerated.includes('id: preset-lmtagent')) {
+  console.error('✗ cordis.patch.yml 里没有生成出 preset-lmtagent 声明行')
   process.exit(1)
 }
-if (!patchGenerated.includes('id: preset-redteam-worker')) {
-  console.error('✗ cordis.patch.yml 里没有生成出 preset-redteam-worker 声明行（执行角色预设）')
+if (!patchGenerated.includes('id: preset-lmtagent-worker')) {
+  console.error('✗ cordis.patch.yml 里没有生成出 preset-lmtagent-worker 声明行（执行角色预设）')
   process.exit(1)
 }
 /* 6) 同步仓库根产物（支持 dsh plugin add github:ECCVIK/LMTAgent 直接安装仓库根），杜绝根包静默漂移。 */
@@ -451,8 +455,8 @@ for (const fileName of bundleLibFiles) {
   syncOrCheckRootFile('lib/' + fileName)
 }
 
-const bundlePresetDir = join(pkgRoot, 'presets/redteam')
-const rootPresetDir = join(repoRoot, 'presets/redteam')
+const bundlePresetDir = join(pkgRoot, 'presets/lmtagent')
+const rootPresetDir = join(repoRoot, 'presets/lmtagent')
 const bundlePresetFiles = readdirSync(bundlePresetDir, { withFileTypes: true })
   .filter((e) => e.isFile())
   .map((e) => e.name)
@@ -463,7 +467,7 @@ if (CHECK) {
     rootPresetFiles = readdirSync(rootPresetDir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name)
   } catch { rootPresetFiles = [] }
   for (const f of rootPresetFiles) {
-    if (!bundlePresetFiles.includes(f)) drift.push('repoRoot/presets/redteam/' + f + '（多余，应删除）')
+    if (!bundlePresetFiles.includes(f)) drift.push('repoRoot/presets/lmtagent/' + f + '（多余，应删除）')
   }
 } else if (existsSync(rootPresetDir)) {
   for (const e of readdirSync(rootPresetDir, { withFileTypes: true })) {
@@ -471,7 +475,7 @@ if (CHECK) {
   }
 }
 for (const fileName of bundlePresetFiles) {
-  syncOrCheckRootFile('presets/redteam/' + fileName)
+  syncOrCheckRootFile('presets/lmtagent/' + fileName)
 }
 
 if (CHECK) {
@@ -483,4 +487,4 @@ if (CHECK) {
   console.log(`✓ 生成物与源码及仓库根同步（lib/ ${generated.length} 个生成文件、根同步 ${bundleLibFiles.length} 个文件、预设 9 份、cordis.patch.yml 九条声明行、技能 ${skills} 个）`)
   process.exit(0)
 }
-console.log(`✓ dsh-redteam-mode 已生成并同步至仓库根：lib/ ${generated.length} 个文件（根同步 ${bundleLibFiles.length} 个）、预设 9 份（指挥者 + 执行角色 + 7 个角色变体，支持 maxDepth: 3 递归子代理 + thinking: low 默认）+ cordis.patch.yml 九条声明行、技能 ${skills} 个、安装脚本 ${setupCopied ? '1 个' : '缺失'}`)
+console.log(`✓ dsh-lmtagent 已生成并同步至仓库根：lib/ ${generated.length} 个文件（根同步 ${bundleLibFiles.length} 个）、预设 9 份（指挥者 + 执行角色 + 7 个角色变体，支持 maxDepth: 3 递归子代理 + thinking: low 默认）+ cordis.patch.yml 九条声明行、技能 ${skills} 个、安装脚本 ${setupCopied ? '1 个' : '缺失'}`)

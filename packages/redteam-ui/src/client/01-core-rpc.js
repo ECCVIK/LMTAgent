@@ -1,7 +1,10 @@
     /* ---------------------------------------------------------- 01-core-rpc：桥接、事件流与全局状态 */
     /** 是否在「全面浏览」独立窗口里（URL hash 标记，复用同一套界面代码）。 */
     const isFullWindow = () => {
-      try { return String(window.location.hash || '') === '#redteam-full' } catch { return false }
+      try {
+        const hashVal = String(window.location.hash || '')
+        return hashVal === '#lmtagent-full' || hashVal === '#redteam-full'
+      } catch { return false }
     }
 
     const FULL_REQUEST_EVENT = 'rt-open-full'
@@ -21,15 +24,15 @@
     const openFullView = () => {
       if (isDesktopShell()) { requestFullInPlace(); return }
       let win = null
-      try { win = window.open(window.location.href.split('#')[0] + '#redteam-full', '_blank') } catch { win = null }
+      try { win = window.open(window.location.href.split('#')[0] + '#lmtagent-full', '_blank') } catch { win = null }
       if (win === null || win === undefined) requestFullInPlace()
     }
 
-    /* Host 递增变更序号（配合可选 sinceSeq 与 SSE /redteam/events 增量感知） */
+    /* Host 递增变更序号（配合可选 sinceSeq 与 SSE /lmtagent/events 增量感知） */
     let _lastHostSeq = 0
 
     /**
-     * 统一 RPC 桥接 `POST /redteam/api`：
+     * 统一 RPC 桥接 `POST /lmtagent/api`：
      *   1. 防御性双参保护：若误用 `api('opName', payloadObj)`，自动合并为 `{ op: arg0, ...arg1 }`；
      *   2. 支持可选 `sinceSeq`（显式传入 `sinceSeq` 或 `withSinceSeq: true` 时附带最近序号）；
      *   3. 自动记录响应中的 `seq` 供后续增量轮询或 SSE 对齐。
@@ -59,14 +62,14 @@
       if (typeof fetch !== 'function') {
         return Promise.resolve({ ok: false, error: 'fetch unavailable' })
       }
-      return fetch('/redteam/api', {
+      return fetch('/lmtagent/api', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(bodyObj),
       }).then((res) => {
         if (res && typeof res.text === 'function') {
           return res.text().then((txt) => {
-            if (!txt || !txt.trim()) return { ok: false, emptyResponse: true, error: '后端服务正在就绪，请稍候点击「刷新」重试' }
+            if (!txt || !txt.trim()) return { ok: false, emptyResponse: true, error: t('后端服务正在就绪，请稍候点击「刷新」重试', 'Backend service is starting up; please retry with Refresh.') }
             try {
               const parsed = JSON.parse(txt)
               if (parsed && typeof parsed === 'object' && Number.isFinite(Number(parsed.seq))) {
@@ -75,7 +78,7 @@
               }
               return parsed
             } catch {
-              return { ok: false, emptyResponse: true, error: '后端响应格式异常（HTTP ' + (res.status || 0) + '）' }
+              return { ok: false, emptyResponse: true, error: t('后端响应格式异常（HTTP ' + (res.status || 0) + '）', 'Invalid backend response (HTTP ' + (res.status || 0) + ')') }
             }
           })
         }
@@ -88,14 +91,14 @@
             return parsed
           })
         }
-        return { ok: false, error: '未知响应' }
+        return { ok: false, error: t('未知响应', 'Unknown response') }
       }).catch((err) => ({
         ok: false,
-        error: err && err.message ? err.message : String(err || '网络请求异常'),
+        error: err && err.message ? err.message : String(err || t('网络请求异常', 'Network request failed')),
       }))
     }
 
-    /* ── SSE `/redteam/events` 单例订阅总线（无轮询风暴地感知宿主/存储变更） ── */
+    /* ── SSE `/lmtagent/events` 单例订阅总线（无轮询风暴地感知宿主/存储变更） ── */
     const _sseListeners = new Set()
     let _sseSource = null
     let _sseReconnectTimer = null
@@ -117,7 +120,7 @@
         : (typeof window !== 'undefined' && window && typeof window.EventSource === 'function' ? window.EventSource : null)
       if (!ES) return
       try {
-        const url = _lastHostSeq > 0 ? ('/redteam/events?sinceSeq=' + _lastHostSeq) : '/redteam/events'
+        const url = _lastHostSeq > 0 ? ('/lmtagent/events?sinceSeq=' + _lastHostSeq) : '/lmtagent/events'
         const src = new ES(url)
         _sseSource = src
         const handleMsg = (ev) => {
@@ -159,7 +162,7 @@
     }
 
     /**
-     * 订阅宿主 `/redteam/events` SSE 推送（带节流合并，避免高频写表触发渲染风暴）。
+     * 订阅宿主 `/lmtagent/events` SSE 推送（带节流合并，避免高频写表触发渲染风暴）。
      * 传入 `engagement === false` 可显式禁用（如由父组件托管刷新的子画布）；在无 EventSource 环境下自动安全降级。
      */
     const subscribeHostEvents = (engagement, onRefresh, throttleMs) => {
@@ -197,7 +200,7 @@
     }
 
     /**
-     * React Hook 封装：按工作区订阅宿主 `/redteam/events` SSE 推送。
+     * React Hook 封装：按工作区订阅宿主 `/lmtagent/events` SSE 推送。
      */
     function useHostEvents(engagement, onRefresh, throttleMs) {
       const cbRef = React.useRef(onRefresh)
@@ -262,47 +265,53 @@
       }).catch(() => { shotLoading.delete(key) })
       shotLoading.set(key, p)
     }
-    const SHOT_KIND = { screenshot: '现场截图', card: '记录生成的证据摘录' }
+    const shotKindLabel = (kind) => {
+      if (kind === 'screenshot') return t('现场截图', 'Live Screenshot')
+      if (kind === 'card') return t('记录生成的证据摘录', 'Generated Evidence Card')
+      return kind || t('证据', 'Evidence')
+    }
 
     /** 单张图：点一下全屏放大（固定定位，不受所在容器限制）。 */
     const ShotImage = ({ eng, shot, height }) => {
+      useLocale()
       const [zoom, setZoom] = React.useState(false)
       const src = shotSrc(eng, shot.id)
       if (src === null) { loadShot(eng, shot.id) }
       const card = shot.kind === 'card'
       return h('div', { className: 'rt-shot' },
         src === null
-          ? h('div', { className: 'rt-shot-thumb rt-shot-loading', style: { height: (height || 96) + 'px' } }, '载入中…')
+          ? h('div', { className: 'rt-shot-thumb rt-shot-loading', style: { height: (height || 96) + 'px' } }, t('载入中…', 'Loading...'))
           : h('img', {
-              className: 'rt-shot-thumb', src: src, alt: shot.label || ('证据 ' + shot.id),
+              className: 'rt-shot-thumb', src: src, alt: shot.label || (t('证据 ', 'Evidence ') + shot.id),
               style: { height: (height || 96) + 'px', cursor: 'zoom-in' },
               onClick: () => setZoom(true),
             }),
         h('div', { className: 'rt-shot-cap' },
           h('span', { className: 'rt-tag ' + (card ? 'rt-tag-warn' : 'rt-tag-live'), title: card
-            ? '由当日记录生成的证据摘录，不是现场截图 —— 报告里同样会标注'
-            : '现场截图' }, SHOT_KIND[shot.kind] || shot.kind || '证据'),
+            ? t('由当日记录生成的证据摘录，不是现场截图 —— 报告里同样会标注', 'Evidence card generated from session logs (not a live screenshot)')
+            : t('现场截图', 'Live Screenshot') }, shotKindLabel(shot.kind)),
           h('span', { className: 'rt-shot-label', title: shot.label || shot.note || '' },
             shot.label || shot.target || ('#' + shot.id))),
         zoom
           ? h('div', { className: 'rt-shot-zoom', onClick: () => setZoom(false) },
               h('img', { src: src, alt: shot.label || '' }),
               h('div', { className: 'rt-shot-zoom-cap' }, (shot.label || shot.target || '')
-                + (card ? '　·　由当日记录生成（非现场截图）' : '')
+                + (card ? t('　·　由当日记录生成（非现场截图）', ' · Generated from log (not live screenshot)') : '')
                 + (shot.captured_at ? '　·　' + fmt(shot.captured_at) : '')
-                + '　·　点击任意处关闭'))
+                + t('　·　点击任意处关闭', ' · Click anywhere to close')))
           : null)
     }
 
     /** 一个里程碑项的证据图条：最多 3 张（超过的部分只报数，不铺开）。 */
     const ShotStrip = ({ eng, shots, total, title }) => {
+      useLocale()
       const list = shots || []
       if (list.length === 0) return null
       return h('div', { className: 'rt-shots' },
         h('div', { className: 'rt-shots-head' },
-          h('b', null, title || '证据截图'),
-          h('span', { className: 'rt-shots-n' }, '显示 ' + list.length + ' 张'
-            + (total && total > list.length ? '（该项共 ' + total + ' 张，取代表图）' : ''))),
+          h('b', null, title || t('证据截图', 'Evidence Screenshots')),
+          h('span', { className: 'rt-shots-n' }, t('显示 ' + list.length + ' 张', 'Showing ' + list.length)
+            + (total && total > list.length ? t('（该项共 ' + total + ' 张，取代表图）', ' (' + total + ' total, sample)') : ''))),
         h('div', { className: 'rt-shot-row' }, list.map((sh) => h(ShotImage, { key: 'sh' + sh.id, eng: eng, shot: sh }))))
     }
 
@@ -378,6 +387,19 @@
       unbound: '待初始化',
       skipped: '已跳过指引',
     }
+    const FOLLOW_SOURCE_EN = {
+      bound: 'Bound',
+      title: 'Session Title',
+      last: 'Last Picked',
+      default: 'Default',
+      unbound: 'Pending Init',
+      skipped: 'Guide Skipped',
+    }
+    const followSourceLabel = (src) => (
+      getLocale() === 'en-US'
+        ? (FOLLOW_SOURCE_EN[src] || FOLLOW_SOURCE[src] || src || '')
+        : (FOLLOW_SOURCE[src] || src || '')
+    )
 
     const sessionIdOf = (props) => (props && typeof props.sessionId === 'string' && props.sessionId ? props.sessionId : null)
     const sessionTitleOf = (props) => {
@@ -460,6 +482,18 @@
       'path-traversal': '文件系统边界与路径校验', 'info-leak': '数据脱敏与隐私合规防护', privesc: '并发调度与权限分层模型',
       tunnel: '跨进程通信与联调网关桥接', other: '通用工程模式与组件复刻模板',
     }
+    const POC_CAT_NAME_EN = {
+      rce: 'Core Compute & Business Algorithms', sqli: 'Data Models & Persistence Queries', deserialization: 'Cross-End Serialization Contracts',
+      'file-upload': 'Static Assets & File Pipelines', 'auth-bypass': 'Auth Policies & Open Platform Contracts', unauthorized: 'Public APIs & Unauthenticated Sources',
+      'weak-password': 'Env Config & Secret Guardrails', ssrf: 'Server Proxies & CORS Gateways', xxe: 'Structured Docs & Config Parsers',
+      'path-traversal': 'Filesystem Boundaries & Path Checks', 'info-leak': 'Data Masking & Privacy Compliance', privesc: 'Concurrency Scheduling & RBAC Models',
+      tunnel: 'IPC & Debug Tunnel Bridges', other: 'General Patterns & Component Templates',
+    }
+    const pocCatLabel = (code) => (
+      getLocale() === 'en-US'
+        ? (POC_CAT_NAME_EN[code] || POC_CAT_NAME[code] || code)
+        : (POC_CAT_NAME[code] || code)
+    )
     const POC_CAT_ORDER = Object.keys(POC_CAT_NAME)
     const ROLE_LABEL = {
       plan: '主控指挥（Captain）',
@@ -471,13 +505,28 @@
       qa: '质量保障与测试（QA Lead）',
       internal: '文档工程与发布（Doc & Release）',
     }
+    const ROLE_LABEL_EN = {
+      plan: 'Captain (Orchestrator)',
+      recon: 'Product & Planning (CEO)',
+      designer: 'UI & Visual Design (Designer)',
+      assess: 'Architecture & Sharding (Eng Manager)',
+      'vuln-scan': 'Code Review & Security (Reviewer & CSO)',
+      exploit: 'Full-Stack Build (Builder)',
+      qa: 'QA & Verification (QA Lead)',
+      internal: 'Docs & Release (Doc & Release)',
+    }
+    const roleLabel = (role) => (
+      getLocale() === 'en-US'
+        ? (ROLE_LABEL_EN[role] || ROLE_LABEL[role] || role)
+        : (ROLE_LABEL[role] || role)
+    )
 
     const fmt = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
     const fmtShort = (s) => {
-      const t = String(s || '').replace('T', ' ')
-      return t.length >= 16 ? t.slice(5, 16) : (t || '—')
+      const tStr = String(s || '').replace('T', ' ')
+      return tStr.length >= 16 ? tStr.slice(5, 16) : (tStr || '—')
     }
-    const provLabel = (p) => (p === 'passive' ? '被动' : p === 'active' ? '主动' : '未知')
+    const provLabel = (p) => (p === 'passive' ? t('被动', 'Passive') : p === 'active' ? t('主动', 'Active') : t('未知', 'Unknown'))
 
     /**
      * 给「可点击但不是 <button>」的元素补上键盘可达性。
@@ -524,27 +573,37 @@
 
     const copyWithFeedback = async (text, label, onResult) => {
       const okFlag = await copyText(text)
-      const message = okFlag ? '已复制：' + label : '复制失败（浏览器未授权剪贴板）—— 请手动选中文本复制'
+      const message = okFlag
+        ? t('已复制：' + label, 'Copied: ' + label)
+        : t('复制失败（浏览器未授权剪贴板）—— 请手动选中文本复制', 'Copy failed (clipboard permission denied) — please copy manually')
       if (typeof onResult === 'function') onResult(okFlag, message)
       return okFlag
     }
 
     function ProvTag(props) {
-      if (!props.p) return h('span', { className: 'rt-tag' }, '未知')
+      useLocale()
+      if (!props.p) return h('span', { className: 'rt-tag' }, t('未知', 'Unknown'))
       return h('span', { className: 'rt-tag rt-tag-' + props.p }, provLabel(props.p))
     }
 
     const TEST_LABEL = { untested: '待验证', testing: '验证中', tested: '已验证', blocked: '受阻', abandoned: '已跳过', no_surface: '无需验证' }
+    const TEST_LABEL_EN = { untested: 'Untested', testing: 'Testing', tested: 'Verified', blocked: 'Blocked', abandoned: 'Skipped', no_surface: 'No Surface' }
+    const testLabel = (st) => (getLocale() === 'en-US' ? (TEST_LABEL_EN[st] || TEST_LABEL[st] || st) : (TEST_LABEL[st] || st))
+
     const PRI_LABEL = { high: '高', medium: '中', low: '低' }
+    const PRI_LABEL_EN = { high: 'High', medium: 'Med', low: 'Low' }
+    const priLabel = (p) => (getLocale() === 'en-US' ? (PRI_LABEL_EN[p] || PRI_LABEL[p] || p) : (PRI_LABEL[p] || p))
 
     function PriTag(props) {
-      if (!props.p) return h('span', { className: 'rt-tag' }, '未评')
-      return h('span', { className: 'rt-pri rt-pri-' + props.p, title: props.title || '' }, PRI_LABEL[props.p] || props.p)
+      useLocale()
+      if (!props.p) return h('span', { className: 'rt-tag' }, t('未评', 'Unrated'))
+      return h('span', { className: 'rt-pri rt-pri-' + props.p, title: props.title || '' }, priLabel(props.p))
     }
 
     function TestTag(props) {
+      useLocale()
       const st = props.s || 'untested'
-      return h('span', { className: 'rt-test rt-test-' + st }, TEST_LABEL[st] || st)
+      return h('span', { className: 'rt-test rt-test-' + st }, testLabel(st))
     }
 
     const PENDING_APPROVAL_STATES = new Set([
@@ -558,8 +617,8 @@
       key: key,
       className: 'rt-concl-i' + (active ? ' on' : ''),
       style: onClick ? undefined : { cursor: 'default' },
-      title: onClick ? '点击筛选 / 再点取消' : undefined,
-    }, onClick ? clickable(onClick, { label: '按「' + label + '」筛选（' + (value || 0) + '）', expanded: active }) : {}),
+      title: onClick ? t('点击筛选 / 再点取消', 'Click to filter / click again to clear') : undefined,
+    }, onClick ? clickable(onClick, { label: t('按「' + label + '」筛选（' + (value || 0) + '）', 'Filter by "' + label + '" (' + (value || 0) + ')'), expanded: active }) : {}),
       h('b', null, String(value || 0)), h('span', null, label))
 
     const isRealHostSessionId = (sid, hostSessionList) => {
@@ -592,7 +651,7 @@
         ? primarySid
         : (isRealHostSessionId(options.fallbackSessionId, hostSessions) ? options.fallbackSessionId : '')
       const targetSid = isRealHostSessionId(candidateSid, hostSessions) ? candidateSid : fallbackRealSid
-      const targetTitle = (agent && (agent.title || agent.name)) || options.sessionTitle || sessionTitle || targetSid || '当前会话'
+      const targetTitle = (agent && (agent.title || agent.name)) || options.sessionTitle || sessionTitle || targetSid || t('当前会话', 'Current Session')
 
       if (targetSid) {
         setSessionId(targetSid, targetTitle)
@@ -696,6 +755,7 @@
     }
 
     function Clip(props) {
+      useLocale()
       const [open, setOpen] = React.useState(false)
       const text = String(props.text === undefined || props.text === null ? '' : props.text)
       if (text.trim() === '') return null
@@ -706,10 +766,10 @@
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
             onClick: (e) => { e.stopPropagation(); copyText(text) },
-          }, '复制'),
+          }, t('复制', 'Copy')),
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
             onClick: (e) => { e.stopPropagation(); setOpen((v) => !v) },
-          }, open ? '收起' : '展开')),
+          }, open ? t('收起', 'Collapse') : t('展开', 'Expand'))),
         h('div', { className: 'rt-clip-body' }, text))
     }

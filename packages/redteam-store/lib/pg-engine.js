@@ -95,6 +95,9 @@ export function resolvePgConfig(root, env = process.env, explicitUrl = undefined
     settings && typeof settings.pgUrl === 'string' && settings.pgUrl.trim()
       ? { url: settings.pgUrl.trim(), source: 'settings' }
       : null,
+    env && typeof env.LMTAGENT_PG_URL === 'string' && env.LMTAGENT_PG_URL.trim()
+      ? { url: env.LMTAGENT_PG_URL.trim(), source: 'env:LMTAGENT_PG_URL' }
+      : null,
     env && typeof env.REDTEAM_PG_URL === 'string' && env.REDTEAM_PG_URL.trim()
       ? { url: env.REDTEAM_PG_URL.trim(), source: 'env:REDTEAM_PG_URL' }
       : null,

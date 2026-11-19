@@ -1,6 +1,6 @@
 
 window.__ModuleLoader__.load({
-  id: 'dsh-redteam-mode',
+  id: 'dsh-lmtagent',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
@@ -65,7 +65,7 @@ window.__ModuleLoader__.load({
     function SecretText(props) {
       const value = String(props.value === undefined || props.value === null ? '' : props.value)
       const [shown, setShown] = React.useState(false)
-      if (value === '') return h('span', { className: 'rt-secret-none' }, props.empty || '未记录')
+      if (value === '') return h('span', { className: 'rt-secret-none' }, props.empty || t('未记录', 'Not recorded'))
       return h('span', {
         className: props.className || 'rt-mono',
         style: { display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%' },
@@ -74,7 +74,7 @@ window.__ModuleLoader__.load({
         h('button', {
           className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
           onClick: (e) => { e.stopPropagation(); setShown((v) => !v) },
-        }, shown ? '隐藏' : '显示'))
+        }, shown ? t('隐藏', 'Hide') : t('显示', 'Show')))
     }
 
     const splitTableRow = (line) => {
@@ -209,7 +209,7 @@ window.__ModuleLoader__.load({
       return hits.length ? hits[0].x.id : null
     }
 
-    const CLIENT_PLUGIN_VERSION = '0.23.2'
+    const CLIENT_PLUGIN_VERSION = '1.0.0'
     const CSS = `
 :root{
   --rt-dock-w:540px;
@@ -2425,9 +2425,104 @@ body[data-ds-dark-theme] .rt-anim-complete{
 `
 
 
+    const LOCALE_STORAGE_KEY = 'lmt_ui_locale'
+    let _syncedUiLocale = 'auto'
+    let _memoryLocale = null
+    const _localeListeners = new Set()
+
+    const normalizeLocalePref = (raw) => {
+      const s = String(raw === undefined || raw === null ? '' : raw).trim()
+      if (s === 'zh-CN' || s === 'en-US') return s
+      if (/^zh\b/i.test(s)) return 'zh-CN'
+      if (/^en\b/i.test(s)) return 'en-US'
+      return 'auto'
+    }
+
+    const readStoredLocale = () => {
+      try {
+        if (typeof window !== 'undefined' && window && window.localStorage) {
+          const raw = window.localStorage.getItem(LOCALE_STORAGE_KEY)
+          if (raw === 'zh-CN' || raw === 'en-US') return raw
+          return null
+        }
+      } catch { /* ignore storage error */ }
+      return (_memoryLocale === 'zh-CN' || _memoryLocale === 'en-US') ? _memoryLocale : null
+    }
+
+    const getLocale = () => {
+      const stored = readStoredLocale()
+      if (stored === 'zh-CN' || stored === 'en-US') return stored
+      if (_syncedUiLocale === 'zh-CN' || _syncedUiLocale === 'en-US') return _syncedUiLocale
+      try {
+        if (typeof navigator !== 'undefined' && navigator && /^en\b/i.test(navigator.language || '')) {
+          return 'en-US'
+        }
+      } catch { /* ignore */ }
+      return 'zh-CN'
+    }
+
+    const notifyLocaleListeners = () => {
+      const cur = getLocale()
+      for (const fn of Array.from(_localeListeners)) {
+        try { fn(cur) } catch { /* ignore */ }
+      }
+    }
+
+    const setLocale = (nextLocale) => {
+      const norm = normalizeLocalePref(nextLocale)
+      const prev = getLocale()
+      let hasStorage = false
+      try {
+        if (typeof window !== 'undefined' && window && window.localStorage) {
+          hasStorage = true
+          if (norm === 'zh-CN' || norm === 'en-US') {
+            window.localStorage.setItem(LOCALE_STORAGE_KEY, norm)
+          } else {
+            window.localStorage.removeItem(LOCALE_STORAGE_KEY)
+          }
+        }
+      } catch { hasStorage = false }
+      if (!hasStorage) {
+        _memoryLocale = (norm === 'zh-CN' || norm === 'en-US') ? norm : null
+      } else {
+        _memoryLocale = null
+      }
+      if (norm === 'auto') {
+        _syncedUiLocale = 'auto'
+      }
+      const next = getLocale()
+      if (next !== prev) notifyLocaleListeners()
+      return next
+    }
+
+    const syncLocaleFromSettings = (rawPref) => {
+      const prev = getLocale()
+      const norm = normalizeLocalePref(rawPref)
+      _syncedUiLocale = norm
+      const next = getLocale()
+      if (next !== prev) notifyLocaleListeners()
+      return next
+    }
+
+    const t = (zh, en) => (getLocale() === 'en-US' ? (en !== undefined ? en : zh) : zh)
+
+    const useLocale = () => {
+      const [, force] = React.useReducer((x) => x + 1, 0)
+      React.useEffect(() => {
+        const listener = () => force()
+        _localeListeners.add(listener)
+        return () => { _localeListeners.delete(listener) }
+      }, [])
+      return getLocale()
+    }
+
+
 
     const isFullWindow = () => {
-      try { return String(window.location.hash || '') === '#redteam-full' } catch { return false }
+      try {
+        const hashVal = String(window.location.hash || '')
+        return hashVal === '#lmtagent-full' || hashVal === '#redteam-full'
+      } catch { return false }
     }
 
     const FULL_REQUEST_EVENT = 'rt-open-full'
@@ -2447,7 +2542,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     const openFullView = () => {
       if (isDesktopShell()) { requestFullInPlace(); return }
       let win = null
-      try { win = window.open(window.location.href.split('#')[0] + '#redteam-full', '_blank') } catch { win = null }
+      try { win = window.open(window.location.href.split('#')[0] + '#lmtagent-full', '_blank') } catch { win = null }
       if (win === null || win === undefined) requestFullInPlace()
     }
 
@@ -2478,14 +2573,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
       if (typeof fetch !== 'function') {
         return Promise.resolve({ ok: false, error: 'fetch unavailable' })
       }
-      return fetch('/redteam/api', {
+      return fetch('/lmtagent/api', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(bodyObj),
       }).then((res) => {
         if (res && typeof res.text === 'function') {
           return res.text().then((txt) => {
-            if (!txt || !txt.trim()) return { ok: false, emptyResponse: true, error: '后端服务正在就绪，请稍候点击「刷新」重试' }
+            if (!txt || !txt.trim()) return { ok: false, emptyResponse: true, error: t('后端服务正在就绪，请稍候点击「刷新」重试', 'Backend service is starting up; please retry with Refresh.') }
             try {
               const parsed = JSON.parse(txt)
               if (parsed && typeof parsed === 'object' && Number.isFinite(Number(parsed.seq))) {
@@ -2494,7 +2589,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
               }
               return parsed
             } catch {
-              return { ok: false, emptyResponse: true, error: '后端响应格式异常（HTTP ' + (res.status || 0) + '）' }
+              return { ok: false, emptyResponse: true, error: t('后端响应格式异常（HTTP ' + (res.status || 0) + '）', 'Invalid backend response (HTTP ' + (res.status || 0) + ')') }
             }
           })
         }
@@ -2507,10 +2602,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
             return parsed
           })
         }
-        return { ok: false, error: '未知响应' }
+        return { ok: false, error: t('未知响应', 'Unknown response') }
       }).catch((err) => ({
         ok: false,
-        error: err && err.message ? err.message : String(err || '网络请求异常'),
+        error: err && err.message ? err.message : String(err || t('网络请求异常', 'Network request failed')),
       }))
     }
 
@@ -2535,7 +2630,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         : (typeof window !== 'undefined' && window && typeof window.EventSource === 'function' ? window.EventSource : null)
       if (!ES) return
       try {
-        const url = _lastHostSeq > 0 ? ('/redteam/events?sinceSeq=' + _lastHostSeq) : '/redteam/events'
+        const url = _lastHostSeq > 0 ? ('/lmtagent/events?sinceSeq=' + _lastHostSeq) : '/lmtagent/events'
         const src = new ES(url)
         _sseSource = src
         const handleMsg = (ev) => {
@@ -2672,45 +2767,51 @@ body[data-ds-dark-theme] .rt-anim-complete{
       }).catch(() => { shotLoading.delete(key) })
       shotLoading.set(key, p)
     }
-    const SHOT_KIND = { screenshot: '现场截图', card: '记录生成的证据摘录' }
+    const shotKindLabel = (kind) => {
+      if (kind === 'screenshot') return t('现场截图', 'Live Screenshot')
+      if (kind === 'card') return t('记录生成的证据摘录', 'Generated Evidence Card')
+      return kind || t('证据', 'Evidence')
+    }
 
     const ShotImage = ({ eng, shot, height }) => {
+      useLocale()
       const [zoom, setZoom] = React.useState(false)
       const src = shotSrc(eng, shot.id)
       if (src === null) { loadShot(eng, shot.id) }
       const card = shot.kind === 'card'
       return h('div', { className: 'rt-shot' },
         src === null
-          ? h('div', { className: 'rt-shot-thumb rt-shot-loading', style: { height: (height || 96) + 'px' } }, '载入中…')
+          ? h('div', { className: 'rt-shot-thumb rt-shot-loading', style: { height: (height || 96) + 'px' } }, t('载入中…', 'Loading...'))
           : h('img', {
-              className: 'rt-shot-thumb', src: src, alt: shot.label || ('证据 ' + shot.id),
+              className: 'rt-shot-thumb', src: src, alt: shot.label || (t('证据 ', 'Evidence ') + shot.id),
               style: { height: (height || 96) + 'px', cursor: 'zoom-in' },
               onClick: () => setZoom(true),
             }),
         h('div', { className: 'rt-shot-cap' },
           h('span', { className: 'rt-tag ' + (card ? 'rt-tag-warn' : 'rt-tag-live'), title: card
-            ? '由当日记录生成的证据摘录，不是现场截图 —— 报告里同样会标注'
-            : '现场截图' }, SHOT_KIND[shot.kind] || shot.kind || '证据'),
+            ? t('由当日记录生成的证据摘录，不是现场截图 —— 报告里同样会标注', 'Evidence card generated from session logs (not a live screenshot)')
+            : t('现场截图', 'Live Screenshot') }, shotKindLabel(shot.kind)),
           h('span', { className: 'rt-shot-label', title: shot.label || shot.note || '' },
             shot.label || shot.target || ('#' + shot.id))),
         zoom
           ? h('div', { className: 'rt-shot-zoom', onClick: () => setZoom(false) },
               h('img', { src: src, alt: shot.label || '' }),
               h('div', { className: 'rt-shot-zoom-cap' }, (shot.label || shot.target || '')
-                + (card ? '　·　由当日记录生成（非现场截图）' : '')
+                + (card ? t('　·　由当日记录生成（非现场截图）', ' · Generated from log (not live screenshot)') : '')
                 + (shot.captured_at ? '　·　' + fmt(shot.captured_at) : '')
-                + '　·　点击任意处关闭'))
+                + t('　·　点击任意处关闭', ' · Click anywhere to close')))
           : null)
     }
 
     const ShotStrip = ({ eng, shots, total, title }) => {
+      useLocale()
       const list = shots || []
       if (list.length === 0) return null
       return h('div', { className: 'rt-shots' },
         h('div', { className: 'rt-shots-head' },
-          h('b', null, title || '证据截图'),
-          h('span', { className: 'rt-shots-n' }, '显示 ' + list.length + ' 张'
-            + (total && total > list.length ? '（该项共 ' + total + ' 张，取代表图）' : ''))),
+          h('b', null, title || t('证据截图', 'Evidence Screenshots')),
+          h('span', { className: 'rt-shots-n' }, t('显示 ' + list.length + ' 张', 'Showing ' + list.length)
+            + (total && total > list.length ? t('（该项共 ' + total + ' 张，取代表图）', ' (' + total + ' total, sample)') : ''))),
         h('div', { className: 'rt-shot-row' }, list.map((sh) => h(ShotImage, { key: 'sh' + sh.id, eng: eng, shot: sh }))))
     }
 
@@ -2783,6 +2884,19 @@ body[data-ds-dark-theme] .rt-anim-complete{
       unbound: '待初始化',
       skipped: '已跳过指引',
     }
+    const FOLLOW_SOURCE_EN = {
+      bound: 'Bound',
+      title: 'Session Title',
+      last: 'Last Picked',
+      default: 'Default',
+      unbound: 'Pending Init',
+      skipped: 'Guide Skipped',
+    }
+    const followSourceLabel = (src) => (
+      getLocale() === 'en-US'
+        ? (FOLLOW_SOURCE_EN[src] || FOLLOW_SOURCE[src] || src || '')
+        : (FOLLOW_SOURCE[src] || src || '')
+    )
 
     const sessionIdOf = (props) => (props && typeof props.sessionId === 'string' && props.sessionId ? props.sessionId : null)
     const sessionTitleOf = (props) => {
@@ -2864,6 +2978,18 @@ body[data-ds-dark-theme] .rt-anim-complete{
       'path-traversal': '文件系统边界与路径校验', 'info-leak': '数据脱敏与隐私合规防护', privesc: '并发调度与权限分层模型',
       tunnel: '跨进程通信与联调网关桥接', other: '通用工程模式与组件复刻模板',
     }
+    const POC_CAT_NAME_EN = {
+      rce: 'Core Compute & Business Algorithms', sqli: 'Data Models & Persistence Queries', deserialization: 'Cross-End Serialization Contracts',
+      'file-upload': 'Static Assets & File Pipelines', 'auth-bypass': 'Auth Policies & Open Platform Contracts', unauthorized: 'Public APIs & Unauthenticated Sources',
+      'weak-password': 'Env Config & Secret Guardrails', ssrf: 'Server Proxies & CORS Gateways', xxe: 'Structured Docs & Config Parsers',
+      'path-traversal': 'Filesystem Boundaries & Path Checks', 'info-leak': 'Data Masking & Privacy Compliance', privesc: 'Concurrency Scheduling & RBAC Models',
+      tunnel: 'IPC & Debug Tunnel Bridges', other: 'General Patterns & Component Templates',
+    }
+    const pocCatLabel = (code) => (
+      getLocale() === 'en-US'
+        ? (POC_CAT_NAME_EN[code] || POC_CAT_NAME[code] || code)
+        : (POC_CAT_NAME[code] || code)
+    )
     const POC_CAT_ORDER = Object.keys(POC_CAT_NAME)
     const ROLE_LABEL = {
       plan: '主控指挥（Captain）',
@@ -2875,13 +3001,28 @@ body[data-ds-dark-theme] .rt-anim-complete{
       qa: '质量保障与测试（QA Lead）',
       internal: '文档工程与发布（Doc & Release）',
     }
+    const ROLE_LABEL_EN = {
+      plan: 'Captain (Orchestrator)',
+      recon: 'Product & Planning (CEO)',
+      designer: 'UI & Visual Design (Designer)',
+      assess: 'Architecture & Sharding (Eng Manager)',
+      'vuln-scan': 'Code Review & Security (Reviewer & CSO)',
+      exploit: 'Full-Stack Build (Builder)',
+      qa: 'QA & Verification (QA Lead)',
+      internal: 'Docs & Release (Doc & Release)',
+    }
+    const roleLabel = (role) => (
+      getLocale() === 'en-US'
+        ? (ROLE_LABEL_EN[role] || ROLE_LABEL[role] || role)
+        : (ROLE_LABEL[role] || role)
+    )
 
     const fmt = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
     const fmtShort = (s) => {
-      const t = String(s || '').replace('T', ' ')
-      return t.length >= 16 ? t.slice(5, 16) : (t || '—')
+      const tStr = String(s || '').replace('T', ' ')
+      return tStr.length >= 16 ? tStr.slice(5, 16) : (tStr || '—')
     }
-    const provLabel = (p) => (p === 'passive' ? '被动' : p === 'active' ? '主动' : '未知')
+    const provLabel = (p) => (p === 'passive' ? t('被动', 'Passive') : p === 'active' ? t('主动', 'Active') : t('未知', 'Unknown'))
 
     const clickable = (onActivate, options = {}) => {
       const props = {
@@ -2925,27 +3066,37 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
     const copyWithFeedback = async (text, label, onResult) => {
       const okFlag = await copyText(text)
-      const message = okFlag ? '已复制：' + label : '复制失败（浏览器未授权剪贴板）—— 请手动选中文本复制'
+      const message = okFlag
+        ? t('已复制：' + label, 'Copied: ' + label)
+        : t('复制失败（浏览器未授权剪贴板）—— 请手动选中文本复制', 'Copy failed (clipboard permission denied) — please copy manually')
       if (typeof onResult === 'function') onResult(okFlag, message)
       return okFlag
     }
 
     function ProvTag(props) {
-      if (!props.p) return h('span', { className: 'rt-tag' }, '未知')
+      useLocale()
+      if (!props.p) return h('span', { className: 'rt-tag' }, t('未知', 'Unknown'))
       return h('span', { className: 'rt-tag rt-tag-' + props.p }, provLabel(props.p))
     }
 
     const TEST_LABEL = { untested: '待验证', testing: '验证中', tested: '已验证', blocked: '受阻', abandoned: '已跳过', no_surface: '无需验证' }
+    const TEST_LABEL_EN = { untested: 'Untested', testing: 'Testing', tested: 'Verified', blocked: 'Blocked', abandoned: 'Skipped', no_surface: 'No Surface' }
+    const testLabel = (st) => (getLocale() === 'en-US' ? (TEST_LABEL_EN[st] || TEST_LABEL[st] || st) : (TEST_LABEL[st] || st))
+
     const PRI_LABEL = { high: '高', medium: '中', low: '低' }
+    const PRI_LABEL_EN = { high: 'High', medium: 'Med', low: 'Low' }
+    const priLabel = (p) => (getLocale() === 'en-US' ? (PRI_LABEL_EN[p] || PRI_LABEL[p] || p) : (PRI_LABEL[p] || p))
 
     function PriTag(props) {
-      if (!props.p) return h('span', { className: 'rt-tag' }, '未评')
-      return h('span', { className: 'rt-pri rt-pri-' + props.p, title: props.title || '' }, PRI_LABEL[props.p] || props.p)
+      useLocale()
+      if (!props.p) return h('span', { className: 'rt-tag' }, t('未评', 'Unrated'))
+      return h('span', { className: 'rt-pri rt-pri-' + props.p, title: props.title || '' }, priLabel(props.p))
     }
 
     function TestTag(props) {
+      useLocale()
       const st = props.s || 'untested'
-      return h('span', { className: 'rt-test rt-test-' + st }, TEST_LABEL[st] || st)
+      return h('span', { className: 'rt-test rt-test-' + st }, testLabel(st))
     }
 
     const PENDING_APPROVAL_STATES = new Set([
@@ -2959,8 +3110,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
       key: key,
       className: 'rt-concl-i' + (active ? ' on' : ''),
       style: onClick ? undefined : { cursor: 'default' },
-      title: onClick ? '点击筛选 / 再点取消' : undefined,
-    }, onClick ? clickable(onClick, { label: '按「' + label + '」筛选（' + (value || 0) + '）', expanded: active }) : {}),
+      title: onClick ? t('点击筛选 / 再点取消', 'Click to filter / click again to clear') : undefined,
+    }, onClick ? clickable(onClick, { label: t('按「' + label + '」筛选（' + (value || 0) + '）', 'Filter by "' + label + '" (' + (value || 0) + ')'), expanded: active }) : {}),
       h('b', null, String(value || 0)), h('span', null, label))
 
     const isRealHostSessionId = (sid, hostSessionList) => {
@@ -2990,7 +3141,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         ? primarySid
         : (isRealHostSessionId(options.fallbackSessionId, hostSessions) ? options.fallbackSessionId : '')
       const targetSid = isRealHostSessionId(candidateSid, hostSessions) ? candidateSid : fallbackRealSid
-      const targetTitle = (agent && (agent.title || agent.name)) || options.sessionTitle || sessionTitle || targetSid || '当前会话'
+      const targetTitle = (agent && (agent.title || agent.name)) || options.sessionTitle || sessionTitle || targetSid || t('当前会话', 'Current Session')
 
       if (targetSid) {
         setSessionId(targetSid, targetTitle)
@@ -3093,6 +3244,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function Clip(props) {
+      useLocale()
       const [open, setOpen] = React.useState(false)
       const text = String(props.text === undefined || props.text === null ? '' : props.text)
       if (text.trim() === '') return null
@@ -3103,11 +3255,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
             onClick: (e) => { e.stopPropagation(); copyText(text) },
-          }, '复制'),
+          }, t('复制', 'Copy')),
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
             onClick: (e) => { e.stopPropagation(); setOpen((v) => !v) },
-          }, open ? '收起' : '展开')),
+          }, open ? t('收起', 'Collapse') : t('展开', 'Expand'))),
         h('div', { className: 'rt-clip-body' }, text))
     }
 
@@ -3374,9 +3526,16 @@ body[data-ds-dark-theme] .rt-anim-complete{
       4: '第 4 步：自动测试与验收',
     }
 
+    const NOVICE_WAVE_MILESTONES_EN = {
+      1: 'Step 1: Clarify Specs & UI Design',
+      2: 'Step 2: Lock Architecture & Shards',
+      3: 'Step 3: Parallel Implementation',
+      4: 'Step 4: Auto Test & Verification',
+    }
+
     const formatWaveHeaderByMode = (waveNo, defaultHeader, uiMode) => {
       if (uiMode === 'novice' && NOVICE_WAVE_MILESTONES[waveNo]) {
-        return NOVICE_WAVE_MILESTONES[waveNo]
+        return t(NOVICE_WAVE_MILESTONES[waveNo], NOVICE_WAVE_MILESTONES_EN[waveNo] || defaultHeader)
       }
       return defaultHeader
     }
@@ -3389,7 +3548,26 @@ body[data-ds-dark-theme] .rt-anim-complete{
       ['qa', 4],
       ['vuln-scan', 4],
       ['internal', 4],
-    ].map(([value, wave]) => ({ value, label: ROLE_LABEL[value] || value, wave }))
+    ].map(([value, wave]) => ({ value, wave }))
+
+    const DEMO_WISH_PRESETS = [
+      {
+        id: 'orderflow-demo',
+        workspace: 'OrderFlow-Demo',
+        labelZh: '示例：全栈订单工作台',
+        labelEn: 'Demo: Full-Stack Order Workbench',
+        promptZh: '构建「OrderFlow」全栈订单工作台：\n1. 数据模型与 Schema：定义 orders / order_items / order_events 表结构及索引，约束合法状态流转。\n2. 后端状态机与 API：实现创建、支付确认、发货、取消与退款幂等状态机及 REST 接口校验。\n3. React 订单列表 UI：支持按状态筛选、关键词搜索、分页与详情抽屉。\n4. 自动化测试：覆盖状态机非法跃迁单测、API 集成测试与前端表格渲染测试。',
+        promptEn: 'Build the "OrderFlow" full-stack order workbench:\n1. Schema & Data Model: Define orders, order_items, and order_events schemas with indexes and strict status constraints.\n2. Backend State Machine & API: Implement idempotent order transitions (created -> paid -> shipped -> completed/cancelled) with REST validation.\n3. React Table UI: Build a filterable, searchable, paginated order workbench table with row detail drawer.\n4. Automated Tests: Cover invalid state transitions, API integration contracts, and UI table rendering assertions.',
+      },
+      {
+        id: 'clirefactor-demo',
+        workspace: 'CliRefactor-Demo',
+        labelZh: '示例：CLI 重构与测试门禁',
+        labelEn: 'Demo: CLI Refactor & Test Gate',
+        promptZh: '重构现有 CLI 工程并建立严格测试门禁：\n1. 模块化拆分：将单体命令入口拆分为独立子命令模块、参数校验层与统一错误码输出器。\n2. 配置与向后兼容：保留旧版 CLI flags 与 JSON 输出契约，补充结构化帮助信息。\n3. 测试与质量门禁：补全子命令单测、边界输入回归用例及 CI 一键校验脚本。',
+        promptEn: 'Refactor the CLI codebase and establish a strict test gate:\n1. Modularization: Split the monolithic entrypoint into isolated subcommand handlers, argument validators, and unified error formatters.\n2. Compatibility & Config: Preserve legacy CLI flags and JSON output contracts with structured help output.\n3. Test Verification Gate: Add unit/integration tests for every subcommand, edge-case inputs, and an automated CI verification gate.',
+      },
+    ]
 
     const WIZARD_WAVE_OPTIONS = [1, 2, 3, 4]
 
@@ -3576,6 +3754,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function UiModeSwitcher(props) {
+      useLocale()
       const { uiMode } = useUI()
       const isNovice = uiMode === 'novice'
       const compact = Boolean(props && props.compact)
@@ -3595,19 +3774,20 @@ body[data-ds-dark-theme] .rt-anim-complete{
           type: 'button',
           className: 'rt-btn' + (isNovice ? ' rt-btn-primary' : ''),
           style: { borderRadius: 999, padding: '1px 8px', fontSize: 11, fontWeight: isNovice ? 700 : 500 },
-          title: '切换为简洁视图',
+          title: t('切换为简洁视图', 'Switch to Simple View'),
           onClick: () => setUiMode('novice'),
-        }, '简洁'),
+        }, t('简洁', 'Simple')),
         h('button', {
           type: 'button',
           className: 'rt-btn' + (!isNovice ? ' rt-btn-primary' : ''),
           style: { borderRadius: 999, padding: '1px 8px', fontSize: 11, fontWeight: !isNovice ? 700 : 500 },
-          title: '切换为专家视图',
+          title: t('切换为专家视图', 'Switch to Expert View'),
           onClick: () => setUiMode('expert'),
-        }, '专家'))
+        }, t('专家', 'Expert')))
     }
 
     function WishRefinerWizard(props) {
+      useLocale()
       const eng = props.engagement || null
       const hasActiveWork = Boolean(props.hasActiveWork)
       const openSignal = props.openSignal || 0
@@ -3775,7 +3955,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const handleClarifyWithAI = () => {
         const promptTrimmed = String(wishText || '').trim()
         if (!promptTrimmed) {
-          setFeedback({ tone: 'warn', text: '请先输入需要实现的功能目标或工程需求。' })
+          setFeedback({ tone: 'warn', text: t('请先输入需要实现的功能目标或工程需求。', 'Please describe the target feature or engineering requirement first.') })
           return
         }
         setClarifying(true)
@@ -3790,7 +3970,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((res) => {
           setClarifying(false)
           if (!res || res.ok === false || res.llm_unavailable === true || res.error === 'llm_unavailable' || res.code === 'llm_unavailable') {
-            setLlmError(extractLlmErrorInfo(res, 'clarify', '模型服务不可用或未配置，未能获取 AI 澄清问题。'))
+            setLlmError(extractLlmErrorInfo(res, 'clarify', t('模型服务不可用或未配置，未能获取 AI 澄清问题。', 'Model service is unavailable or unconfigured; failed to get AI clarification.')))
             return
           }
           if (!eng && !hintEdited && (res.project_name || res.projectName) && !projectHint) {
@@ -3798,7 +3978,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           }
           const parsed = normalizeClarifyResponse(res)
           if (!parsed || (parsed.questions.length === 0 && parsed.dimensions.length === 0 && !parsed.summary)) {
-            setLlmError(extractLlmErrorInfo(res, 'clarify', '模型未返回有效澄清维度，请直接重试 AI 拆解或转交主代理。'))
+            setLlmError(extractLlmErrorInfo(res, 'clarify', t('模型未返回有效澄清维度，请直接重试 AI 拆解或转交主代理。', 'No valid clarification dimensions returned; please retry AI decompose or hand off to Captain.')))
             return
           }
           setClarifyData(parsed)
@@ -3806,7 +3986,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           setSelectedDims([])
           setFeedback({
             tone: 'ok',
-            text: '已由模型生成项目专属澄清问题，选择或补充后点击「AI 拆解蓝图」。',
+            text: t('已由模型生成项目专属澄清问题，选择或补充后点击「AI 拆解蓝图」。', 'Clarifying questions generated. Pick options and click "AI Decompose".'),
           })
         }).catch((err) => {
           setClarifying(false)
@@ -3814,7 +3994,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             stage: 'clarify',
             code: 'network_error',
             isLlmUnavailable: false,
-            text: 'AI 澄清请求异常：' + (err && err.message ? err.message : String(err)),
+            text: t('AI 澄清请求异常：', 'AI clarification error: ') + (err && err.message ? err.message : String(err)),
           })
         })
       }
@@ -3822,7 +4002,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const handleRefinePreview = () => {
         const promptTrimmed = String(wishText || '').trim()
         if (!promptTrimmed) {
-          setFeedback({ tone: 'warn', text: '请先输入需要实现的功能目标或工程需求。' })
+          setFeedback({ tone: 'warn', text: t('请先输入需要实现的功能目标或工程需求。', 'Please describe the target feature or engineering requirement first.') })
           return
         }
         setPreviewing(true)
@@ -3841,7 +4021,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((res) => {
           setPreviewing(false)
           if (!res || res.ok === false || res.llm_unavailable === true || res.error === 'llm_unavailable' || res.code === 'llm_unavailable') {
-            setLlmError(extractLlmErrorInfo(res, 'decompose', '模型服务不可用或调用失败，无法生成拆解蓝图。'))
+            setLlmError(extractLlmErrorInfo(res, 'decompose', t('模型服务不可用或调用失败，无法生成拆解蓝图。', 'Model service unavailable; failed to generate blueprint.')))
             return
           }
           const serverRefined = res.refined_prompt || res.refinedPrompt || (res.blueprint && res.blueprint.refined_prompt)
@@ -3856,14 +4036,17 @@ body[data-ds-dark-theme] .rt-anim-complete{
               stage: 'decompose',
               code: 'empty_blueprint',
               isLlmUnavailable: false,
-              text: '模型未返回有效的分片蓝图条目，请补充需求细节后重试或直交主代理接管。',
+              text: t('模型未返回有效的分片蓝图条目，请补充需求细节后重试或直交主代理接管。', 'No valid shard blueprint returned; please add details or hand off to Captain.'),
             })
             return
           }
           setStageCards(normalized)
           setFeedback({
             tone: 'ok',
-            text: '已生成 ' + normalized.length + ' 个可执行分片，请核对目标、角色、Wave 与文件边界后点击「确认立项并派发」。',
+            text: t(
+              '已生成 ' + normalized.length + ' 个可执行分片，请核对目标、角色、Wave 与文件边界后点击「确认立项并派发」。',
+              'Generated ' + normalized.length + ' executable shards. Review goals, roles, waves & file ownership, then click "Confirm & Dispatch".'
+            ),
           })
         }).catch((err) => {
           setPreviewing(false)
@@ -3871,7 +4054,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             stage: 'decompose',
             code: 'network_error',
             isLlmUnavailable: false,
-            text: 'AI 拆解请求异常：' + (err && err.message ? err.message : String(err)),
+            text: t('AI 拆解请求异常：', 'AI decompose error: ') + (err && err.message ? err.message : String(err)),
           })
         })
       }
@@ -3879,7 +4062,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const handleHandoffToCaptain = async () => {
         const promptTrimmed = String(wishText || '').trim()
         if (!promptTrimmed) {
-          setFeedback({ tone: 'warn', text: '请先输入需求描述后再转交主代理接管。' })
+          setFeedback({ tone: 'warn', text: t('请先输入需求描述后再转交主代理接管。', 'Please enter requirements before handing off to Captain.') })
           return
         }
         setHandoffBusy(true)
@@ -3899,7 +4082,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           if (!res || res.ok === false) {
             setFeedback({
               tone: 'err',
-              text: '转交主代理失败：' + ((res && (res.message || res.error)) || '后端未返回成功回执'),
+              text: t('转交主代理失败：', 'Captain handoff failed: ') + ((res && (res.message || res.error)) || t('后端未返回成功回执', 'No success receipt from backend')),
             })
             return
           }
@@ -3913,14 +4096,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
             totalGoals: stageCards.length,
             wave1Sessions: extractWave1Sessions(res),
             captainNotified: res.captain_notified !== false,
-            captainNote: String(res.captain_note || res.message || res.note || '已将需求与上下文转交主代理（Captain）在当前会话接管。'),
+            captainNote: String(res.captain_note || res.message || res.note || t('已将需求与上下文转交主代理（Captain）在当前会话接管。', 'Requirements & context handed off to Captain in the current session.')),
           })
           if (typeof props.onDecomposed === 'function') {
             props.onDecomposed(res, stageCards, promptTrimmed, targetEng || eng)
           }
         } catch (err) {
           setHandoffBusy(false)
-          setFeedback({ tone: 'err', text: '转交主代理异常：' + (err && err.message ? err.message : String(err)) })
+          setFeedback({ tone: 'err', text: t('转交主代理异常：', 'Captain handoff error: ') + (err && err.message ? err.message : String(err)) })
         }
       }
 
@@ -3943,7 +4126,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           id: 'wish-stage-custom-' + (prev.length + 1),
           wave: 3,
           role: 'exploit',
-          title: '新增研发分片 #' + (prev.length + 1),
+          title: t('新增研发分片 #' + (prev.length + 1), 'New Dev Shard #' + (prev.length + 1)),
           assignedGoal: '',
           filesOwned: '',
         }]))
@@ -3953,14 +4136,29 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setStageCards((prev) => prev.filter((_, i) => i !== idx))
       }
 
+      const applyDemoPreset = (preset) => {
+        if (!preset) return
+        setWishText(t(preset.promptZh, preset.promptEn))
+        setHintEdited(true)
+        setProjectHint(preset.workspace)
+        setLlmError(null)
+        setFeedback({
+          tone: 'ok',
+          text: t(
+            '已填充 1 分钟示例「' + preset.labelZh + '」（工作台：' + preset.workspace + '），可直接点击「AI 澄清需求」或「AI 拆解蓝图」。',
+            'Loaded 1-min demo "' + preset.labelEn + '" (Workspace: ' + preset.workspace + '). Click "AI Clarify" or "AI Decompose".'
+          ),
+        })
+      }
+
       const handleConfirmAndDecompose = async () => {
         const promptTrimmed = String(wishText || '').trim()
         if (!promptTrimmed && stageCards.length === 0) {
-          setFeedback({ tone: 'warn', text: '请先输入需求描述并点击「AI 拆解蓝图」。' })
+          setFeedback({ tone: 'warn', text: t('请先输入需求描述并点击「AI 拆解蓝图」。', 'Please enter requirements and click "AI Decompose" first.') })
           return
         }
         if (stageCards.length === 0) {
-          setFeedback({ tone: 'warn', text: '请先点击「AI 拆解蓝图」获取分片方案，或通过「直交主代理接管」直接调度。' })
+          setFeedback({ tone: 'warn', text: t('请先点击「AI 拆解蓝图」获取分片方案，或通过「直交主代理接管」直接调度。', 'Please click "AI Decompose" to generate shards, or hand off directly to Captain.') })
           return
         }
         const editedGoals = serializeStageCards(stageCards)
@@ -3986,7 +4184,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
           setLaunching(false)
           if (!decompRes || decompRes.ok === false || decompRes.llm_unavailable === true || decompRes.error === 'llm_unavailable') {
-            setLlmError(extractLlmErrorInfo(decompRes, 'decompose', '立项与派发失败，请检查模型配置或转交主代理接管。'))
+            setLlmError(extractLlmErrorInfo(decompRes, 'decompose', t('立项与派发失败，请检查模型配置或转交主代理接管。', 'Dispatch failed; check model settings or hand off to Captain.')))
             return
           }
           const wave1Sessions = extractWave1Sessions(decompRes)
@@ -4001,7 +4199,9 @@ body[data-ds-dark-theme] .rt-anim-complete{
             || decompRes.dispatch_summary
             || decompRes.note
             || decompRes.message
-            || (captainNotified === false ? '未自动通知主代理' : '已同步写入工作流并通知主代理协同调度')
+            || (captainNotified === false
+              ? t('未自动通知主代理', 'Captain was not auto-notified')
+              : t('已同步写入工作流并通知主代理协同调度', 'Saved to workflow DAG and notified Captain'))
           )
           setDispatchReceipt({
             mode: 'decompose',
@@ -4015,12 +4215,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
           if (wave1Sessions.length === 0 && captainNotified === false) {
             setFeedback({
               tone: 'warn',
-              text: '分片已写入事实库，但未拉起子代理或唤醒主代理：' + (dispatchWarnings[0] || captainNote),
+              text: t('分片已写入事实库，但未拉起子代理或唤醒主代理：', 'Shards saved, but no subagent or Captain was woken: ') + (dispatchWarnings[0] || captainNote),
             })
           } else {
             setFeedback({
               tone: 'ok',
-              text: '立项成功，已写入 ' + editedGoals.length + ' 个分片' + (wave1Sessions.length > 0 ? ('，已拉起 ' + wave1Sessions.length + ' 个 Wave 1 子代理执行') : '并通知主代理协同调度') + '。',
+              text: t(
+                '立项成功，已写入 ' + editedGoals.length + ' 个分片' + (wave1Sessions.length > 0 ? ('，已拉起 ' + wave1Sessions.length + ' 个 Wave 1 子代理执行') : '并通知主代理协同调度') + '。',
+                'Project launched with ' + editedGoals.length + ' shards' + (wave1Sessions.length > 0 ? (' and ' + wave1Sessions.length + ' Wave 1 subagent(s) started') : ' and Captain notified') + '.'
+              ),
             })
           }
           if (typeof props.onDecomposed === 'function') {
@@ -4028,7 +4231,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           }
         } catch (err) {
           setLaunching(false)
-          setFeedback({ tone: 'err', text: '立项请求异常：' + (err && err.message ? err.message : String(err)) })
+          setFeedback({ tone: 'err', text: t('立项请求异常：', 'Launch request error: ') + (err && err.message ? err.message : String(err)) })
         }
       }
 
@@ -4045,22 +4248,37 @@ body[data-ds-dark-theme] .rt-anim-complete{
         h('div', {
           style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
         },
-          h('strong', { style: { fontSize: 13 } }, 'AI 需求澄清与蓝图立项'),
+          h('strong', { style: { fontSize: 13 } }, t('AI 需求澄清与蓝图立项', 'AI Wish Refiner & Blueprint')),
           h('div', { className: 'rt-spacer' }),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             onClick: () => setManualOpen(!isExpanded),
             style: { fontWeight: 600, fontSize: 11.5, padding: '3px 10px' },
-          }, isExpanded ? '收起' : '展开')),
+          }, isExpanded ? t('收起', 'Collapse') : t('展开', 'Expand'))),
 
         isExpanded ? h('div', { className: 'rt-wish-wizard-body', style: { marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 } },
+          h('div', {
+            className: 'rt-demo-preset-bar',
+            style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+          },
+            h('span', { style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } },
+              t('1 分钟体验示例：', '1-Min Quick Demos:')),
+            DEMO_WISH_PRESETS.map((preset) => h('button', {
+              key: preset.id,
+              type: 'button',
+              className: 'rt-p3-pill rt-demo-preset-chip',
+              disabled: isAiBusy,
+              onClick: () => applyDemoPreset(preset),
+              title: t('点击填充示例需求并预设工作台名称：', 'Fill demo requirement & workspace name: ') + preset.workspace,
+            }, t(preset.labelZh, preset.labelEn)))),
+
           h('textarea', {
             className: 'rt-textarea',
             rows: 3,
             value: wishText,
             onChange: (e) => setWishText(e.target.value),
-            placeholder: '描述目标功能、技术栈约束与验收要求…',
+            placeholder: t('描述目标功能、技术栈约束与验收要求…', 'Describe target features, tech stack constraints, and acceptance criteria...'),
             style: {
               width: '100%',
               boxSizing: 'border-box',
@@ -4077,7 +4295,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   className: 'rt-input',
                   value: projectHint,
                   onChange: (e) => { setHintEdited(true); setProjectHint(e.target.value) },
-                  placeholder: '工作台名称（留空自动生成）',
+                  placeholder: t('工作台名称（留空自动生成）', 'Workspace name (auto if empty)'),
                   style: { width: 210, fontSize: 12 },
                 })
               : null,
@@ -4087,21 +4305,21 @@ body[data-ds-dark-theme] .rt-anim-complete{
               disabled: isAiBusy,
               onClick: handleClarifyWithAI,
               style: { fontWeight: 600, padding: '5px 12px' },
-            }, clarifying ? '分析中…' : 'AI 澄清需求'),
+            }, clarifying ? t('分析中…', 'Analyzing...') : t('AI 澄清需求', 'AI Clarify')),
             h('button', {
               type: 'button',
               className: 'rt-btn',
               disabled: isAiBusy,
               onClick: handleRefinePreview,
               style: { fontWeight: 600, padding: '5px 12px' },
-            }, previewing ? '拆解中…' : 'AI 拆解蓝图'),
+            }, previewing ? t('拆解中…', 'Decomposing...') : t('AI 拆解蓝图', 'AI Decompose')),
             h('button', {
               type: 'button',
               className: 'rt-btn rt-btn-primary',
               disabled: isAiBusy || stageCards.length === 0,
               onClick: handleConfirmAndDecompose,
               style: { fontWeight: 700, padding: '5px 14px' },
-            }, launching ? '立项派发中…' : '确认立项并派发')),
+            }, launching ? t('立项派发中…', 'Launching...') : t('确认立项并派发', 'Confirm & Dispatch'))),
 
           (clarifying || previewing) ? h('div', {
             className: 'rt-note',
@@ -4115,7 +4333,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             },
           },
             h('span', { className: 'rt-p5-spin', style: { color: '#4d6bfe' } }, '●'),
-            h('span', { style: { fontWeight: 600 } }, '正在调用模型分析需求与项目结构…')) : null,
+            h('span', { style: { fontWeight: 600 } }, t('正在调用模型分析需求与项目结构…', 'Analyzing requirements and repository structure...'))) : null,
 
           feedback ? h('div', {
             className: feedback.tone === 'err' ? 'rt-err' : 'rt-note',
@@ -4139,7 +4357,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             },
           },
             h('div', { style: { fontWeight: 700, fontSize: 12.5 } },
-              (llmError.isLlmUnavailable ? '模型服务不可用：' : 'AI 处理失败：') + llmError.text),
+              (llmError.isLlmUnavailable ? t('模型服务不可用：', 'Model service unavailable: ') : t('AI 处理失败：', 'AI processing failed: ')) + llmError.text),
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
               llmError.stage === 'clarify'
                 ? h('button', {
@@ -4147,25 +4365,25 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     className: 'rt-btn',
                     disabled: isAiBusy,
                     onClick: handleClarifyWithAI,
-                  }, '重试 AI 澄清')
+                  }, t('重试 AI 澄清', 'Retry AI Clarify'))
                 : null,
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 disabled: isAiBusy,
                 onClick: handleRefinePreview,
-              }, '重试 AI 拆解'),
+              }, t('重试 AI 拆解', 'Retry AI Decompose')),
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 onClick: () => setUI({ tab: 'settings' }),
-              }, '打开设置配置模型'),
+              }, t('打开设置配置模型', 'Open Settings')),
               h('button', {
                 type: 'button',
                 className: 'rt-btn rt-btn-primary',
                 disabled: isAiBusy,
                 onClick: handleHandoffToCaptain,
-              }, handoffBusy ? '正在转交…' : '直交主代理接管'))) : null,
+              }, handoffBusy ? t('正在转交…', 'Handing off...') : t('直交主代理接管', 'Hand off to Captain')))) : null,
 
           clarifyData ? h('div', {
             className: 'rt-wish-clarify-panel',
@@ -4180,13 +4398,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
             },
           },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 } },
-              h('strong', { style: { fontSize: 12 } }, 'AI 澄清追问与项目维度'),
+              h('strong', { style: { fontSize: 12 } }, t('AI 澄清追问与项目维度', 'AI Clarifications & Dimensions')),
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 style: { fontSize: 11, padding: '1px 7px' },
                 onClick: () => setClarifyData(null),
-              }, '收起澄清')),
+              }, t('收起澄清', 'Hide'))),
             clarifyData.summary
               ? h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } }, clarifyData.summary)
               : null,
@@ -4239,7 +4457,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     const v = e.target.value
                     setClarifyAnswers((prev) => Object.assign({}, prev, { [qKey]: v }))
                   },
-                  placeholder: '输入补充回答…',
+                  placeholder: t('输入补充回答…', 'Additional answer...'),
                   style: { fontSize: 12 },
                 }))
             }),
@@ -4247,7 +4465,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
               className: 'rt-input',
               value: extraClarifyNote,
               onChange: (e) => setExtraClarifyNote(e.target.value),
-              placeholder: '其他补充约束（选填）…',
+              placeholder: t('其他补充约束（选填）…', 'Extra constraints (optional)...'),
               style: { fontSize: 12 },
             })) : null,
 
@@ -4265,24 +4483,24 @@ body[data-ds-dark-theme] .rt-anim-complete{
             },
           },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-              h('strong', null, dispatchReceipt.mode === 'handoff' ? '已转交主代理接管' : '派发回执'),
+              h('strong', null, dispatchReceipt.mode === 'handoff' ? t('已转交主代理接管', 'Handed Off to Captain') : t('派发回执', 'Dispatch Receipt')),
               dispatchReceipt.totalGoals > 0
-                ? h('span', { className: 'rt-tag rt-tag-live' }, dispatchReceipt.totalGoals + ' 个分片')
+                ? h('span', { className: 'rt-tag rt-tag-live' }, t(dispatchReceipt.totalGoals + ' 个分片', dispatchReceipt.totalGoals + ' shards'))
                 : null,
               h('span', { className: 'rt-tag ' + (dispatchReceipt.captainNotified ? 'rt-tag-live' : '') },
-                dispatchReceipt.captainNotified ? '主代理已通知' : '主代理待同步')),
+                dispatchReceipt.captainNotified ? t('主代理已通知', 'Captain Notified') : t('主代理待同步', 'Pending Captain Sync'))),
             h('div', { style: { color: 'var(--dsw-alias-label-secondary)' } }, dispatchReceipt.captainNote),
             dispatchReceipt.wave1Sessions.length > 0
               ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
                   h('span', { style: { fontWeight: 600, fontSize: 11.5 } },
-                    '已拉起 Wave 1 子代理会话（' + dispatchReceipt.wave1Sessions.length + '）：'),
+                    t('已拉起 Wave 1 子代理会话（' + dispatchReceipt.wave1Sessions.length + '）：', 'Wave 1 Subagent Sessions (' + dispatchReceipt.wave1Sessions.length + '):')),
                   h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
                     dispatchReceipt.wave1Sessions.map((ws) => h('span', {
                       key: ws.sessionId,
                       className: 'rt-tag rt-mono',
                     }, (ws.role ? (ws.role + ' · ') : '') + (ws.title ? (ws.title + ' · ') : '') + ws.sessionId))))
               : h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
-                  'Wave 1 任务已落库并通知主代理协调执行。')) : null,
+                  t('Wave 1 任务已落库并通知主代理协调执行。', 'Wave 1 tasks persisted and Captain notified.'))) : null,
 
           stageCards.length > 0 ? h('div', {
             className: 'rt-wish-blueprint-deck',
@@ -4295,16 +4513,16 @@ body[data-ds-dark-theme] .rt-anim-complete{
             },
           },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8, flexWrap: 'wrap' } },
-              h('strong', { style: { fontSize: 12.5 } }, '拆解蓝图（' + stageCards.length + ' 个分片）'),
+              h('strong', { style: { fontSize: 12.5 } }, t('拆解蓝图（' + stageCards.length + ' 个分片）', 'Decomposed Blueprint (' + stageCards.length + ' Shards)')),
               h('div', { style: { display: 'inline-flex', gap: 6 } },
-                h('button', { type: 'button', className: 'rt-btn', style: { fontSize: 11, padding: '2px 8px' }, onClick: addStageCard }, '+ 新增分片'),
+                h('button', { type: 'button', className: 'rt-btn', style: { fontSize: 11, padding: '2px 8px' }, onClick: addStageCard }, t('+ 新增分片', '+ Add Shard')),
                 h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   disabled: isAiBusy,
                   style: { fontSize: 11, padding: '2px 10px', fontWeight: 700 },
                   onClick: handleConfirmAndDecompose,
-                }, launching ? '立项派发中…' : '确认立项并派发'))),
+                }, launching ? t('立项派发中…', 'Launching...') : t('确认立项并派发', 'Confirm & Dispatch')))),
             h('div', {
               style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10 },
             },
@@ -4324,7 +4542,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   h('select', {
                     className: 'rt-select',
                     value: String(card.wave || 3),
-                    'aria-label': '所属波次 Wave',
+                    'aria-label': t('所属波次 Wave', 'Target Wave'),
                     onChange: (e) => updateCardField(idx, 'wave', Number(e.target.value)),
                     style: { fontSize: 11, padding: '1px 6px', fontWeight: 600 },
                   }, WIZARD_WAVE_OPTIONS.map((w) => h('option', { key: 'w-' + w, value: String(w) }, formatWaveHeaderByMode(w, 'Wave ' + w, uiMode)))),
@@ -4334,13 +4552,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     className: 'rt-btn',
                     style: { padding: '0 6px', fontSize: 10.5 },
                     onClick: () => removeStageCard(idx),
-                  }, '移除') : null),
-                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '分片标题与目标'),
+                  }, t('移除', 'Remove')) : null),
+                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, t('分片标题与目标', 'Shard Title & Goal')),
                 h('input', {
                   className: 'rt-input',
                   value: card.title,
                   onChange: (e) => updateCardField(idx, 'title', e.target.value),
-                  placeholder: '阶段标题',
+                  placeholder: t('阶段标题', 'Stage title'),
                   style: { fontSize: 12, fontWeight: 600 },
                 }),
                 h('textarea', {
@@ -4348,34 +4566,35 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   rows: 2,
                   value: card.assignedGoal,
                   onChange: (e) => updateCardField(idx, 'assignedGoal', e.target.value),
-                  placeholder: '具体阶段目标说明…',
+                  placeholder: t('具体阶段目标说明…', 'Detailed shard goal...'),
                   style: { fontSize: 11.5 },
                 }),
-                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '负责角色'),
+                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, t('负责角色', 'Assigned Role')),
                 h('select', {
                   className: 'rt-select',
                   value: card.role,
                   onChange: (e) => updateCardField(idx, 'role', e.target.value),
                   style: { fontSize: 11.5 },
-                }, WIZARD_ROLE_OPTIONS.map((opt) => h('option', { key: opt.value, value: opt.value }, opt.label))),
-                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '独占文件分片 (files_owned)'),
+                }, WIZARD_ROLE_OPTIONS.map((opt) => h('option', { key: opt.value, value: opt.value }, roleLabel(opt.value)))),
+                h('label', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, t('独占文件分片 (files_owned)', 'Exclusive Files (files_owned)')),
                 h('input', {
                   className: 'rt-input rt-mono',
                   value: card.filesOwned,
                   onChange: (e) => updateCardField(idx, 'filesOwned', e.target.value),
-                  placeholder: '例如 src/ui/*, src/utils/*',
+                  placeholder: t('例如 src/ui/*, src/utils/*', 'e.g. src/ui/*, src/utils/*'),
                   style: { fontSize: 11 },
                 }))))) : null) : null)
     }
 
     function CollabApprovalTab(props) {
+      useLocale()
       const eng = props.engagement || null
       const engName = props.engagementName || ''
       const engagements = Array.isArray(props.engagements) ? props.engagements : []
       const activeSid = props.sessionId || null
       const rawSessionTitle = props.sessionTitle || null
       const cleanSessionTitle = rawSessionTitle && !isRawUuidName(rawSessionTitle) ? String(rawSessionTitle).trim() : null
-      const sessionBadgeText = cleanSessionTitle || (activeSid ? activeSid.slice(0, 8) : '未命名新会话')
+      const sessionBadgeText = cleanSessionTitle || (activeSid ? activeSid.slice(0, 8) : t('未命名新会话', 'Untitled Session'))
       const sessionState = props.sessionState || null
       const snapshot = props.snapshot || null
       const refreshKey = props.refreshKey || 0
@@ -4450,7 +4669,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             if (typeof props.onWorkspaceSelect === 'function') props.onWorkspaceSelect(createdId)
             if (typeof props.onRefresh === 'function') props.onRefresh()
           } else {
-            setOnboardNote({ tone: 'err', text: (res && res.error) || '创建工作台未返回有效标识' })
+            setOnboardNote({ tone: 'err', text: (res && res.error) || t('创建工作台未返回有效标识', 'Workspace creation returned no valid ID') })
           }
         } catch (err) {
           setOnboardNote({ tone: 'err', text: String((err && err.message) || err) })
@@ -4511,6 +4730,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const [queueFilter, setQueueFilter] = React.useState('pending')
       const [nextGoalDrafts, setNextGoalDrafts] = React.useState({})
       const [busyItemId, setBusyItemId] = React.useState(null)
+      const [rollingBackId, setRollingBackId] = React.useState(null)
       const [queueToast, setQueueToast] = React.useState(null)
       const dagSeqRef = React.useRef(0)
 
@@ -4580,7 +4800,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
               || raw.output
               || raw.assigned_goal
               || raw.assignedGoal
-              || '阶段执行完毕，等待审批。'
+              || t('阶段执行完毕，等待审批。', 'Stage complete, awaiting approval.')
             ).trim()
             const touchedFiles = Array.isArray(digestSrc.files_touched)
               ? digestSrc.files_touched
@@ -4590,7 +4810,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
               || digestSrc.test_result
               || digestSrc.verifyResult
               || raw.verification
-              || (statusRaw === 'blocked' ? '存在阻塞项' : (isApproved ? '已通过验收' : '待确认放行'))
+              || (statusRaw === 'blocked' ? t('存在阻塞项', 'Blocked') : (isApproved ? t('已通过验收', 'Verified') : t('待确认放行', 'Awaiting sign-off')))
             ).trim()
             const rawViolations = Array.isArray(digestSrc.scope_violations)
               ? digestSrc.scope_violations
@@ -4604,8 +4824,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
               sessionId: raw.session_id || raw.sessionId || id,
               wave: Number(raw.wave) || 3,
               role: roleCode,
-              roleLabel: ROLE_LABEL[roleCode] || roleCode,
-              title: String(raw.title || raw.name || ('分片任务 ' + id)),
+              roleLabel: roleLabel(roleCode),
+              title: String(raw.title || raw.name || (t('分片任务 ', 'Shard Task ') + id)),
               status: statusRaw || 'pending',
               approvalState: approvalRaw || (isPendingDecision ? 'pending_approval' : (isApproved ? 'approved' : 'pending_approval')),
               isPendingDecision,
@@ -4640,8 +4860,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
       )
 
       const handleApproveItem = async (item) => {
-        if (!eng || !item || busyItemId) return
-        const nextGoalStr = String(getDraftGoalFor(item) || '').trim() || '继续推进下一阶段集成与验证'
+        if (!eng || !item || busyItemId || rollingBackId) return
+        const nextGoalStr = String(getDraftGoalFor(item) || '').trim() || t('继续推进下一阶段集成与验证', 'Proceed to next integration and verification stage')
         setBusyItemId(item.id)
         setQueueToast(null)
         const res = await api({
@@ -4658,14 +4878,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
         })
         setBusyItemId(null)
         if (!res || res.ok === false) {
-          setQueueToast({ tone: 'err', text: '审批提交失败：' + ((res && res.error) || '后端响应异常') })
+          setQueueToast({ tone: 'err', text: t('审批提交失败：', 'Approval failed: ') + ((res && res.error) || t('后端响应异常', 'Backend error')) })
           return
         }
         const dispatchedRef = res.dispatched_session_id || res.next_session_id || res.next_worker_id || ''
         setQueueToast({
           tone: 'ok',
-          text: '✓ 已审批通过「' + item.title + '」'
-            + (dispatchedRef ? (' · 已派发 ' + dispatchedRef) : '')
+          text: t('✓ 已审批通过「' + item.title + '」', '✓ Approved "' + item.title + '"')
+            + (dispatchedRef ? (t(' · 已派发 ', ' · Dispatched ') + dispatchedRef) : '')
             + (res.note ? (' · ' + res.note) : ''),
         })
         loadApprovalDag()
@@ -4673,7 +4893,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       }
 
       const handleRetryItem = async (item) => {
-        if (!eng || !item || busyItemId) return
+        if (!eng || !item || busyItemId || rollingBackId) return
         const updatedGoal = String(getDraftGoalFor(item) || '').trim()
         setBusyItemId(item.id)
         setQueueToast(null)
@@ -4698,18 +4918,60 @@ body[data-ds-dark-theme] .rt-anim-complete{
         })
         setBusyItemId(null)
         if (res && res.ok === false && !/unknown op/i.test(String(res.error || ''))) {
-          setQueueToast({ tone: 'err', text: '退回重跑失败：' + (res.error || '请稍后重试') })
+          setQueueToast({ tone: 'err', text: t('退回重跑失败：', 'Retry failed: ') + (res.error || t('请稍后重试', 'Please try again')) })
           return
         }
         const retrySid = (res && (res.session_id || res.sessionId || (res.worker_task && res.worker_task.session_id))) || ''
         setQueueToast({
           tone: 'ok',
-          text: '↻ 已触发「' + item.title + '」重跑分片'
-            + (retrySid ? ('（子会话 ' + retrySid + '）') : '')
+          text: t('↻ 已触发「' + item.title + '」重跑分片', '↻ Retried shard "' + item.title + '"')
+            + (retrySid ? (t('（子会话 ', ' (session ') + retrySid + t('）', ')')) : '')
             + (res && res.note ? (' · ' + res.note) : ''),
         })
         loadApprovalDag()
         if (typeof props.onRefresh === 'function') props.onRefresh()
+      }
+
+      const handleRollbackViolations = async (item) => {
+        if (!eng || !item || busyItemId || rollingBackId) return
+        const files = Array.isArray(item.digest && item.digest.scopeViolations) ? item.digest.scopeViolations : []
+        if (files.length === 0) return
+        setRollingBackId(item.id)
+        setQueueToast(null)
+        try {
+          const res = await api({
+            op: 'rollbackScopeViolations',
+            engagement: eng,
+            worker_task_id: item.id,
+            files: files,
+          })
+          setRollingBackId(null)
+          if (!res || res.ok === false) {
+            setQueueToast({
+              tone: 'err',
+              text: t('越界文件回滚失败：', 'Rollback failed: ') + ((res && (res.error || res.message)) || t('后端响应异常', 'Backend error')),
+            })
+            return
+          }
+          const reverted = Array.isArray(res.reverted)
+            ? res.reverted.length
+            : (Array.isArray(res.restored) ? res.restored.length : files.length)
+          setQueueToast({
+            tone: 'ok',
+            text: t(
+              '✓ 已回滚 ' + reverted + ' 个越界文件（' + files.join(', ') + '）',
+              '✓ Rolled back ' + reverted + ' violated file(s) (' + files.join(', ') + ')'
+            ) + (res.note ? (' · ' + res.note) : ''),
+          })
+          loadApprovalDag()
+          if (typeof props.onRefresh === 'function') props.onRefresh()
+        } catch (err) {
+          setRollingBackId(null)
+          setQueueToast({
+            tone: 'err',
+            text: t('越界文件回滚异常：', 'Rollback error: ') + ((err && err.message) || String(err)),
+          })
+        }
       }
 
       const handleJumpItemChat = (item) => {
@@ -4721,8 +4983,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setQueueToast({
           tone: 'ok',
           text: res.targetSid
-            ? ('已切换侧边对话至：' + res.targetTitle)
-            : ('已返回侧边对话窗口：' + res.targetTitle),
+            ? (t('已切换侧边对话至：', 'Switched chat sidebar to: ') + res.targetTitle)
+            : (t('已返回侧边对话窗口：', 'Returned to chat sidebar: ') + res.targetTitle),
         })
       }
 
@@ -4738,7 +5000,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           ? h('section', { className: 'rt-card rt-onboard-card' },
               h('div', { className: 'rt-onboard-head' },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                  h('span', { className: 'rt-onboard-title' }, '初始化当前会话工作台'),
+                  h('span', { className: 'rt-onboard-title' }, t('初始化当前会话工作台', 'Initialize Session Workspace')),
                   h('span', { className: 'rt-tag rt-tag-active' }, sessionBadgeText),
                   sessionCwd
                     ? h('span', { className: 'rt-tag rt-mono', title: sessionCwd }, sessionCwd)
@@ -4747,7 +5009,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   type: 'button',
                   className: 'rt-btn',
                   onClick: handleSkipGuide,
-                }, isBound ? '收起' : '跳过指引')),
+                }, isBound ? t('收起', 'Collapse') : t('跳过指引', 'Skip Guide'))),
 
               !isBound
                 ? h('div', { className: 'rt-onboard-actions' },
@@ -4755,7 +5017,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       className: 'rt-input',
                       value: wsNameDraft,
                       onChange: (e) => { setWsNameEdited(true); setWsNameDraft(e.target.value) },
-                      placeholder: '输入工作台名称…',
+                      placeholder: t('输入工作台名称…', 'Enter workspace name...'),
                       style: { flex: '1 1 240px', minWidth: 200 },
                     }),
                     h('button', {
@@ -4764,12 +5026,12 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       disabled: creatingWs,
                       onClick: handleCreateWorkspaceForSession,
                       style: { fontWeight: 700, padding: '6px 14px' },
-                    }, creatingWs ? '正在创建…' : '创建并绑定工作台'))
+                    }, creatingWs ? t('正在创建…', 'Creating...') : t('创建并绑定工作台', 'Create & Bind Workspace')))
                 : null,
 
               !isBound && engagements.length > 0
                 ? h('details', { className: 'rt-onboard-bind-details' },
-                    h('summary', null, '关联已有项目（' + engagements.length + '）'),
+                    h('summary', null, t('关联已有项目（' + engagements.length + '）', 'Bind Existing Project (' + engagements.length + ')')),
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 } },
                       h('select', {
                         className: 'rt-select',
@@ -4782,7 +5044,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                         className: 'rt-btn',
                         disabled: bindingWs || !selectedExistingId,
                         onClick: handleBindExistingWorkspace,
-                      }, bindingWs ? '关联中…' : '确认关联')))
+                      }, bindingWs ? t('关联中…', 'Binding...') : t('确认关联', 'Bind Project'))))
                 : null,
 
               onboardNote
@@ -4792,15 +5054,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
               ? h('section', { className: 'rt-card rt-onboard-card is-compact' },
                   h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' } },
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5 } },
-                      h('span', { className: 'rt-tag' }, '待初始化'),
+                      h('span', { className: 'rt-tag' }, t('待初始化', 'Pending Init')),
                       h('span', { style: { color: 'var(--dsw-alias-label-primary)', fontWeight: 600 } },
-                        (cleanSessionTitle || '当前会话') + ' 尚未绑定工作台')),
+                        (cleanSessionTitle || t('当前会话', 'Current Session')) + t(' 尚未绑定工作台', ' has no bound workspace'))),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn' + (!hasConv ? ' rt-btn-primary' : ''),
                       onClick: handleReopenGuide,
                       style: { fontWeight: 700 },
-                    }, '重新获取初始化指引')))
+                    }, t('重新获取初始化指引', 'Reopen Setup Guide'))))
               : null),
 
         h('section', { className: 'rt-card rt-wish-dialogue-card' },
@@ -4824,10 +5086,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
         h('section', { className: 'rt-card rt-approval-queue-wrap' },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 } },
-            h('strong', { style: { fontSize: 13 } }, '阶段审批队列'),
+            h('strong', { style: { fontSize: 13 } }, t('阶段审批队列', 'Approval Queue')),
             h('span', {
               className: 'rt-tag ' + (pendingCount > 0 ? 'rt-tag-warn' : 'rt-tag-live'),
-            }, pendingCount > 0 ? ('待审批 ' + pendingCount) : '已全部处理'),
+            }, pendingCount > 0 ? t('待审批 ' + pendingCount, pendingCount + ' Pending') : t('已全部处理', 'All Handled')),
             h('div', { className: 'rt-spacer' }),
             h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
               h('button', {
@@ -4835,13 +5097,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 className: 'rt-btn' + (queueFilter === 'pending' ? ' rt-btn-primary' : ''),
                 style: { padding: '2px 9px', fontSize: 11.5 },
                 onClick: () => setQueueFilter('pending'),
-              }, '待决策 (' + pendingCount + ')'),
+              }, t('待决策 (' + pendingCount + ')', 'Pending (' + pendingCount + ')')),
               h('button', {
                 type: 'button',
                 className: 'rt-btn' + (queueFilter === 'all' ? ' rt-btn-primary' : ''),
                 style: { padding: '2px 9px', fontSize: 11.5 },
                 onClick: () => setQueueFilter('all'),
-              }, '全部 (' + reviewItems.length + ')')),
+              }, t('全部 (' + reviewItems.length + ')', 'All (' + reviewItems.length + ')'))),
             eng
               ? h('button', {
                   type: 'button',
@@ -4849,7 +5111,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   disabled: dagLoading,
                   style: { padding: '2px 9px', fontSize: 11.5 },
                   onClick: loadApprovalDag,
-                }, dagLoading ? '同步中…' : '刷新')
+                }, dagLoading ? t('同步中…', 'Syncing...') : t('刷新', 'Refresh'))
               : null),
 
           queueToast
@@ -4861,10 +5123,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
           visibleQueueItems.length === 0
             ? h('div', { className: 'rt-empty', style: { padding: '16px 12px', margin: 0 } },
-                '暂无待审批分片任务。')
+                t('暂无待审批分片任务。', 'No shard tasks awaiting approval.'))
             : h('div', { className: 'rt-approval-list' },
                 visibleQueueItems.map((item) => {
-                  const isBusy = busyItemId === item.id
+                  const isBusy = busyItemId === item.id || rollingBackId === item.id
+                  const isRollingBack = rollingBackId === item.id
                   return h('div', {
                     key: item.id,
                     className: 'rt-approval-card' + (item.isPendingDecision ? ' is-pending' : ''),
@@ -4875,7 +5138,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       h('div', { className: 'rt-spacer' }),
                       h('span', {
                         className: 'rt-tag ' + (item.isApproved ? 'rt-tag-live' : (item.isPendingDecision ? 'rt-tag-warn' : '')),
-                      }, item.isApproved ? '已审批' : (item.approvalState === 'revision_required' ? '待修订' : '待审批'))),
+                      }, item.isApproved ? t('已审批', 'Approved') : (item.approvalState === 'revision_required' ? t('待修订', 'Revision Req.') : t('待审批', 'Pending')))),
 
                     item.filesOwned.length > 0
                       ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' } },
@@ -4884,15 +5147,35 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
                     h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.5 } },
                       item.digest.whatDone + ' · ' + item.digest.verificationText
-                      + (item.digest.touchedFiles.length > 0 ? (' · 文件：' + item.digest.touchedFiles.join(', ')) : '')),
+                      + (item.digest.touchedFiles.length > 0 ? (t(' · 文件：', ' · Files: ') + item.digest.touchedFiles.join(', ')) : '')),
 
                     (!item.digest.scopeOk || item.digest.scopeViolations.length > 0)
                       ? h('div', {
                           className: 'rt-err rt-scope-violation-warn',
-                          style: { margin: 0, padding: '4px 8px', fontSize: 11.5, fontWeight: 600 },
-                        }, '写盘越界警告：' + (item.digest.scopeViolations.length > 0
-                          ? item.digest.scopeViolations.join(', ')
-                          : '存在未授权越界文件修改'))
+                          style: {
+                            margin: 0,
+                            padding: '6px 8px',
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            flexWrap: 'wrap',
+                          },
+                        },
+                          h('span', { style: { flex: '1 1 200px' } },
+                            t('写盘越界警告：', 'Scope Violation Warning: ') + (item.digest.scopeViolations.length > 0
+                              ? item.digest.scopeViolations.join(', ')
+                              : t('存在未授权越界文件修改', 'Unauthorized out-of-scope file modifications detected'))),
+                          item.digest.scopeViolations.length > 0
+                            ? h('button', {
+                                type: 'button',
+                                className: 'rt-btn rt-rollback-scope-btn',
+                                disabled: isBusy,
+                                style: { padding: '2px 8px', fontSize: 11, fontWeight: 700, borderColor: '#ef4444', color: '#ef4444' },
+                                onClick: () => handleRollbackViolations(item),
+                              }, isRollingBack ? t('回滚中…', 'Rolling back...') : t('一键回滚越界文件', 'Rollback Violated Files'))
+                            : null)
                       : null,
 
                     h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
@@ -4904,62 +5187,125 @@ body[data-ds-dark-theme] .rt-anim-complete{
                           const v = e.target.value
                           setNextGoalDrafts((prev) => Object.assign({}, prev, { [item.id]: v }))
                         },
-                        placeholder: '下一阶段目标或修订说明…',
+                        placeholder: t('下一阶段目标或修订说明…', 'Next goal or revision note...'),
                       }),
                       h('button', {
                         type: 'button',
                         className: 'rt-btn rt-btn-primary rt-plan-approve-btn',
                         disabled: isBusy,
                         onClick: () => handleApproveItem(item),
-                      }, isBusy ? '处理中…' : '审批通过'),
+                      }, isBusy && !isRollingBack ? t('处理中…', 'Working...') : t('审批通过', 'Approve')),
                       h('button', {
                         type: 'button',
                         className: 'rt-btn',
                         disabled: isBusy,
                         onClick: () => handleRetryItem(item),
-                      }, '退回重跑'),
+                      }, t('退回重跑', 'Retry')),
                       h('button', {
                         type: 'button',
                         className: 'rt-btn rt-jump-chat-btn',
                         onClick: () => handleJumpItemChat(item),
-                      }, '打开对话')))
+                      }, t('打开对话', 'Open Chat'))))
                 }))))
     }
 
 
     const HARNESS_DAG_WAVES = [
       {
-        wave: 'WAVE 0', sub: '主控调度',
+        wave: 'WAVE 0', sub: '主控调度', subEn: 'Orchestration',
         nodes: [
-          { id: 'plan', code: '⓪ plan', name: 'Captain 主控架构师', skill: '/dag-schedule', status: 'wait', statusLabel: '待命', slots: 'Orchestrator', thinking: 'high', docTitle: '00_PLAN_CHARTER.md', docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。' },
+          {
+            id: 'plan', code: '⓪ plan',
+            name: 'Captain 主控架构师', nameEn: 'Captain Orchestrator',
+            skill: '/dag-schedule', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Orchestrator', thinking: 'high', docTitle: '00_PLAN_CHARTER.md',
+            docBody: '# ⓪ Captain 主控立项与 4-Wave DAG 调度指令\n\n- 调度模式：4-Wave Bounded DAG（默认 6 并发槽，最高 12 槽）\n- 递归委派：允许子智能体继续派发微任务子智能体（maxDepth = 3，默认 thinking = low）\n- 事实库同步：全量写入 PostgreSQL Wire v3 事实库，支持任意节点断点续跑。',
+            docBodyEn: '# ⓪ Captain Charter & 4-Wave DAG Scheduling\n\n- Mode: 4-Wave Bounded DAG (6 concurrent slots default, up to 12)\n- Delegation: Subagents may spawn micro-workers (maxDepth = 3, thinking = low)\n- Persistence: Synced to PostgreSQL / SQLite fact store with checkpoint resume.',
+          },
         ],
       },
       {
-        wave: 'WAVE 1', sub: '2 槽双轨立项',
+        wave: 'WAVE 1', sub: '2 槽双轨立项', subEn: '2-Slot Discovery',
         nodes: [
-          { id: 'recon', code: '① recon', name: 'CEO 产品与需求规划', skill: '/office-hours · /plan-ceo-review', status: 'wait', statusLabel: '待命', slots: 'Slot #1', thinking: 'low', docTitle: '01_CEO_PRD_AND_SURFACE.md', docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO modules（实时同步）' },
-          { id: 'designer', code: '② designer', name: 'Designer 交互与视觉', skill: '/plan-design-review · /design-shotgun', status: 'wait', statusLabel: '待命', slots: 'Slot #2', thinking: 'low', docTitle: '02_DESIGN_SYSTEM_BENTO.md', docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + 主题自适应探针 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。' },
+          {
+            id: 'recon', code: '① recon',
+            name: 'CEO 产品与需求规划', nameEn: 'CEO Product & Planning',
+            skill: '/office-hours · /plan-ceo-review', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Slot #1', thinking: 'low', docTitle: '01_CEO_PRD_AND_SURFACE.md',
+            docBody: '# ① CEO 产品需求拆解与全量模块测绘\n\n- 技能挂载：/office-hours + /plan-ceo-review\n- 核心产出：P0/P1 模块优先级清单、仓库拓扑与接口边界表\n- 数据库写入：INSERT INTO modules（实时同步）',
+            docBodyEn: '# ① CEO PRD & Module Surface Mapping\n\n- Skills: /office-hours + /plan-ceo-review\n- Outputs: P0/P1 module priorities, repo topology & interface boundaries\n- Store Sync: INSERT INTO modules (live)',
+          },
+          {
+            id: 'designer', code: '② designer',
+            name: 'Designer 交互与视觉', nameEn: 'Designer UX & Visuals',
+            skill: '/plan-design-review · /design-shotgun', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Slot #2', thinking: 'low', docTitle: '02_DESIGN_SYSTEM_BENTO.md',
+            docBody: '# ② Designer 模块化 Bento UI 与交互规范\n\n- 技能挂载：/plan-design-review + /design-shotgun\n- 视觉规范：WorkBuddy × DSH Brand Blue (#4D6BFE) + 主题自适应探针 + 可视化 DAG 画布\n- 响应式约束：三态（有数据 / 空态 / 报错）全覆盖，无障碍键盘可达。',
+            docBodyEn: '# ② Designer Modular Bento UI & Interaction Spec\n\n- Skills: /plan-design-review + /design-shotgun\n- Visuals: DSH Brand Blue (#4D6BFE), adaptive theme tokens & live DAG canvas\n- States: Data / Empty / Error coverage with full keyboard accessibility.',
+          },
         ],
       },
       {
-        wave: 'WAVE 2', sub: '1 槽契约锁',
+        wave: 'WAVE 2', sub: '1 槽契约锁', subEn: '1-Slot Contract Lock',
         nodes: [
-          { id: 'assess', code: '③ assess', name: 'Eng Manager 架构与分片', skill: '/plan-eng-review', status: 'wait', statusLabel: '待命', slots: 'Slot #1 (Lock)', thinking: 'low', docTitle: '03_ENG_SHARD_CONTRACT.md', docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：写入 dag_nodes 检查点，支持单分片失败独立重试。' },
+          {
+            id: 'assess', code: '③ assess',
+            name: 'Eng Manager 架构与分片', nameEn: 'Eng Manager Architecture & Shards',
+            skill: '/plan-eng-review', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Slot #1 (Lock)', thinking: 'low', docTitle: '03_ENG_SHARD_CONTRACT.md',
+            docBody: '# ③ Eng Manager 接口契约与 6 槽独占文件分片\n\n- 技能挂载：/plan-eng-review\n- 分片准则：File-Disjoint Sharding（6 个并发构建槽文件集合严格无交集）\n- 断点快照：写入 dag_nodes 检查点，支持单分片失败独立重试。',
+            docBodyEn: '# ③ Eng Manager Interface Contracts & File-Disjoint Shards\n\n- Skills: /plan-eng-review\n- Sharding: File-Disjoint Sharding across up to 6 parallel builder slots\n- Checkpoints: Persisted in dag_nodes for isolated per-shard retry.',
+          },
         ],
       },
       {
-        wave: 'WAVE 3', sub: '6 槽并发构建',
+        wave: 'WAVE 3', sub: '6 槽并发构建', subEn: '6-Slot Parallel Build',
         nodes: [
-          { id: 'exploit', code: '⑤ exploit #1..#6', name: 'Builder 全栈分片构建', skill: '/parallel-build · 6 Slots', status: 'wait', statusLabel: '待命', slots: 'Slots #1–#6', thinking: 'low', docTitle: '04_BUILDER_SHARDS_LOG.md', docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 并行编码与单元验证\n- 递归子代理：按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO sharded_files（极速落盘）' },
-          { id: 'subworker', code: '↳ sub-worker', name: '递归子代理 (thinking: low)', skill: 'maxDepth=3 · 微任务分解', status: 'wait', statusLabel: '待命', slots: 'Child Workers', thinking: 'low', isSub: true, docTitle: '05_RECURSIVE_SUBAGENTS.md', docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/接口对齐微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。' },
+          {
+            id: 'exploit', code: '⑤ exploit #1..#6',
+            name: 'Builder 全栈分片构建', nameEn: 'Builder Parallel Shards',
+            skill: '/parallel-build · 6 Slots', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Slots #1–#6', thinking: 'low', docTitle: '04_BUILDER_SHARDS_LOG.md',
+            docBody: '# ⑤ Builder 6 槽并发分片构建日志\n\n- 并发槽位：Slot #1..#6 并行编码与单元验证\n- 递归子代理：按需派生 Sub-Worker 处理微问题（maxDepth = 3, thinking = low）\n- 实时写库：INSERT INTO sharded_files（极速落盘）',
+            docBodyEn: '# ⑤ Builder 6-Slot Parallel Implementation Log\n\n- Concurrency: Parallel coding & unit tests across Slots #1–#6\n- Sub-Workers: Spawn recursive workers for micro-tasks (maxDepth=3, thinking=low)\n- Store Sync: INSERT INTO sharded_files',
+          },
+          {
+            id: 'subworker', code: '↳ sub-worker',
+            name: '递归子代理 (thinking: low)', nameEn: 'Recursive Sub-Worker (thinking: low)',
+            skill: 'maxDepth=3 · 微任务分解', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Child Workers', thinking: 'low', isSub: true, docTitle: '05_RECURSIVE_SUBAGENTS.md',
+            docBody: '# ↳ 递归子代理（Recursive Sub-Workers）执行栈\n\n- 派发策略：父 Builder 遇到局部类型推导/单测修复/接口对齐微问题时，直接递归 spawn 子代理\n- 思考档位：默认 thinking = low（极速低延迟）\n- 深度护栏：maxDepth = 3，结果自动回传父分片并同步 PG 事实库。',
+            docBodyEn: '# ↳ Recursive Sub-Workers Execution Stack\n\n- Strategy: Parent builders spawn child workers for focused type fixes or tests\n- Thinking: Default thinking = low for low latency\n- Guardrail: maxDepth = 3, digests bubble back to parent shard.',
+          },
         ],
       },
       {
-        wave: 'WAVE 4', sub: '双轨门禁交付',
+        wave: 'WAVE 4', sub: '双轨门禁交付', subEn: 'Dual-Gate Release',
         nodes: [
-          { id: 'vuln-scan', code: '④ vuln-scan', name: 'Reviewer & CSO 代码审查', skill: '/review · /cso', status: 'wait', statusLabel: '待命', slots: 'Gate #1', thinking: 'low', docTitle: '06_CSO_SECURITY_REVIEW.md', docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、架构边界审查、安全规范门禁\n- 结论同步：UPDATE code_audits（通过后放行发布）。' },
-          { id: 'qa', code: '⑥ qa', name: 'QA Lead 自动化回归', skill: '/qa · /benchmark', status: 'wait', statusLabel: '待命', slots: 'Gate #2', thinking: 'low', docTitle: '07_QA_BENCHMARK_GATE.md', docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO qa_runs（全部断言通过）。' },
-          { id: 'internal', code: '⑦ internal', name: 'Doc & Release 归档发布', skill: '/ship · /document-release', status: 'wait', statusLabel: '待命', slots: 'Release Slot', thinking: 'low', docTitle: '08_FINAL_RELEASE_NOTE.md', docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化研发交付报告并触发飞书群聊机器人通知。' },
+          {
+            id: 'vuln-scan', code: '④ vuln-scan',
+            name: 'Reviewer & CSO 代码审查', nameEn: 'Reviewer & CSO Audit',
+            skill: '/review · /cso', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Gate #1', thinking: 'low', docTitle: '06_CSO_SECURITY_REVIEW.md',
+            docBody: '# ④ Reviewer & CSO 代码质量与安全审计\n\n- 技能挂载：/review + /cso\n- 审计范围：静态代码缺陷、架构边界审查、安全规范门禁\n- 结论同步：UPDATE code_audits（通过后放行发布）。',
+            docBodyEn: '# ④ Reviewer & CSO Quality & Security Audit\n\n- Skills: /review + /cso\n- Scope: Static analysis, architecture boundaries & security gates\n- Sync: UPDATE code_audits',
+          },
+          {
+            id: 'qa', code: '⑥ qa',
+            name: 'QA Lead 自动化回归', nameEn: 'QA Lead Automated Gate',
+            skill: '/qa · /benchmark', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Gate #2', thinking: 'low', docTitle: '07_QA_BENCHMARK_GATE.md',
+            docBody: '# ⑥ QA Lead 全量测试套件与性能基线门禁\n\n- 技能挂载：/qa + /benchmark\n- 覆盖率与回归：前端渲染自检 + 打包契约自检 + PG 事务一致性基准\n- 门禁状态：INSERT INTO qa_runs（全部断言通过）。',
+            docBodyEn: '# ⑥ QA Lead Regression & Benchmark Gate\n\n- Skills: /qa + /benchmark\n- Coverage: Client render tests, bundle contracts & DB consistency checks\n- Gate: INSERT INTO qa_runs',
+          },
+          {
+            id: 'internal', code: '⑦ internal',
+            name: 'Doc & Release 归档发布', nameEn: 'Doc & Release Shipper',
+            skill: '/ship · /document-release', status: 'wait', statusLabel: '待命', statusLabelEn: 'Idle',
+            slots: 'Release Slot', thinking: 'low', docTitle: '08_FINAL_RELEASE_NOTE.md',
+            docBody: '# ⑦ Doc & Release 最终交付文稿与飞书归档\n\n- 技能挂载：/ship + /document-release\n- 交付闭环：汇总 Wave 1–4 全部文稿与代码产物，生成结构化研发交付报告并触发飞书群聊机器人通知。',
+            docBodyEn: '# ⑦ Doc & Release Final Delivery & Notifications\n\n- Skills: /ship + /document-release\n- Closure: Aggregate Wave 1–4 deliverables, build structured delivery report & notify webhooks.',
+          },
         ],
       },
     ]
@@ -4970,53 +5316,67 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
     const _p4RoleDefaults = {
       defaultTok: '0 tok', defaultTokens: 0, defaultCompressedTokens: 0, defaultCompressionPct: 85,
-      defaultDur: '待命', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
-      filesTouched: [], nextGoal: '继续推进下一波次契约验证与回归闭环',
+      defaultDur: '待命', defaultDurEn: 'Idle', defaultSteps: 0, defaultPct: '0%', approvalState: 'pending_approval',
+      filesTouched: [], nextGoal: '继续推进下一波次契约验证与回归闭环', nextGoalEn: 'Proceed to next wave contract verification & regression closure',
     }
     const _defP4Role = (spec) => Object.assign({}, _p4RoleDefaults, spec)
 
     const P4_ROLE_META = {
       designer: _defP4Role({
         wave: 1, role: 'designer', avatar: 'WD', color: '#ef4444',
-        defaultTitle: 'Wave1 designer 交互与设计',
+        defaultTitle: 'Wave1 designer 交互与设计', defaultTitleEn: 'Wave1 designer UX & Design',
         prompt: '基于项目需求梳理模块化 Bento UI 布局、设计令牌与交互视图规范。',
-        output: '等待执行交互与视觉设计任务。', whatWasDone: '交互与视觉规范分片已就绪。',
+        promptEn: 'Define modular Bento UI layout, design tokens, and interaction specs.',
+        output: '等待执行交互与视觉设计任务。', outputEn: 'Awaiting UX & visual design execution.',
+        whatWasDone: '交互与视觉规范分片已就绪。', whatWasDoneEn: 'UX & visual design shard ready.',
       }),
       recon: _defP4Role({
         wave: 1, role: 'recon', avatar: 'WR', color: '#10b981',
-        defaultTitle: 'Wave1 recon 产品与需求',
+        defaultTitle: 'Wave1 recon 产品与需求', defaultTitleEn: 'Wave1 recon Product & Specs',
         prompt: '盘点目标项目全量业务模块、数据接口与核心功能优先级。',
-        output: '等待执行需求拆解与数据源测绘。', whatWasDone: '产品与数据源测绘分片已就绪。',
+        promptEn: 'Catalog project modules, API contracts, and P0/P1 priorities.',
+        output: '等待执行需求拆解与数据源测绘。', outputEn: 'Awaiting requirement analysis & surface mapping.',
+        whatWasDone: '产品与数据源测绘分片已就绪。', whatWasDoneEn: 'Product & surface mapping shard ready.',
       }),
       assess: _defP4Role({
         wave: 2, role: 'assess', avatar: 'WA', color: '#8b5cf6',
-        defaultTitle: 'Wave2 assess 架构与分片',
+        defaultTitle: 'Wave2 assess 架构与分片', defaultTitleEn: 'Wave2 assess Architecture & Shards',
         prompt: '基于 Wave 1 需求与设计产出，冻结模块接口契约并划分独占文件分片。',
-        output: '等待锁定模块接口契约与独占文件分片。', whatWasDone: '系统架构与分片边界待锁定。',
+        promptEn: 'Freeze module interface contracts and partition exclusive file shards from Wave 1 outputs.',
+        output: '等待锁定模块接口契约与独占文件分片。', outputEn: 'Awaiting contract freeze & shard assignment.',
+        whatWasDone: '系统架构与分片边界待锁定。', whatWasDoneEn: 'Architecture & shard boundaries pending lock.',
       }),
       exploit: _defP4Role({
         wave: 3, role: 'exploit', avatar: 'WB', color: '#3b82f6',
-        defaultTitle: 'Wave3 exploit 分片构建',
+        defaultTitle: 'Wave3 exploit 分片构建', defaultTitleEn: 'Wave3 exploit Parallel Build',
         prompt: '在独占文件分片内执行全栈编码实现与单元测试自检。',
-        output: '等待执行分片代码构建与自检。', whatWasDone: '分片编码实现与单元验证就绪。',
+        promptEn: 'Implement full-stack code and unit self-checks inside owned file shards.',
+        output: '等待执行分片代码构建与自检。', outputEn: 'Awaiting shard build & self-check.',
+        whatWasDone: '分片编码实现与单元验证就绪。', whatWasDoneEn: 'Shard implementation & verification ready.',
       }),
       'vuln-scan': _defP4Role({
         wave: 4, role: 'vuln-scan', avatar: 'WC', color: '#f59e0b',
-        defaultTitle: 'Wave4 vuln-scan 代码审查',
+        defaultTitle: 'Wave4 vuln-scan 代码审查', defaultTitleEn: 'Wave4 vuln-scan Code Review',
         prompt: '对各分片代码变更执行静态缺陷审查、架构边界复核与安全门禁审计。',
-        output: '等待执行代码审查与安全门禁校验。', whatWasDone: '代码审查与安全门禁就绪。',
+        promptEn: 'Run static defect review, boundary checks, and security gate audits.',
+        output: '等待执行代码审查与安全门禁校验。', outputEn: 'Awaiting code review & security gate.',
+        whatWasDone: '代码审查与安全门禁就绪。', whatWasDoneEn: 'Code review & security gate ready.',
       }),
       qa: _defP4Role({
         wave: 4, role: 'qa', avatar: 'WQ', color: '#06b6d4',
-        defaultTitle: 'Wave4 qa 自动化回归',
+        defaultTitle: 'Wave4 qa 自动化回归', defaultTitleEn: 'Wave4 qa Automated QA',
         prompt: '运行全量单元测试、UI 渲染冒烟测试与打包一致性断言。',
-        output: '等待运行自动化测试套件与回归校验。', whatWasDone: '自动化回归测试套件就绪。',
+        promptEn: 'Run full unit tests, UI render smoke checks, and bundle assertions.',
+        output: '等待运行自动化测试套件与回归校验。', outputEn: 'Awaiting automated test suite & regression checks.',
+        whatWasDone: '自动化回归测试套件就绪。', whatWasDoneEn: 'Automated QA regression suite ready.',
       }),
       internal: _defP4Role({
         wave: 4, role: 'internal', avatar: 'WI', color: '#ec4899',
-        defaultTitle: 'Wave4 internal 归档发布',
+        defaultTitle: 'Wave4 internal 归档发布', defaultTitleEn: 'Wave4 internal Docs & Release',
         prompt: '汇总 Wave 1–4 研发产物与交付里程碑，生成结构化交付报告。',
-        output: '等待汇总研发交付报告与归档。', whatWasDone: '归档发布与交付报告就绪。',
+        promptEn: 'Aggregate Wave 1–4 deliverables and milestones into structured release report.',
+        output: '等待汇总研发交付报告与归档。', outputEn: 'Awaiting release report & archival.',
+        whatWasDone: '归档发布与交付报告就绪。', whatWasDoneEn: 'Release & delivery report ready.',
       }),
     }
 
@@ -5458,6 +5818,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function HarnessWorkflowDeck(props) {
+      useLocale()
       const eng = props.engagement || null
       const variant = props.variant === 'cluster' ? 'cluster' : (props.variant || 'overview')
       const isClusterVariant = variant === 'cluster'
@@ -5565,33 +5926,35 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
       const dynamicWaves = HARNESS_DAG_WAVES.map((w) => ({
         wave: w.wave,
-        sub: w.sub,
+        sub: t(w.sub, w.subEn),
         nodes: w.nodes.map((n) => {
           const dn = dagNodesById.get(n.id)
           const dnStatus = dn ? String(dn.status || '').toLowerCase() : ''
           const isRunningSub = runningAgents.some((ra) => String(ra.label || '').toLowerCase().includes(n.id))
           let status = 'wait'
-          let statusLabel = '待命'
+          let statusLabel = t('待命', 'Idle')
           if (['error', 'failed', 'blocked', 'timeout', 'shard_violation'].includes(dnStatus)) {
             status = 'error'
-            statusLabel = '异常待修复'
+            statusLabel = t('异常待修复', 'Needs Fix')
           } else if (isRunningSub || dnStatus === 'running') {
             status = 'run'
-            statusLabel = '运行中'
+            statusLabel = t('运行中', 'Running')
           } else if (dn && (dnStatus === 'done' || dnStatus === 'completed' || (Number(dn.steps) || 0) > 0)) {
             status = 'done'
-            statusLabel = '已完成 (' + (dn.steps || 1) + '步)'
+            statusLabel = t('已完成 (' + (dn.steps || 1) + '步)', 'Done (' + (dn.steps || 1) + ' steps)')
           } else if (n.id === 'recon' && (Number(stats.assets) || 0) > 0) {
             status = 'done'
-            statusLabel = '已测绘 (' + stats.assets + ')'
+            statusLabel = t('已测绘 (' + stats.assets + ')', 'Mapped (' + stats.assets + ')')
           } else if (n.id === 'vuln-scan' && (Number(stats.vulns) || 0) > 0) {
             status = 'done'
-            statusLabel = '已审查 (' + stats.vulns + ')'
+            statusLabel = t('已审查 (' + stats.vulns + ')', 'Reviewed (' + stats.vulns + ')')
           } else if (n.id === 'exploit' && (Number(stats.steps) || 0) > 0) {
             status = 'done'
-            statusLabel = '已执行 (' + stats.steps + '步)'
+            statusLabel = t('已执行 (' + stats.steps + '步)', 'Executed (' + stats.steps + ' steps)')
           }
           return Object.assign({}, n, {
+            name: t(n.name, n.nameEn),
+            docBody: t(n.docBody, n.docBodyEn),
             status,
             statusLabel,
             lastDecision: (dn && (dn.last_decision || dn.summary || dn.note)) || null,
@@ -5607,7 +5970,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         if (!raw) return
         const roleKey = inferChildRole(raw.role || raw.agent_role, raw.title || raw.label || raw.name)
         const meta = P4_ROLE_META[roleKey] || P4_ROLE_META.assess
-        const title = String(raw.title || raw.label || raw.name || meta.defaultTitle).trim()
+        const title = String(raw.title || raw.label || raw.name || t(meta.defaultTitle, meta.defaultTitleEn)).trim()
         const explicitId = String(raw.id || raw.worker_id || raw.workerId || '').trim()
         const dedupKey = explicitId ? ('id:' + explicitId) : (roleKey + ':' + title)
         if (seenChildKeys.has(dedupKey)) return
@@ -5624,7 +5987,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           ? (String(raw.tokenLabel).toLowerCase().includes('tok') ? String(raw.tokenLabel) : String(raw.tokenLabel) + ' tok')
           : (fmtTokNum(tokVal) + ' tok')
         const costVal = raw.costLabel || (tokVal > 0 ? ('¥' + Math.max(0.01, (tokVal / 1000000) * 1.8).toFixed(2)) : '¥0.00')
-        const durLbl = raw.durationLabel || raw.duration || (isErr ? '异常中断' : (isRun ? '运行中' : (isPending ? '待调度' : '已完成')))
+        const durLbl = raw.durationLabel || raw.duration || (isErr ? t('异常中断', 'Failed') : (isRun ? t('运行中', 'Running') : (isPending ? t('待调度', 'Queued') : t('已完成', 'Done'))))
         const stepsVal = Number(raw.steps) || 0
         const ctxPctVal = raw.ctxPct || meta.defaultPct
         const color = isErr
@@ -5657,22 +6020,22 @@ body[data-ds-dark-theme] .rt-anim-complete{
           || raw.prompt
           || raw.inputPrompt
           || raw.task
-          || meta.prompt
+          || t(meta.prompt, meta.promptEn)
 
         const digestObj = (raw.compressedDigest && typeof raw.compressedDigest === 'object')
           ? {
-              whatWasDone: raw.compressedDigest.whatWasDone || raw.output || (isErr ? (raw.error || '执行异常，等待修复或重跑分片') : (isPending ? assignedGoalStr : meta.whatWasDone)),
+              whatWasDone: raw.compressedDigest.whatWasDone || raw.output || (isErr ? (raw.error || t('执行异常，等待修复或重跑分片', 'Execution error, awaiting fix or retry')) : (isPending ? assignedGoalStr : t(meta.whatWasDone, meta.whatWasDoneEn))),
               filesTouched: Array.isArray(raw.compressedDigest.filesTouched) && raw.compressedDigest.filesTouched.length > 0
                 ? raw.compressedDigest.filesTouched
                 : rawFilesOwned,
             }
           : {
-              whatWasDone: raw.whatWasDone || raw.output || raw.summary || (isErr ? (raw.error || '执行异常，等待修复或重跑分片') : (isPending ? assignedGoalStr : meta.whatWasDone)),
+              whatWasDone: raw.whatWasDone || raw.output || raw.summary || (isErr ? (raw.error || t('执行异常，等待修复或重跑分片', 'Execution error, awaiting fix or retry')) : (isPending ? assignedGoalStr : t(meta.whatWasDone, meta.whatWasDoneEn))),
               filesTouched: rawFilesOwned,
             }
 
         const resolvedStatus = isErr ? 'error' : (isRun ? 'running' : (isPending ? 'pending' : 'done'))
-        const resolvedStatusLabel = isErr ? '异常待修复' : (isRun ? '运行中' : (isPending ? '待执行' : '已完成'))
+        const resolvedStatusLabel = isErr ? t('异常待修复', 'Needs Fix') : (isRun ? t('运行中', 'Running') : (isPending ? t('待执行', 'Pending') : t('已完成', 'Done')))
 
         fusedChildren.push({
           id: childId,
@@ -5680,7 +6043,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           name: title,
           wave: Number(raw.wave) || (waveMatch ? Number(waveMatch[1]) : meta.wave),
           role: roleKey,
-          roleLabel: ROLE_LABEL[roleKey] || roleKey,
+          roleLabel: roleLabel(roleKey),
           avatar: avatar,
           color: color,
           title: title,
@@ -5694,7 +6057,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           compressedDigest: digestObj,
           assignedGoal: assignedGoalStr,
           filesOwned: rawFilesOwned,
-          nextGoal: (overrideApproval && overrideApproval.nextGoal) || raw.nextGoal || raw.next_goal || meta.nextGoal || '继续推进下一波次契约验证与回归闭环',
+          nextGoal: (overrideApproval && overrideApproval.nextGoal) || raw.nextGoal || raw.next_goal || t(meta.nextGoal, meta.nextGoalEn),
           tokenLabel: tokLbl,
           costLabel: costVal,
           durationLabel: durLbl,
@@ -5702,7 +6065,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           ctxPct: ctxPctVal,
           prompt: assignedGoalStr,
           inputPrompt: assignedGoalStr,
-          output: raw.output || raw.summary || raw.lastDecision || digestObj.whatWasDone || meta.output,
+          output: raw.output || raw.summary || raw.lastDecision || digestObj.whatWasDone || t(meta.output, meta.outputEn),
         })
       }
 
@@ -5721,10 +6084,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
             id: ra.id || ra.sessionId,
             sessionId: ra.sessionId || ra.id,
             role: inferChildRole(ra.role, ra.label),
-            title: ra.label || 'Wave2 assess 架构与分片',
+            title: ra.label || t('Wave2 assess 架构与分片', 'Wave2 assess Architecture & Shards'),
             status: 'running',
             tokenLabel: ra.tokenLabel,
-            durationLabel: ra.durationLabel || '运行中',
+            durationLabel: ra.durationLabel || t('运行中', 'Running'),
           })
         }
         if (dagState) {
@@ -5754,7 +6117,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   id: dn.worker_id || dn.id,
                   role: dn.role || dn.id,
                   wave: dn.wave,
-                  title: dn.title || dn.name || (P4_ROLE_META[dn.id] && P4_ROLE_META[dn.id].defaultTitle),
+                  title: dn.title || dn.name || (P4_ROLE_META[dn.id] && t(P4_ROLE_META[dn.id].defaultTitle, P4_ROLE_META[dn.id].defaultTitleEn)),
                   status: st,
                   steps: dn.steps,
                   assigned_goal: dn.assigned_goal || dn.prompt,
@@ -5800,8 +6163,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const activeHostSess = hostSessions.find((hs) => hs.id === (sessionId || domTel.sessionId)) || hostSessions[0] || null
       const workspaceDisplayTitle = (props.engagementName && !isRawUuidName(props.engagementName) ? props.engagementName : null)
         || (snapshot && snapshot.engagement && snapshot.engagement.name && !isRawUuidName(snapshot.engagement.name) ? snapshot.engagement.name : null)
-        || (eng ? ((activeHostSess && (activeHostSess.displayLabel || activeHostSess.title)) || sessionTitle || eng) : (sessionTitle || '待初始化会话'))
-        || 'LMTAgent 主控工作台'
+        || (eng ? ((activeHostSess && (activeHostSess.displayLabel || activeHostSess.title)) || sessionTitle || eng) : (sessionTitle || t('待初始化会话', 'Pending Session')))
+        || t('LMTAgent 主控工作台', 'LMTAgent Workbench')
       const rootTokens = domTel.tokens > 0
         ? domTel.tokens
         : ((activeHostSess && activeHostSess.tokens > 0) ? activeHostSess.tokens : 0)
@@ -5812,8 +6175,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const rootSteps = domTel.steps > 0
         ? domTel.steps
         : ((activeHostSess && activeHostSess.steps > 0) ? activeHostSess.steps : (Number(stats.steps) || 0))
-      const rootDuration = (activeHostSess && activeHostSess.durationLabel) || (rootSteps > 0 ? '实时同步' : '待命')
-      const rootCtxPct = domTel.contextPct || (rootTokens > 0 ? '实时' : '0%')
+      const rootDuration = (activeHostSess && activeHostSess.durationLabel) || (rootSteps > 0 ? t('实时同步', 'Live Sync') : t('待命', 'Idle'))
+      const rootCtxPct = domTel.contextPct || (rootTokens > 0 ? t('实时', 'Live') : '0%')
       const childTokSum = fusedChildren.reduce((s, c) => s + (Number(c.tokens) || 0), 0)
       const ctxSumLabel = fmtTokNum((parseTokNum(domTel.contextUsedLabel) || rootTokens) + childTokSum)
       const totalAgents = eng ? (1 + fusedChildren.length) : 0
@@ -5845,7 +6208,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
       const visibleLanes = [
         {
-          id: 'root', avatar: '主控', title: workspaceDisplayTitle, color: '#3b82f6', isRoot: true,
+          id: 'root', avatar: t('主控', 'Lead'), title: workspaceDisplayTitle, color: '#3b82f6', isRoot: true,
           wave: 0, role: 'plan',
           compressionPct: fusedChildren.length > 0 ? 85 : 0, approvalState: 'approved', tokenLabel: rootTokensLabel,
         },
@@ -5862,8 +6225,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
         status: c.status === 'running' ? 'run' : (c.status === 'pending' || c.status === 'error' ? 'wait' : 'done'),
         rawStatus: c.status,
         statusBadge: c.status === 'error'
-          ? '异常待修复'
-          : (c.status === 'running' ? '● 进行中' : (c.status === 'pending' ? '○ 待执行' : '● 已完成')),
+          ? t('异常待修复', 'Needs Fix')
+          : (c.status === 'running' ? t('● 进行中', '● Running') : (c.status === 'pending' ? t('○ 待执行', '○ Pending') : t('● 已完成', '● Done'))),
         prompt: c.prompt, output: c.output, tokenLabel: c.tokenLabel, durationLabel: c.durationLabel, steps: c.steps,
         assignedGoal: c.assignedGoal, filesOwned: c.filesOwned,
       }))
@@ -6081,10 +6444,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const treeZoom = Math.round((panZoom.scale || 1) * 100)
 
       const P4_WAVE_META = [
-        { id: 1, wave: 1, shortLabel: 'Wave 1', subTitle: '立项与需求探索', title: 'Wave 1 · 立项与需求探索', color: '#ec4899' },
-        { id: 2, wave: 2, shortLabel: 'Wave 2', subTitle: '架构与数据契约', title: 'Wave 2 · 架构与数据契约', color: '#f59e0b' },
-        { id: 3, wave: 3, shortLabel: 'Wave 3', subTitle: '并发分片构建', title: 'Wave 3 · 并发分片构建', color: '#3b82f6' },
-        { id: 4, wave: 4, shortLabel: 'Wave 4', subTitle: '审查修复与质量门禁', title: 'Wave 4 · 审查修复与质量门禁', color: '#10b981' },
+        { id: 1, wave: 1, shortLabel: 'Wave 1', subTitle: t('立项与需求探索', 'Discovery & Specs'), title: t('Wave 1 · 立项与需求探索', 'Wave 1 · Discovery & Specs'), color: '#ec4899' },
+        { id: 2, wave: 2, shortLabel: 'Wave 2', subTitle: t('架构与数据契约', 'Architecture & Contracts'), title: t('Wave 2 · 架构与数据契约', 'Wave 2 · Architecture & Contracts'), color: '#f59e0b' },
+        { id: 3, wave: 3, shortLabel: 'Wave 3', subTitle: t('并发分片构建', 'Parallel Build'), title: t('Wave 3 · 并发分片构建', 'Wave 3 · Parallel Build'), color: '#3b82f6' },
+        { id: 4, wave: 4, shortLabel: 'Wave 4', subTitle: t('审查修复与质量门禁', 'Review & QA Gate'), title: t('Wave 4 · 审查修复与质量门禁', 'Wave 4 · Review & QA Gate'), color: '#10b981' },
       ]
 
       const waveGroupsAll = P4_WAVE_META.map((wm) => {
@@ -6100,7 +6463,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         return {
           id: wm.wave,
           wave: wm.wave,
-          shortLabel: isNovice ? ('步骤 ' + wm.wave) : wm.shortLabel,
+          shortLabel: isNovice ? (t('步骤 ', 'Step ') + wm.wave) : wm.shortLabel,
           subTitle: wm.subTitle,
           title: formatWaveHeaderByMode(wm.wave, wm.title, uiMode),
           color: errorInWave > 0 ? '#ef4444' : wm.color,
@@ -6299,7 +6662,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         if (!targetAgent || targetAgent.isRoot || dispatchingId) return
         const targetId = targetAgent.id
         setDispatchingId(targetId)
-        setToast('正在拉起子代理分片：' + (targetAgent.title || targetId) + '…')
+        setToast(t('正在拉起子代理分片：', 'Dispatching shard: ') + (targetAgent.title || targetId) + '…')
         api({
           op: 'dispatchWorkerTask',
           engagement_id: activeEngagementId,
@@ -6314,21 +6677,21 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((res) => {
           setDispatchingId(null)
           if (!res || res.ok === false) {
-            setToast('拉起子代理失败：' + ((res && (res.message || res.error)) || '后端返回异常'))
+            setToast(t('拉起子代理失败：', 'Dispatch failed: ') + ((res && (res.message || res.error)) || t('后端返回异常', 'Backend error')))
             return
           }
           const sid = res.session_id || res.sessionId || (res.child && (res.child.session_id || res.child.id)) || (res.worker && res.worker.session_id) || ''
-          setToast(res.note || ('已拉起执行：' + (targetAgent.title || targetId) + (sid ? ('（子会话 ' + sid + '）') : '')))
+          setToast(res.note || (t('已拉起执行：', 'Dispatched: ') + (targetAgent.title || targetId) + (sid ? (t('（子会话 ', ' (session ') + sid + t('）', ')')) : '')))
           reloadDag()
         }, () => {
           setDispatchingId(null)
-          setToast('拉起子代理失败：请求异常')
+          setToast(t('拉起子代理失败：请求异常', 'Dispatch failed: request error'))
         })
       }
 
       const handleCreateCustomShard = () => {
         const titleStr = String(newShardTitle || '').trim()
-        if (!titleStr) { setToast('请填写新增分片节点的标题'); return }
+        if (!titleStr) { setToast(t('请填写新增分片节点的标题', 'Please enter a title for the new shard')); return }
         const filesArr = String(newShardFiles || '').split(/[,，\n]+/).map((s) => s.trim()).filter(Boolean)
         const goalStr = String(newShardGoal || titleStr).trim()
         setAddingShardBusy(true)
@@ -6345,7 +6708,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((res) => {
           setAddingShardBusy(false)
           if (res && res.ok === false && !/unknown op/i.test(String(res.error || ''))) {
-            setToast('新增分片节点失败：' + (res.error || '请检查分片冲突'))
+            setToast(t('新增分片节点失败：', 'Add shard failed: ') + (res.error || t('请检查分片冲突', 'Check shard conflict')))
             return
           }
           const createdId = (res && (res.worker_id || res.id)) || ('custom-worker-' + (customWorkerNodes.length + 1))
@@ -6356,7 +6719,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           }]))
           setNewShardTitle(''); setNewShardGoal(''); setNewShardFiles('')
           setShowAddShardForm(false)
-          setToast('已新增分片节点：' + titleStr + (createdSid ? ('（子会话 ' + createdSid + '）') : ''))
+          setToast(t('已新增分片节点：', 'Added shard: ') + titleStr + (createdSid ? (t('（子会话 ', ' (session ') + createdSid + t('）', ')')) : ''))
           reloadDag()
         })
       }
@@ -6365,7 +6728,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         if (!targetAgent) return
         const goalStr = String(editGoalDraft || '').trim()
         const filesArr = String(editFilesDraft || '').split(/[,，\n]+/).map((s) => s.trim()).filter(Boolean)
-        if (!goalStr) { setToast('分片目标不能为空'); return }
+        if (!goalStr) { setToast(t('分片目标不能为空', 'Shard goal cannot be empty')); return }
         setSavingGoalBusy(true)
         api({
           op: 'updateWorkerGoal',
@@ -6378,14 +6741,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((res) => {
           setSavingGoalBusy(false)
           if (res && res.ok === false && !/unknown op/i.test(String(res.error || ''))) {
-            setToast('保存目标失败：' + (res.error || '分片锁冲突'))
+            setToast(t('保存目标失败：', 'Save goal failed: ') + (res.error || t('分片锁冲突', 'Shard lock conflict')))
             return
           }
           setWorkerGoalOverrides((prev) => Object.assign({}, prev, {
             [targetAgent.id]: { assignedGoal: goalStr, filesOwned: filesArr },
           }))
           setEditingGoalOpen(false)
-          setToast((res && res.note) || ('已更新分片目标与独占文件：' + (targetAgent.title || targetAgent.id)))
+          setToast((res && res.note) || (t('已更新分片目标与独占文件：', 'Updated shard goal & files: ') + (targetAgent.title || targetAgent.id)))
           reloadDag()
         })
       }
@@ -6393,7 +6756,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const handlePlanApproveWorker = (detailTarget, decisionOverride) => {
         if (!detailTarget || approvingBusy) return
         const decision = decisionOverride === 'revision_requested' ? 'revision_requested' : 'approved'
-        const nextGoalStr = String(customNextGoal || detailTarget.nextGoal || '继续推进下一波次契约验证与回归闭环').trim()
+        const nextGoalStr = String(customNextGoal || detailTarget.nextGoal || t('继续推进下一波次契约验证与回归闭环', 'Proceed to next wave contract verification')).trim()
         const noteStr = String(reviewNote || '').trim()
         setApprovingBusy(true)
         api({
@@ -6411,7 +6774,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((res) => {
           setApprovingBusy(false)
           if (!res || res.ok === false) {
-            setToast('审批操作未生效：' + ((res && res.error) || '后端返回异常'))
+            setToast(t('审批操作未生效：', 'Approval failed: ') + ((res && res.error) || t('后端返回异常', 'Backend error')))
             return
           }
           setApprovedWorkerMap((prev) => Object.assign({}, prev, {
@@ -6426,11 +6789,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
             ? res.dispatched_sessions.map((s) => (typeof s === 'string' ? s : (s && (s.session_id || s.id)))).filter(Boolean)
             : []
           const sidSuffix = dispatchedList.length > 0
-            ? ('，已联动派发：' + dispatchedList.join(', '))
-            : ((res && (res.session_id || res.sessionId)) ? ('（子会话 ' + (res.session_id || res.sessionId) + '）') : '')
+            ? (t('，已联动派发：', ', dispatched: ') + dispatchedList.join(', '))
+            : ((res && (res.session_id || res.sessionId)) ? (t('（子会话 ', ' (session ') + (res.session_id || res.sessionId) + t('）', ')')) : '')
           setToast(decision === 'revision_requested'
-            ? ('已驳回重做 ' + (detailTarget.name || detailTarget.title) + '：' + nextGoalStr)
-            : ('已审批通过 ' + (detailTarget.name || detailTarget.title) + '，下达目标：' + ((res && res.next_goal) || nextGoalStr) + sidSuffix))
+            ? (t('已驳回重做 ', 'Revision requested for ') + (detailTarget.name || detailTarget.title) + '：' + nextGoalStr)
+            : (t('已审批通过 ', 'Approved ') + (detailTarget.name || detailTarget.title) + t('，下达目标：', ', next goal: ') + ((res && res.next_goal) || nextGoalStr) + sidSuffix))
           reloadDag()
         })
       }
@@ -6447,11 +6810,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((res) => {
           setRetryingBusy(false)
           if (res && res.ok === false && !/unknown op/i.test(String(res.error || ''))) {
-            setToast('重跑分片失败：' + (res.error || '请稍后重试'))
+            setToast(t('重跑分片失败：', 'Retry failed: ') + (res.error || t('请稍后重试', 'Please try again')))
             return
           }
           const sid = res && (res.session_id || res.sessionId || (res.worker && res.worker.session_id))
-          setToast((res && res.note) || ('已触发单分片重跑：' + (detailTarget.title || detailTarget.id) + (sid ? ('（子会话 ' + sid + '）') : '')))
+          setToast((res && res.note) || (t('已触发单分片重跑：', 'Retried shard: ') + (detailTarget.title || detailTarget.id) + (sid ? (t('（子会话 ', ' (session ') + sid + t('）', ')')) : '')))
           reloadDag()
         })
       }
@@ -6463,8 +6826,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
           fallbackSessionId: domTel.sessionId,
         })
         setToast(res.targetSid
-          ? ('已切换侧边聊天框至 Agent 会话：' + res.targetTitle)
-          : ('已返回宿主聊天窗口（当前节点尚未绑定独立子会话）：' + res.targetTitle))
+          ? (t('已切换侧边聊天框至 Agent 会话：', 'Switched chat sidebar to Agent session: ') + res.targetTitle)
+          : (t('已返回宿主聊天窗口（当前节点尚未绑定独立子会话）：', 'Returned to host chat window (no dedicated sub-session): ') + res.targetTitle))
       }
 
       const resolveInspectorAgent = () => {
@@ -6476,34 +6839,34 @@ body[data-ds-dark-theme] .rt-anim-complete{
           name: workspaceDisplayTitle,
           wave: 0,
           role: 'plan',
-          avatar: '主控',
+          avatar: t('主控', 'Lead'),
           color: '#3b82f6',
           title: workspaceDisplayTitle,
           rawTokens: rootTokens,
           compressedTokens: rootTokens > 0 ? Math.round(rootTokens * 0.14) : 0,
           compressionPct: fusedChildren.length > 0 ? 85 : 0,
           approvalState: 'approved',
-          assignedGoal: '全局需求拆解与 4-Wave 并发调度：统筹需求探索、契约锁定、分片并发构建与质量安全门禁。',
+          assignedGoal: t('全局需求拆解与 4-Wave 并发调度：统筹需求探索、契约锁定、分片并发构建与质量安全门禁。', 'Global requirement decomposition and 4-Wave orchestration across discovery, contracts, parallel build, and QA gates.'),
           filesOwned: [],
           compressedDigest: {
             whatWasDone: fusedChildren.length > 0
-              ? ('已统筹 ' + fusedChildren.length + ' 个子智能体分片目标、摘要压缩与阶段审批派发。')
-              : '主控编排器就绪 —— 可在协同与审批页输入需求一键立项并生成并行分片。',
+              ? t('已统筹 ' + fusedChildren.length + ' 个子智能体分片目标、摘要压缩与阶段审批派发。', 'Coordinated ' + fusedChildren.length + ' subagent shard goals, digests, and approvals.')
+              : t('主控编排器就绪 —— 可在协同与审批页输入需求一键立项并生成并行分片。', 'Orchestrator ready — describe requirements in Collab & Approval to generate parallel shards.'),
             filesTouched: [],
           },
-          nextGoal: '继续推进下一波次契约验证与回归闭环',
+          nextGoal: t('继续推进下一波次契约验证与回归闭环', 'Proceed to next wave contract verification'),
           status: runningCount > 0 ? 'running' : 'done',
-          statusLabel: runningCount > 0 ? '运行中' : '就绪',
+          statusLabel: runningCount > 0 ? t('运行中', 'Running') : t('就绪', 'Ready'),
           tokenLabel: rootTokensLabel,
           costLabel: rootCostLabel,
           durationLabel: rootDuration,
           steps: rootSteps,
           isRoot: true,
-          inputPrompt: '全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。',
-          prompt: '全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。',
+          inputPrompt: t('全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。', 'Orchestrate Wave 1 discovery, Wave 2 architecture contract lock, Wave 3 parallel build, and Wave 4 QA gates.'),
+          prompt: t('全局需求拆解与 4-Wave 并发调度：统筹 Wave 1 双轨立项、Wave 2 架构契约锁、Wave 3 分片并发构建与 Wave 4 质量安全门禁。', 'Orchestrate Wave 1 discovery, Wave 2 architecture contract lock, Wave 3 parallel build, and Wave 4 QA gates.'),
           output: fusedChildren.length > 0
-            ? ('已调度 ' + fusedChildren.length + ' 个子智能体并同步至事实库。')
-            : '等待立项拆解研发任务。',
+            ? t('已调度 ' + fusedChildren.length + ' 个子智能体并同步至事实库。', 'Dispatched ' + fusedChildren.length + ' subagents synced to fact store.')
+            : t('等待立项拆解研发任务。', 'Awaiting project launch & decomposition.'),
         }
         if (targetId === 'root') return rootObj
         const hitChild = fusedChildren.find((c) => c.id === targetId || c.role === targetId)
@@ -6517,10 +6880,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
         if (detail && Array.isArray(detail.stepTimeline) && detail.stepTimeline.length > 0) {
           return detail.stepTimeline.map((st, idx) => ({
             step: st.step || (idx + 1),
-            phase: st.phase || (idx === 0 ? '环节 ① 委派解析' : (idx === detail.stepTimeline.length - 1 ? '环节 ③ 结论回传' : '环节 ② 工具调用')),
+            phase: st.phase || (idx === 0 ? t('环节 ① 委派解析', 'Step ① Dispatch') : (idx === detail.stepTimeline.length - 1 ? t('环节 ③ 结论回传', 'Step ③ Digest') : t('环节 ② 工具调用', 'Step ② Tool Call'))),
             tool: st.tool || st.toolName || (idx === 0 ? 'view_file' : (idx === 1 ? 'replace_file_content' : 'run_command')),
-            input: st.input || st.args || st.command || st.summary || ('执行 ' + (agent.title || agent.id) + ' 步骤 #' + (idx + 1)),
-            output: st.output || st.result || '步骤执行完成',
+            input: st.input || st.args || st.command || st.summary || (t('执行 ', 'Execute ') + (agent.title || agent.id) + ' #' + (idx + 1)),
+            output: st.output || st.result || t('步骤执行完成', 'Step completed'),
             duration: st.duration || st.elapsed || '—',
             status: st.status || 'done',
           }))
@@ -6530,22 +6893,22 @@ body[data-ds-dark-theme] .rt-anim-complete{
         const isPend = agent && agent.status === 'pending'
         return [
           {
-            step: 1, phase: '环节 ① 委派解析', tool: 'plan_dispatch',
-            input: (agent && (agent.assignedGoal || agent.prompt)) || '解析当前分片目标与依赖边界',
-            output: '已锁定分片范围', duration: '—', status: isPend ? 'pending' : 'done',
+            step: 1, phase: t('环节 ① 委派解析', 'Step ① Dispatch'), tool: 'plan_dispatch',
+            input: (agent && (agent.assignedGoal || agent.prompt)) || t('解析当前分片目标与依赖边界', 'Parse shard goal and boundaries'),
+            output: t('已锁定分片范围', 'Shard scope locked'), duration: '—', status: isPend ? 'pending' : 'done',
           },
           {
-            step: 2, phase: '环节 ② 核心执行', tool: 'shard_exec',
+            step: 2, phase: t('环节 ② 核心执行', 'Step ② Execution'), tool: 'shard_exec',
             input: Array.isArray(agent && agent.filesOwned) && agent.filesOwned.length > 0
-              ? ('独占分片：' + agent.filesOwned.join(', '))
-              : ('执行 ' + ((agent && agent.title) || '当前角色') + ' 核心工作流'),
-            output: isErr ? '执行受阻，等待修复或重跑' : '同步上下文与结构化产物',
+              ? (t('独占分片：', 'Owned files: ') + agent.filesOwned.join(', '))
+              : (t('执行 ', 'Execute ') + ((agent && agent.title) || t('当前角色', 'current role'))),
+            output: isErr ? t('执行受阻，等待修复或重跑', 'Blocked, awaiting fix or retry') : t('同步上下文与结构化产物', 'Sync context & artifacts'),
             duration: '—', status: isErr ? 'error' : (isRun ? 'running' : (isPend ? 'pending' : 'done')),
           },
           {
-            step: 3, phase: '环节 ③ 阶段结论', tool: 'submit_digest',
-            input: '压缩阶段工作摘要并回传主控审批',
-            output: (agent && agent.output) || '等待阶段结论回传',
+            step: 3, phase: t('环节 ③ 阶段结论', 'Step ③ Conclusion'), tool: 'submit_digest',
+            input: t('压缩阶段工作摘要并回传主控审批', 'Compress digest and report for approval'),
+            output: (agent && agent.output) || t('等待阶段结论回传', 'Awaiting stage digest'),
             duration: '—', status: isErr ? 'error' : (isRun || isPend ? 'pending' : 'done'),
           },
         ]
@@ -6589,16 +6952,16 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
       const triggerCheckpoint = (actionLabel, actionCode, targetNodeId) => {
         const targetNode = targetNodeId || selected.id
-        setToast('正在执行：' + actionLabel + ' (' + targetNode + ')…')
+        setToast(t('正在执行：', 'Running: ') + actionLabel + ' (' + targetNode + ')…')
         api({ op: 'dagCheckpoint', engagement: eng || undefined, action: actionCode, node: targetNode }).then((r) => {
           if (r && r.ok === false) {
-            setToast('检查点操作失败：' + (r.error || '请稍后重试'))
+            setToast(t('检查点操作失败：', 'Checkpoint failed: ') + (r.error || t('请稍后重试', 'Please try again')))
             return
           }
-          setToast((r && r.note) || ('已触发「' + actionLabel + '」：节点 ' + targetNode + ' 从检查点恢复执行'))
+          setToast((r && r.note) || (t('已触发「' + actionLabel + '」：节点 ', 'Triggered "' + actionLabel + '" on ') + targetNode))
           reloadDag()
         }, () => {
-          setToast('已触发「' + actionLabel + '」：节点 ' + targetNode + ' 恢复请求已发出')
+          setToast(t('已触发「' + actionLabel + '」：节点 ' + targetNode + ' 恢复请求已发出', 'Triggered "' + actionLabel + '" resume for ' + targetNode))
         })
       }
 
@@ -6607,20 +6970,20 @@ body[data-ds-dark-theme] .rt-anim-complete{
       if (!eng) {
         return h('div', { className: 'rt-bento-card rt-p4-workbench' },
           h('div', { className: 'rt-bento-head' },
-            h('span', { className: 'rt-bento-title' }, '派生树状图 & 多维协同工作台'),
-            h('span', { className: 'rt-tag' }, '待初始化'),
+            h('span', { className: 'rt-bento-title' }, t('派生树状图 & 多维协同工作台', 'Derivation Tree & Multi-Agent Workbench')),
+            h('span', { className: 'rt-tag' }, t('待初始化', 'Pending Init')),
             h('div', { className: 'rt-spacer' }),
             h('button', {
               type: 'button',
               className: 'rt-btn',
               onClick: () => setUI({ tab: 'settings' }),
-            }, '设置'),
+            }, t('设置', 'Settings')),
             (props.onOpenCollab || props.onOpenWishWizard)
               ? h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                }, '前往协同与审批立项 →')
+                }, t('前往协同与审批立项 →', 'Launch in Collab & Approval →'))
               : null),
           h('div', {
             className: 'rt-empty',
@@ -6638,15 +7001,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
             },
           },
             h('div', { style: { fontWeight: 700, fontSize: 13.5, color: 'var(--dsw-alias-label-primary)' } },
-              '当前会话尚未初始化研发任务'),
+              t('当前会话尚未初始化研发任务', 'No engineering tasks initialized in this session')),
             h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', maxWidth: 520, lineHeight: 1.55 } },
-              '请前往「协同与审批」通过 AI 澄清与拆解立项，确认后此处将实时呈现派生树与子代理协同状态。'),
+              t('请前往「协同与审批」通过 AI 澄清与拆解立项，确认后此处将实时呈现派生树与子代理协同状态。', 'Go to "Collab & Approval" to clarify requirements and launch shards. Live DAG and worker telemetry will appear here.')),
             (props.onOpenCollab || props.onOpenWishWizard)
               ? h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                }, '前往「协同与审批」启动立项')
+                }, t('前往「协同与审批」启动立项', 'Open "Collab & Approval"'))
               : null))
       }
 
@@ -6662,8 +7025,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
         const isBusyDispatch = dispatchingId === c.id
         const accentColor = isErrCard ? '#ef4444' : (c.color || '#3b82f6')
         const statusColor = isErrCard ? '#ef4444' : (isRunCard ? '#3b82f6' : (isPendCard ? '#f59e0b' : '#10b981'))
-        const statusText = isErrCard ? '异常' : (isRunCard ? '运行中' : (isPendCard ? '待执行' : '已完成'))
-        const summaryText = (c.compressedDigest && c.compressedDigest.whatWasDone) || c.output || c.assignedGoal || '等待分片执行'
+        const statusText = isErrCard ? t('异常', 'Error') : (isRunCard ? t('运行中', 'Running') : (isPendCard ? t('待执行', 'Pending') : t('已完成', 'Done')))
+        const summaryText = (c.compressedDigest && c.compressedDigest.whatWasDone) || c.output || c.assignedGoal || t('等待分片执行', 'Awaiting execution')
         const portClass = portSide === 'top' ? 'rt-tree-port rt-tree-port-top' : 'rt-tree-port rt-tree-port-left'
         const portStyle = portSide === 'top'
           ? {
@@ -6775,7 +7138,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
           }, summaryText),
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, fontSize: 9.5, flexWrap: 'wrap' } },
             h('span', { className: 'rt-mono', style: { color: 'var(--dsw-alias-label-secondary)' } },
-              c.tokenLabel + ' · ' + (c.durationLabel || '待命') + ' · ' + (c.steps || 0) + ' 步'),
+              c.tokenLabel + ' · ' + (c.durationLabel || t('待命', 'Idle')) + ' · ' + (c.steps || 0) + t(' 步', ' steps')),
             h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
               (isRevReq || !isApproved)
                 ? h('span', {
@@ -6786,7 +7149,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       color: isRevReq ? '#ef4444' : '#d97706',
                       fontWeight: 700,
                     },
-                  }, isRevReq ? '待重做' : '待审批')
+                  }, isRevReq ? t('待重做', 'Redo') : t('待审批', 'Pending'))
                 : null,
               (isPendCard && isClusterVariant)
                 ? h('button', {
@@ -6798,22 +7161,22 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
                       handleDispatchWorkerTask(c)
                     },
-                  }, isBusyDispatch ? '拉起中…' : '拉起执行')
+                  }, isBusyDispatch ? t('拉起中…', 'Starting...') : t('拉起执行', 'Dispatch'))
                 : null)))
       }
 
       return h('div', { className: 'rt-bento-card rt-p4-workbench' },
         h('div', { className: 'rt-bento-head' },
-          h('span', { className: 'rt-bento-title' }, isClusterVariant ? '派生树状图 & 多维协同工作台' : '派生树状图 & 实时工作流'),
-          h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent · ' + allTasks.length + ' 协作任务'),
+          h('span', { className: 'rt-bento-title' }, isClusterVariant ? t('派生树状图 & 多维协同工作台', 'Derivation Tree & Multi-Agent Workbench') : t('派生树状图 & 实时工作流', 'Derivation Tree & Live Workflow')),
+          h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent · ' + allTasks.length + t(' 协作任务', ' Tasks')),
           pendingApprovalCount > 0
-            ? h('span', { className: 'rt-tag rt-tag-warn' }, '待审批 ' + pendingApprovalCount)
+            ? h('span', { className: 'rt-tag rt-tag-warn' }, t('待审批 ', 'Pending ') + pendingApprovalCount)
             : null,
           errorCount > 0
             ? h('span', {
                 className: 'rt-tag',
                 style: { background: 'rgba(239,68,68,0.14)', color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)', fontWeight: 700 },
-              }, errorCount + ' 异常待修复')
+              }, errorCount + t(' 异常待修复', ' Errors'))
             : null,
           selAgentId
             ? h('button', {
@@ -6821,60 +7184,60 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 className: 'rt-btn',
                 style: { padding: '1px 7px', fontSize: 10.5 },
                 onClick: () => setSelAgentId(null),
-              }, '清除节点筛选')
+              }, t('清除节点筛选', 'Clear Filter'))
             : null,
           h('div', { className: 'rt-spacer' }),
           isClusterVariant
-            ? h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': '工作流视图切换', style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' } },
+            ? h('div', { className: 'rt-harness-modebar', role: 'group', 'aria-label': t('工作流视图切换', 'Workflow View'), style: { display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' } },
                 h('button', {
                   type: 'button',
                   className: 'rt-harness-modebtn' + (mode === 'p4' ? ' on' : ''),
                   onClick: () => setMode('p4'),
-                }, '派生树'),
+                }, t('派生树', 'Tree')),
                 h('button', {
                   type: 'button',
                   className: 'rt-harness-modebtn' + (mode === 'swim' ? ' on' : ''),
                   onClick: () => setMode('swim'),
-                }, '泳道矩阵'),
+                }, t('泳道矩阵', 'Swimlanes')),
                 h('button', {
                   type: 'button',
                   className: 'rt-harness-modebtn' + (mode === 'docwall' ? ' on' : ''),
                   onClick: () => setMode('docwall'),
-                }, '角色文稿'),
+                }, t('角色文稿', 'Doc Wall')),
                 (props.onOpenCollab || props.onOpenWishWizard)
                   ? h('button', {
                       type: 'button',
                       className: 'rt-btn',
                       style: { padding: '2px 8px', fontSize: 11 },
                       onClick: props.onOpenCollab || props.onOpenWishWizard,
-                    }, '协同与审批' + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
+                    }, t('协同与审批', 'Collab & Approval') + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
                   : null,
                 h('button', {
                   type: 'button',
                   className: 'rt-btn',
                   style: { padding: '2px 8px', fontSize: 11 },
                   onClick: () => setUI({ tab: 'settings' }),
-                }, '设置'))
+                }, t('设置', 'Settings')))
             : h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                 props.onOpenCollab
                   ? h('button', {
                       type: 'button',
                       className: 'rt-btn',
                       onClick: props.onOpenCollab,
-                    }, '协同与审批' + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
+                    }, t('协同与审批', 'Collab & Approval') + (pendingApprovalCount > 0 ? (' (' + pendingApprovalCount + ')') : ''))
                   : null,
                 props.onOpenAgents
                   ? h('button', {
                       type: 'button',
                       className: 'rt-btn',
                       onClick: props.onOpenAgents,
-                    }, '完整拓扑与泳道 →')
+                    }, t('完整拓扑与泳道 →', 'Full Topology & Swimlanes →'))
                   : null,
                 h('button', {
                   type: 'button',
                   className: 'rt-btn',
                   onClick: () => setUI({ tab: 'settings' }),
-                }, '设置'))),
+                }, t('设置', 'Settings')))),
 
         toast
           ? h('div', {
@@ -6898,7 +7261,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 className: 'rt-btn',
                 style: { padding: '0 6px', fontSize: 10.5 },
                 onClick: () => setToast(null),
-              }, '关闭'))
+              }, t('关闭', 'Dismiss')))
           : null,
 
         effectiveMode === 'p4'
@@ -6922,16 +7285,16 @@ body[data-ds-dark-theme] .rt-anim-complete{
               },
                 h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
                   h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, 'Agent 网络 · 派生树状图'),
+                    h('span', { style: { fontWeight: 700, fontSize: 13 } }, t('Agent 网络 · 派生树状图', 'Agent Network · Derivation Tree')),
                     h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
                       isClusterVariant
-                        ? '点击节点检视执行细节、编辑目标、拉起执行或审批放行'
-                        : '点击任意节点预览阶段进展')),
+                        ? t('点击节点检视执行细节、编辑目标、拉起执行或审批放行', 'Click any node to inspect steps, edit goals, dispatch, or approve')
+                        : t('点击任意节点预览阶段进展', 'Click any node to preview progress'))),
                   h('div', { style: { display: 'inline-flex', flexWrap: 'wrap', gap: 6, fontSize: 11 } },
                     h('span', { className: 'rt-tag rt-tag-live' }, totalAgents + ' Agent'),
-                    h('span', { className: 'rt-tag rt-tag-active' }, runningCount + ' 运行中'),
-                    errorCount > 0 ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' } }, errorCount + ' 异常') : null,
-                    h('span', { className: 'rt-tag' }, '上下文 ' + ctxSumLabel))),
+                    h('span', { className: 'rt-tag rt-tag-active' }, runningCount + t(' 运行中', ' Running')),
+                    errorCount > 0 ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' } }, errorCount + t(' 异常', ' Error')) : null,
+                    h('span', { className: 'rt-tag' }, t('上下文 ', 'Context ') + ctxSumLabel))),
 
                 isClusterVariant
                   ? h('div', {
@@ -6950,15 +7313,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       h('input', {
                         className: 'rt-input',
                         style: { width: 175, height: 24, fontSize: 11, padding: '0 8px' },
-                        placeholder: '搜索节点 / 角色 / 独占文件...',
+                        placeholder: t('搜索节点 / 角色 / 独占文件...', 'Search node / role / files...'),
                         value: canvasSearch,
                         onChange: (e) => setCanvasSearch(e.target.value),
                       }),
                       [
-                        { k: 'all', lbl: '全部 (' + fusedChildren.length + ')' },
-                        { k: 'running', lbl: '运行中' },
-                        { k: 'pending', lbl: '待审批' + (pendingApprovalCount > 0 ? ' (' + pendingApprovalCount + ')' : '') },
-                        { k: 'error', lbl: '异常阻塞' + (errorCount > 0 ? ' (' + errorCount + ')' : '') },
+                        { k: 'all', lbl: t('全部 (' + fusedChildren.length + ')', 'All (' + fusedChildren.length + ')') },
+                        { k: 'running', lbl: t('运行中', 'Running') },
+                        { k: 'pending', lbl: t('待审批', 'Pending') + (pendingApprovalCount > 0 ? ' (' + pendingApprovalCount + ')' : '') },
+                        { k: 'error', lbl: t('异常阻塞', 'Errors') + (errorCount > 0 ? ' (' + errorCount + ')' : '') },
                       ].map((fp) => h('button', {
                         key: 'cf-' + fp.k,
                         type: 'button',
@@ -6973,14 +7336,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
                             className: 'rt-btn',
                             style: { padding: '2px 8px', fontSize: 11, fontWeight: 600 },
                             onClick: props.onOpenCollab || props.onOpenWishWizard,
-                          }, '需求拆解与审批')
+                          }, t('需求拆解与审批', 'Wish & Approval'))
                         : null,
                       h('button', {
                         type: 'button',
                         className: 'rt-btn' + (showAddShardForm ? ' rt-btn-primary' : ''),
                         style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                         onClick: () => setShowAddShardForm((v) => !v),
-                      }, showAddShardForm ? '收起新增分片' : '+ 新增分片节点'))
+                      }, showAddShardForm ? t('收起新增分片', 'Close Form') : t('+ 新增分片节点', '+ Add Shard')))
                   : null,
 
                 isClusterVariant && showAddShardForm
@@ -6998,7 +7361,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     },
                       h('input', {
                         className: 'rt-input',
-                        placeholder: '分片标题（如：Wave3 认证中间件重构）',
+                        placeholder: t('分片标题（如：Wave3 认证中间件重构）', 'Shard title (e.g. Wave3 Auth Refactor)'),
                         value: newShardTitle,
                         onChange: (e) => setNewShardTitle(e.target.value),
                       }),
@@ -7007,26 +7370,26 @@ body[data-ds-dark-theme] .rt-anim-complete{
                         value: String(newShardWave),
                         onChange: (e) => setNewShardWave(Number(e.target.value) || 3),
                       },
-                        h('option', { value: '1' }, 'Wave 1 · 立项与设计'),
-                        h('option', { value: '2' }, 'Wave 2 · 架构与分片'),
-                        h('option', { value: '3' }, 'Wave 3 · 并发编码构建'),
-                        h('option', { value: '4' }, 'Wave 4 · 审查与测试门禁')),
+                        h('option', { value: '1' }, t('Wave 1 · 立项与设计', 'Wave 1 · Discovery & UX')),
+                        h('option', { value: '2' }, t('Wave 2 · 架构与分片', 'Wave 2 · Architecture')),
+                        h('option', { value: '3' }, t('Wave 3 · 并发编码构建', 'Wave 3 · Parallel Build')),
+                        h('option', { value: '4' }, t('Wave 4 · 审查与测试门禁', 'Wave 4 · Review & QA'))),
                       h('select', {
                         className: 'rt-input',
                         value: newShardRole,
                         onChange: (e) => setNewShardRole(e.target.value),
                       },
                         Object.keys(P4_ROLE_META).map((rk) => h('option', { key: 'sr-' + rk, value: rk },
-                          rk + ' · ' + P4_ROLE_META[rk].defaultTitle))),
+                          rk + ' · ' + t(P4_ROLE_META[rk].defaultTitle, P4_ROLE_META[rk].defaultTitleEn)))),
                       h('input', {
                         className: 'rt-input',
-                        placeholder: '分片任务目标说明',
+                        placeholder: t('分片任务目标说明', 'Shard goal description'),
                         value: newShardGoal,
                         onChange: (e) => setNewShardGoal(e.target.value),
                       }),
                       h('input', {
                         className: 'rt-input rt-mono',
-                        placeholder: '独占文件路径（逗号分隔）',
+                        placeholder: t('独占文件路径（逗号分隔）', 'Exclusive file paths (comma-separated)'),
                         value: newShardFiles,
                         onChange: (e) => setNewShardFiles(e.target.value),
                       }),
@@ -7035,7 +7398,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                         className: 'rt-btn rt-btn-primary',
                         disabled: addingShardBusy,
                         onClick: handleCreateCustomShard,
-                      }, addingShardBusy ? '创建中…' : '确认挂载分片'))
+                      }, addingShardBusy ? t('创建中…', 'Creating...') : t('确认挂载分片', 'Create Shard')))
                   : null,
 
                 h('div', {
@@ -7051,7 +7414,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   h('div', {
                     className: 'rt-panzoom-toolbar',
                     role: 'toolbar',
-                    'aria-label': '路径树画布平移缩放与折叠控制',
+                    'aria-label': t('路径树画布平移缩放与折叠控制', 'Canvas Pan/Zoom & Collapse Controls'),
                     style: { flexWrap: 'wrap' },
                   },
                     h('button', {
@@ -7059,16 +7422,16 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       className: 'rt-btn rt-panzoom-btn rt-tree-layout-setting',
                       style: { padding: '1px 8px', fontSize: 10.5, fontWeight: 600 },
                       onClick: toggleTreeDirection,
-                      title: '切换开发树展开方向（横向向右派生 / 纵向向下派生）',
+                      title: t('切换开发树展开方向（横向向右派生 / 纵向向下派生）', 'Toggle derivation direction (Horizontal / Vertical)'),
                     }, treeDirection === 'horizontal'
-                      ? '⇄ 横向向右派生'
-                      : '⇄ 纵向向下派生'),
+                      ? t('⇄ 横向向右派生', '⇄ Horizontal Tree')
+                      : t('⇄ 纵向向下派生', '⇄ Vertical Tree')),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn rt-panzoom-btn',
                       style: { padding: '1px 6px', fontSize: 11 },
                       onClick: zoomOutCanvas,
-                      title: '缩小画布',
+                      title: t('缩小画布', 'Zoom Out'),
                     }, '-'),
                     h('span', {
                       className: 'rt-mono',
@@ -7079,28 +7442,28 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       className: 'rt-btn rt-panzoom-btn',
                       style: { padding: '1px 6px', fontSize: 11 },
                       onClick: zoomInCanvas,
-                      title: '放大画布',
+                      title: t('放大画布', 'Zoom In'),
                     }, '+'),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn rt-panzoom-btn',
                       style: { padding: '1px 7px', fontSize: 10.5 },
                       onClick: fitCanvasToViewport,
-                      title: '自适应缩放完整放入当前视口',
-                    }, '适应视口'),
+                      title: t('自适应缩放完整放入当前视口', 'Fit graph to viewport'),
+                    }, t('适应视口', 'Fit')),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn rt-panzoom-btn',
                       style: { padding: '1px 7px', fontSize: 10.5 },
                       onClick: resetPanZoom,
-                    }, '1:1 复位'),
+                    }, t('1:1 复位', 'Reset 1:1')),
                     activeWaveGroups.length > 0
                       ? h('button', {
                           type: 'button',
                           className: 'rt-btn' + (allWavesExpanded ? ' rt-btn-primary' : ''),
                           style: { padding: '1px 7px', fontSize: 10.5 },
                           onClick: () => (allWavesExpanded ? (fusedChildren.length > 4 ? autoFoldWaves() : collapseAllWaves()) : expandAllWaves()),
-                        }, allWavesExpanded ? '自动收起' : '全部展开')
+                        }, allWavesExpanded ? t('自动收起', 'Auto Fold') : t('全部展开', 'Expand All'))
                       : null),
 
                   h('div', {
@@ -7172,15 +7535,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                 expanded: selAgentId === 'root',
                               })),
                                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                                  h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6, flex: 'none' } }, '主控'),
+                                  h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6, flex: 'none' } }, t('主控', 'Lead')),
                                   h('span', {
                                     style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
                                     title: workspaceDisplayTitle,
                                   }, workspaceDisplayTitle),
-                                  h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0, flex: 'none' } }, runningCount > 0 ? '运行中' : (fusedChildren.length > 0 ? '协同中' : '就绪'))),
+                                  h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0, flex: 'none' } }, runningCount > 0 ? t('运行中', 'Running') : (fusedChildren.length > 0 ? t('协同中', 'Active') : t('就绪', 'Ready')))),
                                 h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)', gap: 6 } },
                                   h('span', { className: 'rt-mono' }, rootTokensLabel + ' · ' + rootCostLabel),
-                                  h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
+                                  h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + t(' 步', ' steps')),
                                   h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
                                 activeWaveGroups.length > 0
                                   ? h('span', {
@@ -7213,12 +7576,12 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                     const isSpawningWave = wg.children.some((c) => Boolean(animatingSpawnIds[c.id]))
                                     const isCompletingWave = wg.children.some((c) => Boolean(animatingCompleteIds[c.id]))
                                     const statusSummary = wg.errorInWave > 0
-                                      ? (wg.errorInWave + ' 异常')
+                                      ? (wg.errorInWave + t(' 异常', ' Error'))
                                       : (wg.runningInWave > 0
-                                        ? (wg.runningInWave + ' 运行中')
+                                        ? (wg.runningInWave + t(' 运行中', ' Running'))
                                         : (wg.pendingInWave > 0 && wg.doneInWave === 0
-                                          ? (wg.pendingInWave + ' 待执行')
-                                          : (wg.doneInWave + '/' + wg.children.length + ' 完成')))
+                                          ? (wg.pendingInWave + t(' 待执行', ' Pending'))
+                                          : (wg.doneInWave + '/' + wg.children.length + t(' 完成', ' Done'))))
                                     const visibleWaveChildren = visibleChildrenByWave[wg.wave] || []
                                     const hiddenWaveCount = Math.max(0, wg.children.length - visibleWaveChildren.length)
 
@@ -7290,7 +7653,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                           h('span', {
                                             className: 'rt-tree-wave-card-badge',
                                             style: { color: wg.color, borderColor: wg.color + '55', background: wg.color + '18' },
-                                          }, wg.shortLabel + ' · ' + wg.children.length + ' 节点'),
+                                          }, wg.shortLabel + ' · ' + wg.children.length + t(' 节点', ' nodes')),
                                           h('span', {
                                             className: 'rt-mono',
                                             style: {
@@ -7321,7 +7684,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                             gap: 4,
                                           },
                                         },
-                                          h('span', null, wg.runningInWave + ' 运行 · ' + wg.doneInWave + ' 完成' + (wg.pendingInWave > 0 ? (' · ' + wg.pendingInWave + ' 待执行') : '')),
+                                          h('span', null, wg.runningInWave + t(' 运行 · ', ' run · ') + wg.doneInWave + t(' 完成', ' done') + (wg.pendingInWave > 0 ? (' · ' + wg.pendingInWave + t(' 待执行', ' pending')) : '')),
                                           h('span', null, wg.tokenLabel)),
                                         h('div', {
                                           style: { height: 4, borderRadius: 99, background: 'var(--dsw-alias-bg-layer-2)', overflow: 'hidden' },
@@ -7338,7 +7701,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                               if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
                                               toggleWaveExpand(wg.wave)
                                             },
-                                          }, expanded ? '收起分片' : '展开分片'))),
+                                          }, expanded ? t('收起分片', 'Collapse') : t('展开分片', 'Expand')))),
 
                                       expanded
                                         ? h('div', {
@@ -7370,7 +7733,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                                       [wg.wave]: (prev[wg.wave] || WAVE_PAGE_SIZE) + WAVE_PAGE_SIZE,
                                                     }))
                                                   },
-                                                }, '展开更多 (+' + hiddenWaveCount + ' 个节点)')
+                                                }, t('展开更多 (+' + hiddenWaveCount + ' 个节点)', 'Show More (+' + hiddenWaveCount + ' nodes)'))
                                               : null)
                                         : null)
                                   }))
@@ -7390,24 +7753,24 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                 },
                                   h('div', { style: { fontWeight: 700, fontSize: 13, color: 'var(--dsw-alias-label-primary)' } },
                                     fusedChildren.length > 0
-                                      ? '当前过滤条件下没有匹配的节点'
-                                      : '当前工作台尚无研发分片'),
+                                      ? t('当前过滤条件下没有匹配的节点', 'No nodes match current filter')
+                                      : t('当前工作台尚无研发分片', 'No shards in this workspace yet')),
                                   h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
                                     fusedChildren.length > 0
-                                      ? '点击上方「全部」筛选或清空搜索词即可恢复显示。'
-                                      : '请前往「协同与审批」通过 AI 澄清与拆解立项生成分片，或在工具栏点击「+ 新增分片节点」。'),
+                                      ? t('点击上方「全部」筛选或清空搜索词即可恢复显示。', 'Click "All" or clear search query to restore.')
+                                      : t('请前往「协同与审批」通过 AI 澄清与拆解立项生成分片，或在工具栏点击「+ 新增分片节点」。', 'Decompose a requirement in "Collab & Approval" or click "+ Add Shard".')),
                                   fusedChildren.length > 0
                                     ? h('button', {
                                         type: 'button',
                                         className: 'rt-btn',
                                         onClick: () => { setCanvasFilter('all'); setCanvasSearch('') },
-                                      }, '重置筛选条件')
+                                      }, t('重置筛选条件', 'Reset Filters'))
                                     : ((props.onOpenCollab || props.onOpenWishWizard)
                                       ? h('button', {
                                           type: 'button',
                                           className: 'rt-btn rt-btn-primary',
                                           onClick: props.onOpenCollab || props.onOpenWishWizard,
-                                        }, '前往「协同与审批」立项拆解')
+                                        }, t('前往「协同与审批」立项拆解', 'Open Collab & Approval'))
                                       : null))))
                       : /* ── 备选布局：纵向向下派生树 (.rt-p5-tree-stage.rt-tree-layout-vertical) ── */
                         h('div', {
@@ -7456,16 +7819,16 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                 boxShadow: selAgentId === 'root' ? '0 0 0 3px rgba(59,130,246,0.16)' : '0 2px 6px rgba(0,0,0,0.06)',
                               },
                             }, clickable(() => openAgentInspector('root'), {
-                              label: '检视主控节点 ' + workspaceDisplayTitle + ' 环节细节',
+                              label: t('检视主控节点 ', 'Inspect orchestrator ') + workspaceDisplayTitle,
                               expanded: selAgentId === 'root',
                             })),
                               h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                                h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, '主控'),
+                                h('span', { style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 6 } }, t('主控', 'Lead')),
                                 h('span', { style: { fontWeight: 700, fontSize: 12.5, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, workspaceDisplayTitle),
-                                h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? '运行中' : (fusedChildren.length > 0 ? '协同中' : '就绪'))),
+                                h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? t('运行中', 'Running') : (fusedChildren.length > 0 ? t('协同中', 'Active') : t('就绪', 'Ready')))),
                               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10, color: 'var(--dsw-alias-label-secondary)', gap: 6 } },
                                 h('span', { className: 'rt-mono' }, rootTokensLabel + ' · ' + rootCostLabel),
-                                h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + ' 步'),
+                                h('span', { className: 'rt-mono' }, rootDuration + ' · ' + rootSteps + t(' 步', ' steps')),
                                 h('span', { className: 'rt-mono', style: { fontWeight: 600, color: '#3b82f6' } }, rootCtxPct)),
                               activeWaveGroups.length > 0
                                 ? h('span', {
@@ -7501,12 +7864,12 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                     const expanded = Boolean(expandedMap[wg.wave])
                                     const hasSelectedChild = wg.children.some((c) => c.id === selAgentId)
                                     const statusSummary = wg.errorInWave > 0
-                                      ? (wg.errorInWave + ' 异常')
+                                      ? (wg.errorInWave + t(' 异常', ' Error'))
                                       : (wg.runningInWave > 0
-                                        ? (wg.runningInWave + ' 运行中')
+                                        ? (wg.runningInWave + t(' 运行中', ' Running'))
                                         : (wg.pendingInWave > 0 && wg.doneInWave === 0
-                                          ? (wg.pendingInWave + ' 待执行')
-                                          : (wg.doneInWave + '/' + wg.children.length + ' 完成')))
+                                          ? (wg.pendingInWave + t(' 待执行', ' Pending'))
+                                          : (wg.doneInWave + '/' + wg.children.length + t(' 完成', ' Done'))))
                                     const visibleWaveChildren = visibleChildrenByWave[wg.wave] || []
                                     const hiddenWaveCount = Math.max(0, wg.children.length - visibleWaveChildren.length)
                                     return h('div', {
@@ -7529,7 +7892,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                           borderColor: (expanded || hasSelectedChild || wg.errorInWave > 0) ? wg.color : 'var(--dsw-alias-border-l1)',
                                         },
                                       }, clickable(() => toggleWaveExpand(wg.wave), {
-                                        label: (expanded ? '收起 ' : '展开 ') + wg.title,
+                                        label: (expanded ? t('收起 ', 'Collapse ') : t('展开 ', 'Expand ')) + wg.title,
                                         expanded: expanded,
                                       })),
                                         h('span', {
@@ -7570,7 +7933,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                           : null,
                                         h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
                                           h('span', { className: 'rt-tree-wave-card-badge', style: { color: wg.color, borderColor: wg.color + '55', background: wg.color + '18' } },
-                                            wg.shortLabel + ' · ' + wg.children.length + ' 节点'),
+                                            wg.shortLabel + ' · ' + wg.children.length + t(' 节点', ' nodes')),
                                           h('span', {
                                             className: 'rt-mono',
                                             style: {
@@ -7590,7 +7953,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                               if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
                                               toggleWaveExpand(wg.wave)
                                             },
-                                          }, expanded ? '收起分片' : '展开分片'))),
+                                          }, expanded ? t('收起分片', 'Collapse') : t('展开分片', 'Expand')))),
                                       expanded
                                         ? h('div', {
                                             className: 'rt-wave-subtree-children rt-p4-children-grid',
@@ -7605,26 +7968,26 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                                   onClick: () => setWavePageLimits((prev) => Object.assign({}, prev, {
                                                     [wg.wave]: (prev[wg.wave] || WAVE_PAGE_SIZE) + WAVE_PAGE_SIZE,
                                                   })),
-                                                }, '展开更多 (+' + hiddenWaveCount + ' 个节点)')
+                                                }, t('展开更多 (+' + hiddenWaveCount + ' 个节点)', 'Show More (+' + hiddenWaveCount + ' nodes)'))
                                               : null)
                                         : null)
                                   }))
                               : h('div', { className: 'rt-empty', style: { marginTop: 12 } },
                                   fusedChildren.length > 0
-                                    ? '当前过滤条件下没有匹配的节点'
-                                    : '当前工作台尚无研发分片 — 前往「协同与审批」立项拆解')))))),
+                                    ? t('当前过滤条件下没有匹配的节点', 'No nodes match current filter')
+                                    : t('当前工作台尚无研发分片 — 前往「协同与审批」立项拆解', 'No shards yet — launch in "Collab & Approval"'))))))),
 
               !isClusterVariant
                 ? (selAgentId && activeInspectorAgent
                     ? (() => {
                         const ovSummary = (activeInspectorAgent.compressedDigest && activeInspectorAgent.compressedDigest.whatWasDone)
                           || activeInspectorAgent.output
-                          || '节点已就绪，点击右侧入口可前往审批或展开完整泳道。'
+                          || t('节点已就绪，点击右侧入口可前往审批或展开完整泳道。', 'Node ready. Open Collab & Approval or full swimlanes on the right.')
                         const ovStatusLabel = activeInspectorAgent.status === 'error'
-                          ? '异常待修复'
+                          ? t('异常待修复', 'Needs Fix')
                           : (activeInspectorAgent.status === 'running'
-                            ? '运行中'
-                            : (activeInspectorAgent.status === 'pending' ? '待执行' : '已完成'))
+                            ? t('运行中', 'Running')
+                            : (activeInspectorAgent.status === 'pending' ? t('待执行', 'Pending') : t('已完成', 'Done')))
                         return h('div', { className: 'rt-ov-node-strip' },
                           h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 } },
                             h('span', {
@@ -7641,7 +8004,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                             h('span', { style: { fontWeight: 700, fontSize: 12.5, color: 'var(--dsw-alias-label-primary)' } }, activeInspectorAgent.title),
                             h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } }, ovStatusLabel),
                             h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                              (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || '待命') + ' · ' + (activeInspectorAgent.steps || 0) + ' 步'),
+                              (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || t('待命', 'Idle')) + ' · ' + (activeInspectorAgent.steps || 0) + t(' 步', ' steps')),
                             h('div', { className: 'rt-spacer' }),
                             (props.onOpenCollab || props.onOpenWishWizard)
                               ? h('button', {
@@ -7649,7 +8012,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                   className: 'rt-btn rt-btn-primary',
                                   style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                                   onClick: props.onOpenCollab || props.onOpenWishWizard,
-                                }, '前往「协同与审批」 →')
+                                }, t('前往「协同与审批」 →', 'Collab & Approval →'))
                               : null,
                             props.onOpenAgents
                               ? h('button', {
@@ -7657,15 +8020,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                   className: 'rt-btn',
                                   style: { padding: '2px 9px', fontSize: 11, fontWeight: 600 },
                                   onClick: props.onOpenAgents,
-                                }, '查看完整泳道与检视器 →')
+                                }, t('查看完整泳道与检视器 →', 'Full Swimlanes & Inspector →'))
                               : null,
                             h('button', {
                               type: 'button',
                               className: 'rt-btn',
                               style: { padding: '1px 6px', fontSize: 11 },
-                              title: '收起节点摘要',
+                              title: t('收起节点摘要', 'Hide summary'),
                               onClick: () => openAgentInspector('__closed__'),
-                            }, '收起')),
+                            }, t('收起', 'Hide'))),
                           h('div', {
                             style: {
                               fontSize: 11.5,
@@ -7690,7 +8053,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
               activeInspectorAgent
                 ? (() => {
                     const inspDigest = activeInspectorAgent.compressedDigest || {
-                      whatWasDone: activeInspectorAgent.output || '已完成阶段任务并生成压缩摘要。',
+                      whatWasDone: activeInspectorAgent.output || t('已完成阶段任务并生成压缩摘要。', 'Completed stage and generated compressed digest.'),
                       filesTouched: activeInspectorAgent.filesOwned || [],
                     }
                     const rawTokNum = Number(activeInspectorAgent.rawTokens) || Number(activeInspectorAgent.tokens) || 0
@@ -7734,12 +8097,12 @@ body[data-ds-dark-theme] .rt-anim-complete{
                           activeInspectorAgent.title),
                         h('span', { className: 'rt-tag', style: { margin: 0, fontSize: 10 } },
                           activeInspectorAgent.isRoot
-                            ? 'Wave 0 · 主控'
+                            ? t('Wave 0 · 主控', 'Wave 0 · Orchestrator')
                             : ('Wave ' + (activeInspectorAgent.wave || 1) + ' · ' + activeInspectorAgent.role)),
                         h('span', { className: 'rt-tag rt-mono', style: { margin: 0, fontSize: 10 } },
                           'session: ' + ((activeInspectorDetail && activeInspectorDetail.sessionId) || activeInspectorAgent.sessionId || activeInspectorAgent.id)),
                         h('span', { className: 'rt-mono', style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                          (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || '实时') + ' · ' + (activeInspectorAgent.steps || 0) + ' 步'),
+                          (activeInspectorAgent.tokenLabel || rootTokensLabel) + ' · ' + (activeInspectorAgent.durationLabel || t('实时', 'Live')) + ' · ' + (activeInspectorAgent.steps || 0) + t(' 步', ' steps')),
                         h('div', { className: 'rt-spacer' }),
                         isInspPendingExec
                           ? h('button', {
@@ -7748,7 +8111,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                               disabled: isInspDispatchBusy,
                               style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
                               onClick: () => handleDispatchWorkerTask(activeInspectorAgent),
-                            }, isInspDispatchBusy ? '拉起中…' : '拉起执行')
+                            }, isInspDispatchBusy ? t('拉起中…', 'Starting...') : t('拉起执行', 'Dispatch'))
                           : null,
                         !activeInspectorAgent.isRoot
                           ? h('button', {
@@ -7756,7 +8119,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                               className: 'rt-btn',
                               style: { padding: '3px 9px', fontSize: 11, fontWeight: 600 },
                               onClick: () => setEditingGoalOpen((v) => !v),
-                            }, editingGoalOpen ? '收起目标编辑' : '编辑分片目标')
+                            }, editingGoalOpen ? t('收起目标编辑', 'Close Goal Editor') : t('编辑分片目标', 'Edit Goal'))
                           : null,
                         !activeInspectorAgent.isRoot
                           ? h('button', {
@@ -7765,21 +8128,21 @@ body[data-ds-dark-theme] .rt-anim-complete{
                               disabled: retryingBusy,
                               style: { padding: '3px 9px', fontSize: 11, fontWeight: 600 },
                               onClick: () => handleRetryWorkerTask(activeInspectorAgent),
-                            }, retryingBusy ? '重跑中…' : '重跑该分片')
+                            }, retryingBusy ? t('重跑中…', 'Retrying...') : t('重跑该分片', 'Retry Shard'))
                           : null,
                         h('button', {
                           type: 'button',
                           className: 'rt-btn rt-btn-primary rt-jump-chat-btn',
                           style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
                           onClick: () => handleOpenAgentChat(activeInspectorAgent),
-                        }, '跳转会话聊天 ↗'),
+                        }, t('跳转会话聊天 ↗', 'Open Chat ↗')),
                         h('button', {
                           type: 'button',
                           className: 'rt-btn',
                           style: { padding: '2px 7px', fontSize: 11 },
-                          title: '收起检视抽屉',
+                          title: t('收起检视抽屉', 'Collapse inspector'),
                           onClick: () => openAgentInspector('__closed__'),
-                        }, '收起')),
+                        }, t('收起', 'Collapse'))),
 
                       editingGoalOpen && !activeInspectorAgent.isRoot
                         ? h('div', {
@@ -7793,14 +8156,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
                               gap: 6,
                             },
                           },
-                            h('div', { style: { fontSize: 11, fontWeight: 700 } }, '编辑该子智能体的委派目标与独占文件分片'),
+                            h('div', { style: { fontSize: 11, fontWeight: 700 } }, t('编辑该子智能体的委派目标与独占文件分片', 'Edit Worker Goal & Exclusive File Shards')),
                             h('textarea', {
                               className: 'rt-textarea',
                               rows: 2,
                               style: { minHeight: 48, fontSize: 11.5 },
                               value: editGoalDraft,
                               onChange: (e) => setEditGoalDraft(e.target.value),
-                              placeholder: '输入调整后的分片目标说明...',
+                              placeholder: t('输入调整后的分片目标说明...', 'Enter updated shard goal...'),
                             }),
                             h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
                               h('input', {
@@ -7808,19 +8171,19 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                 style: { flex: 1, minWidth: 200, fontSize: 11 },
                                 value: editFilesDraft,
                                 onChange: (e) => setEditFilesDraft(e.target.value),
-                                placeholder: '独占文件分片（逗号分隔）',
+                                placeholder: t('独占文件分片（逗号分隔）', 'Exclusive file shards (comma-separated)'),
                               }),
                               h('button', {
                                 type: 'button',
                                 className: 'rt-btn rt-btn-primary',
                                 disabled: savingGoalBusy,
                                 onClick: () => handleSaveWorkerGoal(activeInspectorAgent),
-                              }, savingGoalBusy ? '保存中…' : '保存目标'),
+                              }, savingGoalBusy ? t('保存中…', 'Saving...') : t('保存目标', 'Save Goal')),
                               h('button', {
                                 type: 'button',
                                 className: 'rt-btn',
                                 onClick: () => setEditingGoalOpen(false),
-                              }, '取消')))
+                              }, t('取消', 'Cancel'))))
                         : null,
 
                       h('div', {
@@ -7847,7 +8210,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                         },
                           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
                             h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                              'Step 1 · 委派目标'),
+                              t('Step 1 · 委派目标', 'Step 1 · Assigned Goal')),
                             h('span', { className: 'rt-mono', style: { fontSize: 10, color: activeInspectorAgent.color || '#3b82f6', fontWeight: 700 } },
                               'Wave ' + (activeInspectorAgent.wave || 0) + ' · ' + activeInspectorAgent.role)),
                           h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.55 } },
@@ -7868,9 +8231,9 @@ body[data-ds-dark-theme] .rt-anim-complete{
                         },
                           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
                             h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                              'Step 2 · 核心执行'),
+                              t('Step 2 · 核心执行', 'Step 2 · Core Execution')),
                             h('span', { className: 'rt-mono', style: { fontSize: 10, color: 'var(--dsw-alias-label-secondary)' } },
-                              activeStepTimeline.length + ' 步 · ' + (inspDigest.filesTouched || []).length + ' 文件')),
+                              activeStepTimeline.length + t(' 步 · ', ' steps · ') + (inspDigest.filesTouched || []).length + t(' 文件', ' files'))),
                           h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 } },
                             (inspDigest.filesTouched || []).map((fp) => h('span', {
                               key: 'ft-' + fp,
@@ -7909,7 +8272,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                   color: st.status === 'error' ? '#ef4444' : (st.status === 'running' ? '#3b82f6' : (st.status === 'pending' ? '#d97706' : '#10b981')),
                                   fontWeight: 600,
                                 },
-                              }, st.status === 'error' ? '异常' : (st.status === 'running' ? '执行中' : (st.status === 'pending' ? '待执行' : '完成'))))))),
+                              }, st.status === 'error' ? t('异常', 'Error') : (st.status === 'running' ? t('执行中', 'Running') : (st.status === 'pending' ? t('待执行', 'Pending') : t('完成', 'Done')))))))),
 
                         h('div', {
                           className: 'rt-step-node',
@@ -7926,7 +8289,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                         },
                           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 } },
                             h('span', { style: { fontSize: 11, fontWeight: 700, color: 'var(--dsw-alias-label-primary)' } },
-                              'Step 3 · 阶段结论与审批'),
+                              t('Step 3 · 阶段结论与审批', 'Step 3 · Stage Digest & Approval')),
                             h('span', {
                               style: {
                                 fontSize: 9.5,
@@ -7936,7 +8299,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                 background: isInspRevReq ? 'rgba(239,68,68,0.14)' : (isInspApproved ? 'rgba(16,185,129,0.14)' : 'rgba(245,158,11,0.16)'),
                                 color: isInspRevReq ? '#ef4444' : (isInspApproved ? '#10b981' : '#d97706'),
                               },
-                            }, isInspRevReq ? '已驳回重做' : (isInspApproved ? '已审批' : '待审批'))),
+                            }, isInspRevReq ? t('已驳回重做', 'Revision Req.') : (isInspApproved ? t('已审批', 'Approved') : t('待审批', 'Pending')))),
                           h('div', {
                             className: 'rt-digest-box',
                             style: {
@@ -7953,7 +8316,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                               inspDigest.whatWasDone || (activeInspectorDetail && activeInspectorDetail.output) || activeInspectorAgent.output),
                             rawTokNum > 0
                               ? h('div', { className: 'rt-mono', style: { fontSize: 10, color: '#3b82f6', fontWeight: 600 } },
-                                  `原始 ${rawTokNum} tok → 压缩后 ${compTokNum} tok (-${compPctNum}%)`)
+                                  t(`原始 ${rawTokNum} tok → 压缩后 ${compTokNum} tok (-${compPctNum}%)`, `Raw ${rawTokNum} tok → Digest ${compTokNum} tok (-${compPctNum}%)`))
                               : null))),
 
                       h('div', {
@@ -7966,20 +8329,20 @@ body[data-ds-dark-theme] .rt-anim-complete{
                           borderTop: '1px dashed var(--dsw-alias-border-l1)',
                         },
                       },
-                        h('span', { style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, '下一阶段目标：'),
+                        h('span', { style: { fontSize: 11, fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' } }, t('下一阶段目标：', 'Next Goal:')),
                         h('input', {
                           className: 'rt-input',
                           style: { flex: '1 1 220px', height: 26, fontSize: 11.5 },
                           value: customNextGoal,
                           onChange: (e) => setCustomNextGoal(e.target.value),
-                          placeholder: '输入审批通过后下达给下一波次的新目标...',
+                          placeholder: t('输入审批通过后下达给下一波次的新目标...', 'Enter next goal to dispatch upon approval...'),
                         }),
                         h('input', {
                           className: 'rt-input',
                           style: { width: 150, height: 26, fontSize: 11 },
                           value: reviewNote,
                           onChange: (e) => setReviewNote(e.target.value),
-                          placeholder: '审批备注（选填）',
+                          placeholder: t('审批备注（选填）', 'Review note (optional)'),
                         }),
                         h('button', {
                           type: 'button',
@@ -7987,7 +8350,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                           className: 'rt-btn rt-plan-approve-btn' + (isInspApproved ? '' : ' rt-btn-primary'),
                           style: { padding: '3px 10px', fontSize: 11, fontWeight: 700 },
                           onClick: () => handlePlanApproveWorker(activeInspectorAgent, 'approved'),
-                        }, approvingBusy ? '提交中…' : '审批通过并下达目标'),
+                        }, approvingBusy ? t('提交中…', 'Submitting...') : t('审批通过并下达目标', 'Approve & Dispatch Next')),
                         !activeInspectorAgent.isRoot
                           ? h('button', {
                               type: 'button',
@@ -7995,14 +8358,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
                               className: 'rt-btn',
                               style: { padding: '3px 9px', fontSize: 11, color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)' },
                               onClick: () => handlePlanApproveWorker(activeInspectorAgent, 'revision_requested'),
-                            }, '驳回重做')
+                            }, t('驳回重做', 'Request Revision'))
                           : null,
                         h('button', {
                           type: 'button',
                           className: 'rt-btn',
                           style: { padding: '3px 8px', fontSize: 10.5 },
                           onClick: () => { setSelId(activeInspectorAgent.role || 'plan'); setMode('docwall') },
-                        }, '查看角色文稿 →')))
+                        }, t('查看角色文稿 →', 'View Role Doc →'))))
                   })()
                 : h('div', {
                     className: 'rt-agent-inspector-drawer',
@@ -8019,13 +8382,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       color: 'var(--dsw-alias-label-secondary)',
                     },
                   },
-                    h('span', null, '点击派生树节点或泳道行可展开环节执行轨迹与审批抽屉'),
+                    h('span', null, t('点击派生树节点或泳道行可展开环节执行轨迹与审批抽屉', 'Click any tree node or swimlane row to inspect trajectory and approve')),
                     h('button', {
                       type: 'button',
                       className: 'rt-btn',
                       style: { padding: '2px 8px', fontSize: 11 },
                       onClick: () => openAgentInspector('root'),
-                    }, '展开主控预览')),
+                    }, t('展开主控预览', 'Inspect Orchestrator'))),
 
               h('div', {
                 className: 'rt-swim-pane rt-p4-swimlane-pane',
@@ -8040,14 +8403,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 },
               },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, '跨 Agent 协作泳道'),
+                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, t('跨 Agent 协作泳道', 'Cross-Agent Swimlanes')),
                   h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                    filteredCollabCount + '/' + totalCollabEvents + ' 条记录 · ' + swimFilteredLanes.length + ' 条泳道'),
+                    filteredCollabCount + '/' + totalCollabEvents + t(' 条记录 · ', ' events · ') + swimFilteredLanes.length + t(' 条泳道', ' lanes')),
                   h('div', { className: 'rt-spacer' }),
                   h('input', {
                     className: 'rt-input',
                     style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
-                    placeholder: '搜索 Agent...',
+                    placeholder: t('搜索 Agent...', 'Search agent...'),
                     value: collabSearch,
                     onChange: (e) => setCollabSearch(e.target.value),
                   }),
@@ -8056,22 +8419,22 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     className: 'rt-btn' + (collabSort === 'asc' ? ' rt-btn-primary' : ''),
                     style: { padding: '1px 7px', fontSize: 11 },
                     onClick: () => setCollabSort('asc'),
-                  }, '最早'),
+                  }, t('最早', 'Oldest')),
                   h('button', {
                     type: 'button',
                     className: 'rt-btn' + (collabSort === 'desc' ? ' rt-btn-primary' : ''),
                     style: { padding: '1px 7px', fontSize: 11 },
                     onClick: () => setCollabSort('desc'),
-                  }, '最新')),
+                  }, t('最新', 'Newest'))),
 
                 h('div', { className: 'rt-swim-wave-filter', style: { display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' } },
                   [
-                    { k: 'all', lbl: '全部' },
-                    { k: 'running', lbl: '运行中' },
-                    { k: '1', lbl: 'Wave 1 立项' },
-                    { k: '2', lbl: 'Wave 2 架构' },
-                    { k: '3', lbl: 'Wave 3 构建' },
-                    { k: '4', lbl: 'Wave 4 审查' },
+                    { k: 'all', lbl: t('全部', 'All') },
+                    { k: 'running', lbl: t('运行中', 'Running') },
+                    { k: '1', lbl: t('Wave 1 立项', 'Wave 1 Discovery') },
+                    { k: '2', lbl: t('Wave 2 架构', 'Wave 2 Arch') },
+                    { k: '3', lbl: t('Wave 3 构建', 'Wave 3 Build') },
+                    { k: '4', lbl: t('Wave 4 审查', 'Wave 4 Review') },
                   ].map((wf) => h('button', {
                     key: 'swf-' + wf.k,
                     type: 'button',
@@ -8096,25 +8459,25 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     const isLaneSel = (activeInspectorAgent && activeInspectorAgent.id === lane.id) || selAgentId === lane.id
                     const laneSteps = lane.steps || (lane.isRoot ? rootSteps : 0)
                     const laneTok = lane.tokenLabel || rootTokensLabel
-                    const laneDur = lane.durationLabel || (lane.isRoot ? rootDuration : '待命')
+                    const laneDur = lane.durationLabel || (lane.isRoot ? rootDuration : t('待命', 'Idle'))
                     const laneStatus = lane.isRoot ? (runningCount > 0 ? 'running' : 'done') : (lane.status || 'done')
                     const laneCompPct = lane.compressionPct || 0
                     const laneApproved = (approvedWorkerMap[lane.id] && approvedWorkerMap[lane.id].approved) || lane.approvalState === 'approved'
-                    const step1Text = lane.isRoot ? '全局需求拆解与多波次并发调度' : (lane.prompt || lane.title)
-                    const step2Text = laneSteps + ' 步工具调用 · ' + laneTok + ' · ' + laneDur
+                    const step1Text = lane.isRoot ? t('全局需求拆解与多波次并发调度', 'Global requirement decomposition & multi-wave dispatch') : (lane.prompt || lane.title)
+                    const step2Text = laneSteps + t(' 步工具调用 · ', ' tool calls · ') + laneTok + ' · ' + laneDur
                     const step3Text = lane.isRoot
-                      ? (fusedChildren.length > 0 ? ('已统筹 ' + fusedChildren.length + ' 个子代理压缩摘要与审批') : '主控编排器就绪，等待拆解任务')
-                      : ((lane.output || '等待同步产物') + (laneCompPct > 0 ? (' · 压缩 -' + laneCompPct + '%') : ''))
+                      ? (fusedChildren.length > 0 ? t('已统筹 ' + fusedChildren.length + ' 个子代理压缩摘要与审批', 'Coordinated ' + fusedChildren.length + ' worker digests & approvals') : t('主控编排器就绪，等待拆解任务', 'Orchestrator ready, awaiting decomposition'))
+                      : ((lane.output || t('等待同步产物', 'Awaiting output')) + (laneCompPct > 0 ? (t(' · 压缩 -', ' · Digest -') + laneCompPct + '%') : ''))
                     const orderedStages = collabSort === 'desc'
                       ? [
-                          { key: 's3', tag: '阶段结论', text: step3Text, isConclusion: true },
-                          { key: 's2', tag: '核心执行', text: step2Text, isConclusion: false },
-                          { key: 's1', tag: '委派目标', text: step1Text, isConclusion: false },
+                          { key: 's3', tag: t('阶段结论', 'Conclusion'), text: step3Text, isConclusion: true },
+                          { key: 's2', tag: t('核心执行', 'Execution'), text: step2Text, isConclusion: false },
+                          { key: 's1', tag: t('委派目标', 'Assigned Goal'), text: step1Text, isConclusion: false },
                         ]
                       : [
-                          { key: 's1', tag: '委派目标', text: step1Text, isConclusion: false },
-                          { key: 's2', tag: '核心执行', text: step2Text, isConclusion: false },
-                          { key: 's3', tag: '阶段结论', text: step3Text, isConclusion: true },
+                          { key: 's1', tag: t('委派目标', 'Assigned Goal'), text: step1Text, isConclusion: false },
+                          { key: 's2', tag: t('核心执行', 'Execution'), text: step2Text, isConclusion: false },
+                          { key: 's3', tag: t('阶段结论', 'Conclusion'), text: step3Text, isConclusion: true },
                         ]
 
                     return h('div', Object.assign({
@@ -8130,7 +8493,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                         cursor: 'pointer',
                         position: 'relative',
                       },
-                    }, clickable(() => openAgentInspector(lane.id), { label: '梳理 Agent 环节详情 ' + lane.title, expanded: isLaneSel })),
+                    }, clickable(() => openAgentInspector(lane.id), { label: t('梳理 Agent 环节详情 ', 'Inspect agent ') + lane.title, expanded: isLaneSel })),
                       h('div', {
                         className: 'rt-swim-meta',
                         style: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRight: '1px solid var(--dsw-alias-border-l1)', minWidth: 0 },
@@ -8162,13 +8525,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
                               color: 'var(--dsw-alias-label-primary)',
                             },
                             title: lane.title,
-                          }, lane.isRoot ? ('主控 · ' + lane.title) : lane.title),
+                          }, lane.isRoot ? (t('主控 · ', 'Lead · ') + lane.title) : lane.title),
                           h('span', {
                             className: 'rt-mono',
                             style: { fontSize: 9.5, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
                           }, (lane.isRoot ? 'Wave 0' : ('Wave ' + (lane.wave || 1) + ' · ' + lane.role))
                             + (laneCompPct > 0 ? (' · -' + laneCompPct + '%') : '')
-                            + ' · ' + (laneApproved ? '已审' : '待审')))),
+                            + ' · ' + (laneApproved ? t('已审', 'Approved') : t('待审', 'Pending'))))),
                       h('div', {
                         className: 'rt-swim-track',
                         style: { position: 'relative', display: 'flex', alignItems: 'center', padding: '6px 10px', minWidth: 0 },
@@ -8216,7 +8579,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                             }, clickable((e) => {
                               if (e && typeof e.stopPropagation === 'function') e.stopPropagation()
                               openAgentInspector(lane.id)
-                            }, { label: '展开 ' + lane.title + ' ' + stg.tag + ' 详情', expanded: isLaneSel })),
+                            }, { label: t('展开 ', 'Expand ') + lane.title + ' ' + stg.tag, expanded: isLaneSel })),
                               h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 } },
                                 h('span', { style: { fontSize: 10, fontWeight: 700, color: lane.color, whiteSpace: 'nowrap' } }, stg.tag),
                                 stg.isConclusion
@@ -8232,7 +8595,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                           : (laneStatus === 'running' ? 'rgba(59,130,246,0.14)' : (laneStatus === 'pending' ? 'rgba(245,158,11,0.14)' : 'rgba(16,185,129,0.14)')),
                                         color: laneStatus === 'error' ? '#ef4444' : (laneStatus === 'running' ? '#3b82f6' : (laneStatus === 'pending' ? '#d97706' : '#10b981')),
                                       },
-                                    }, laneStatus === 'error' ? '异常待修复' : (laneStatus === 'running' ? '运行中' : (laneStatus === 'pending' ? '待执行' : '已完成')))
+                                    }, laneStatus === 'error' ? t('异常待修复', 'Needs Fix') : (laneStatus === 'running' ? t('运行中', 'Running') : (laneStatus === 'pending' ? t('待执行', 'Pending') : t('已完成', 'Done'))))
                                   : null),
                               h('span', {
                                 style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -8254,23 +8617,23 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 },
               },
                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, '协作任务'),
+                  h('span', { style: { fontWeight: 700, fontSize: 13 } }, t('协作任务', 'Collab Tasks')),
                   h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                    filteredTasks.length + '/' + allTasks.length + ' 个工作项'),
+                    filteredTasks.length + '/' + allTasks.length + t(' 个工作项', ' work items')),
                   h('div', { className: 'rt-spacer' }),
                   h('input', {
                     className: 'rt-input',
                     style: { width: 128, height: 24, fontSize: 11, padding: '0 7px' },
-                    placeholder: '搜索工作项...',
+                    placeholder: t('搜索工作项...', 'Search tasks...'),
                     value: taskSearch,
                     onChange: (e) => setTaskSearch(e.target.value),
                   })),
                 h('div', { style: { display: 'flex', gap: 5, flexWrap: 'wrap' } },
                   [
-                    { k: 'all', lbl: '全部 ' + allTasks.length },
-                    { k: 'run', lbl: '进行中 ' + runTaskCount },
-                    { k: 'wait', lbl: '待处理 ' + waitTaskCount },
-                    { k: 'done', lbl: '已完成 ' + doneTaskCount },
+                    { k: 'all', lbl: t('全部 ', 'All ') + allTasks.length },
+                    { k: 'run', lbl: t('进行中 ', 'Running ') + runTaskCount },
+                    { k: 'wait', lbl: t('待处理 ', 'Pending ') + waitTaskCount },
+                    { k: 'done', lbl: t('已完成 ', 'Done ') + doneTaskCount },
                   ].map((fp) => h('button', {
                     key: fp.k,
                     type: 'button',
@@ -8279,7 +8642,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     onClick: () => setTaskFilter(fp.k),
                   }, fp.lbl))),
                 filteredTasks.length === 0
-                  ? h('div', { className: 'rt-empty' }, '当前暂无协作工作项 —— 在「协同与审批」拆解需求或新增分片后将自动生成。')
+                  ? h('div', { className: 'rt-empty' }, t('当前暂无协作工作项 —— 在「协同与审批」拆解需求或新增分片后将自动生成。', 'No collab tasks yet — decompose requirements in "Collab & Approval" or add a shard.'))
                   : h('div', {
                       style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 },
                     },
@@ -8301,7 +8664,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                             flexDirection: 'column',
                             gap: 5,
                           },
-                        }, clickable(() => setExpandedTaskId(isExp ? null : tk.id), { label: '展开协作任务详情 ' + tk.title, expanded: isExp })),
+                        }, clickable(() => setExpandedTaskId(isExp ? null : tk.id), { label: t('展开协作任务详情 ', 'Toggle task ') + tk.title, expanded: isExp })),
                           h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
                             h('span', {
                               style: { background: tk.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 5, fontFamily: 'ui-monospace,Menlo,monospace' },
@@ -8338,7 +8701,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                                       filesOwned: tk.filesOwned,
                                     })
                                   },
-                                }, isTaskBusy ? '拉起中…' : '拉起执行')
+                                }, isTaskBusy ? t('拉起中…', 'Starting...') : t('拉起执行', 'Dispatch'))
                               : null),
                           h('div', {
                             style: {
@@ -8349,42 +8712,42 @@ body[data-ds-dark-theme] .rt-anim-complete{
                               whiteSpace: isExp ? 'normal' : 'nowrap',
                               lineHeight: 1.5,
                             },
-                          }, '委派: ' + tk.prompt),
+                          }, t('委派: ', 'Goal: ') + tk.prompt),
                           isExp
                             ? h('div', {
                                 style: { marginTop: 4, paddingTop: 6, borderTop: '1px dashed var(--dsw-alias-border-l1)', display: 'flex', flexDirection: 'column', gap: 5, fontSize: 11.5 },
                               },
                                 h('div', { style: { color: 'var(--dsw-alias-label-primary)', lineHeight: 1.55 } },
-                                  h('b', null, '产出摘要：'), tk.output),
+                                  h('b', null, t('产出摘要：', 'Output Digest: ')), tk.output),
                                 h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)' } },
-                                  h('span', { className: 'rt-mono' }, '用量 ' + tk.tokenLabel),
-                                  h('span', { className: 'rt-mono' }, '耗时 ' + tk.durationLabel),
-                                  h('span', { className: 'rt-mono' }, tk.steps + ' 步'),
+                                  h('span', { className: 'rt-mono' }, t('用量 ', 'Tokens ') + tk.tokenLabel),
+                                  h('span', { className: 'rt-mono' }, t('耗时 ', 'Duration ') + tk.durationLabel),
+                                  h('span', { className: 'rt-mono' }, tk.steps + t(' 步', ' steps')),
                                   h('div', { className: 'rt-spacer' }),
                                   h('button', {
                                     type: 'button',
                                     className: 'rt-btn',
                                     style: { padding: '1px 7px', fontSize: 10.5 },
                                     onClick: (e) => { e.stopPropagation(); openAgentInspector(tk.agentId) },
-                                  }, '检视环节细节'),
+                                  }, t('检视环节细节', 'Inspect Steps')),
                                   h('button', {
                                     type: 'button',
                                     className: 'rt-btn rt-jump-chat-btn',
                                     style: { padding: '1px 7px', fontSize: 10.5 },
                                     onClick: (e) => { e.stopPropagation(); handleOpenAgentChat(tk) },
-                                  }, '跳转会话聊天 ↗'),
+                                  }, t('跳转会话聊天 ↗', 'Open Chat ↗')),
                                   h('button', {
                                     type: 'button',
                                     className: 'rt-btn',
                                     style: { padding: '1px 7px', fontSize: 10.5 },
                                     onClick: (e) => { e.stopPropagation(); setSelId(tk.role); setMode('docwall') },
-                                  }, '查看角色文稿 →'),
+                                  }, t('查看角色文稿 →', 'View Role Doc →')),
                                   h('button', {
                                     type: 'button',
                                     className: 'rt-btn rt-btn-primary',
                                     style: { padding: '1px 7px', fontSize: 10.5 },
-                                    onClick: (e) => { e.stopPropagation(); triggerCheckpoint('断点续跑', 'resume', tk.agentId || tk.role) },
-                                  }, '断点续跑')))
+                                    onClick: (e) => { e.stopPropagation(); triggerCheckpoint(t('断点续跑', 'Checkpoint Resume'), 'resume', tk.agentId || tk.role) },
+                                  }, t('断点续跑', 'Resume'))))
                             : null)
                       }))))
           : null,
@@ -8395,7 +8758,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 allNodes.map((n) => h('div', Object.assign({
                   key: 'doc' + n.id,
                   className: 'rt-doc-item' + (selId === n.id ? ' on' : ''),
-                }, clickable(() => setSelId(n.id), { label: '预览文稿 ' + n.docTitle, expanded: selId === n.id })),
+                }, clickable(() => setSelId(n.id), { label: t('预览文稿 ', 'Preview ') + n.docTitle, expanded: selId === n.id })),
                   h('div', { className: 'rt-doc-item-title' }, n.code + ' · ' + n.docTitle),
                   h('div', { className: 'rt-doc-item-sub' }, n.name + ' (' + n.statusLabel + ')')))),
               h('div', { className: 'rt-doc-preview' },
@@ -8407,8 +8770,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     type: 'button',
                     className: 'rt-btn',
                     onClick: () => copyWithFeedback(selected.docBody, selected.docTitle, (okFlag, m) => setToast(m)),
-                  }, '复制文稿'),
-                  h('button', { type: 'button', className: 'rt-btn', onClick: () => setMode('p4') }, '返回派生树')),
+                  }, t('复制文稿', 'Copy Doc')),
+                  h('button', { type: 'button', className: 'rt-btn', onClick: () => setMode('p4') }, t('返回派生树', 'Back to Tree'))),
                 h(Markdown, { className: 'rt-markdown', text: selected.docBody })))
           : null)
     }
@@ -8476,6 +8839,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function OverviewTab(props) {
+      useLocale()
       const eng = props.engagement
       const engName = props.engagementName || eng
       const snapshot = props.snapshot
@@ -8511,7 +8875,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         ]).then(([ag, dg]) => {
           if (mySeq !== loadSeq.current) return
           if (!ag || ag.ok === false) {
-            setErr((ag && ag.error) || '读取工作台状态失败')
+            setErr((ag && ag.error) || t('读取工作台状态失败', 'Failed to read workspace status'))
             return
           }
           setAgents(ag)
@@ -8555,7 +8919,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
       const cleanSessionTitle = (props.sessionTitle && !isRawUuidName(props.sessionTitle) ? props.sessionTitle : null)
         || (currentSess.title && !isRawUuidName(currentSess.title) ? currentSess.title : null)
-        || (activeSid ? ('会话 ' + String(activeSid).slice(0, 8)) : '当前新会话')
+        || (activeSid ? (t('会话 ', 'Session ') + String(activeSid).slice(0, 8)) : t('当前新会话', 'New Session'))
 
       if (!eng) {
         const sState = props.sessionState || null
@@ -8566,22 +8930,22 @@ body[data-ds-dark-theme] .rt-anim-complete{
             h('div', { className: 'rt-bento-stack rt-bento-workspace' },
               h('section', { className: 'rt-card rt-ov-standby-card' },
                 h('div', { className: 'rt-ov-standby-badge-row' },
-                  h('span', { className: 'rt-tag rt-tag-live' }, '独立会话隔离'),
+                  h('span', { className: 'rt-tag rt-tag-live' }, t('独立会话隔离', 'Session Isolated')),
                   h('span', { className: 'rt-mono', style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
-                    '当前会话：' + cleanSessionTitle),
+                    t('当前会话：', 'Session: ') + cleanSessionTitle),
                   sState && sState.cwd
                     ? h('span', { className: 'rt-tag rt-mono' }, sState.cwd)
                     : null),
                 h('div', { className: 'rt-ov-standby-title' },
-                  cleanSessionTitle + ' · 未绑定工作台'),
+                  cleanSessionTitle + t(' · 未绑定工作台', ' · Unbound Workspace')),
                 h('div', { className: 'rt-ov-standby-sub' },
-                  '0 运行中智能体 · 0 已拆解模块 · 每个会话拥有专属 1:1 隔离工作台。'),
+                  t('0 运行中智能体 · 0 已拆解模块 · 每个会话拥有专属 1:1 隔离工作台。', '0 running agents · 0 shards · Each session gets an isolated 1:1 workspace.')),
                 h('div', { className: 'rt-ov-standby-actions' },
                   h('button', {
                     type: 'button',
                     className: 'rt-btn rt-btn-primary',
                     onClick: () => onGo('collab'),
-                  }, '前往「协同与审批」初始化'),
+                  }, t('前往「协同与审批」初始化', 'Initialize in Collab & Approval')),
                   isDismissed && !hasConv
                     ? h('button', {
                         type: 'button',
@@ -8591,7 +8955,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                           if (typeof props.onReopenOnboarding === 'function') props.onReopenOnboarding()
                           onGo('collab')
                         },
-                      }, '重新获取初始化指引')
+                      }, t('重新获取初始化指引', 'Reopen Setup Guide'))
                     : null)))))
       }
 
@@ -8610,6 +8974,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
         : ((agents && Array.isArray(agents.shard_locks)) ? agents.shard_locks : [])
       const pgProbe = (agents && agents.pg_probe) || (dagData && dagData.pg_probe) || null
       const pgWorkerTaskCount = (pgProbe && pgProbe.row_counts && Number(pgProbe.row_counts.worker_tasks)) || 0
+      const budgetGuard = (dagData && dagData.budgetGuard)
+        || (agents && agents.budgetGuard)
+        || (snapshot && snapshot.budgetGuard)
+        || null
+      const perfMetrics = (dagData && dagData.perfMetrics)
+        || (agents && agents.perfMetrics)
+        || (snapshot && snapshot.perfMetrics)
+        || null
 
       const totalDispatchedSubagents = netChildren.length
         || dagTasks.length
@@ -8634,13 +9006,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
         : ((activeHostSess && activeHostSess.steps > 0) ? activeHostSess.steps : (Number(stats.steps) || 0))
       const realSpeedLabel = domTel.speedLabel !== '0 tok/s'
         ? domTel.speedLabel
-        : ((activeHostSess && activeHostSess.speedLabel) ? activeHostSess.speedLabel : (realTokens > 0 ? '实时采样' : '0 tok/s'))
+        : ((activeHostSess && activeHostSess.speedLabel) ? activeHostSess.speedLabel : (realTokens > 0 ? t('实时采样', 'Live') : '0 tok/s'))
       const cacheHitPct = domTel.cacheHitPct > 0
         ? domTel.cacheHitPct
         : (activeHostSess && Number(activeHostSess.cacheHitPct) ? Number(activeHostSess.cacheHitPct) : 0)
       const realCacheShort = domTel.cacheLabel && domTel.cacheLabel !== '待命'
-        ? domTel.cacheLabel
-        : (cacheHitPct > 0 ? ('缓存 ' + cacheHitPct + '%') : '缓存待命')
+        ? (getLocale() === 'en-US' ? (cacheHitPct > 0 ? ('Cache ' + cacheHitPct + '%') : 'Cache Idle') : domTel.cacheLabel)
+        : (cacheHitPct > 0 ? (t('缓存 ', 'Cache ') + cacheHitPct + '%') : t('缓存待命', 'Cache Idle'))
 
       const ctxUsedNum = domTel.contextUsedLabel
         ? parseTokNum(domTel.contextUsedLabel)
@@ -8657,9 +9029,9 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const inputTok = parseTokNum(domTel.inputLabel)
       const outputTok = parseTokNum(domTel.outputLabel)
       const reasonTok = parseTokNum(domTel.reasoningLabel)
-      const costText = domTel.costLabel || (activeHostSess && activeHostSess.costLabel) || '暂无'
+      const costText = domTel.costLabel || (activeHostSess && activeHostSess.costLabel) || t('暂无', 'N/A')
 
-      const doneTasks = dagTasks.filter((t) => t.status === 'done' || t.status === 'approved' || t.status === 'completed').length
+      const doneTasks = dagTasks.filter((tItem) => tItem.status === 'done' || tItem.status === 'approved' || tItem.status === 'completed').length
       const pendingCount = typeof countPendingApprovals === 'function' ? countPendingApprovals(snapshot, dagData) : 0
       const realPgWrites = (pgProbe && typeof pgProbe.total_writes === 'number')
         ? pgProbe.total_writes
@@ -8671,6 +9043,22 @@ body[data-ds-dark-theme] .rt-anim-complete{
         || cleanSessionTitle
         || engName
 
+      const pm = perfMetrics && typeof perfMetrics === 'object' ? perfMetrics : {}
+      const digestCompPctText = Number.isFinite(Number(pm.digestCompressionRatioPct))
+        ? (Number(pm.digestCompressionRatioPct) + '%')
+        : (pgProbe && typeof pgProbe.compression_ratio_pct === 'number'
+          ? (pgProbe.compression_ratio_pct + '%')
+          : t('暂无', 'N/A'))
+      const parallelEffText = Number.isFinite(Number(pm.parallelismEfficiencyPct))
+        ? (Number(pm.parallelismEfficiencyPct) + '%')
+        : (max > 0 ? Math.round((activeSlots / max) * 100) + '%' : t('暂无', 'N/A'))
+      const schemaTokenSavedText = Number.isFinite(Number(pm.schemaTokenSavedEstimate))
+        ? (fmtTokNum(Number(pm.schemaTokenSavedEstimate)) + ' tok')
+        : t('暂无', 'N/A')
+      const scopeComplianceText = Number.isFinite(Number(pm.scopeCompliancePct))
+        ? (Number(pm.scopeCompliancePct) + '%')
+        : t('暂无', 'N/A')
+
       const toggleCard = (key) => {
         setExpandedKey((prev) => (prev === key ? null : key))
       }
@@ -8678,44 +9066,44 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const kpiCards = [
         {
           key: 'comms',
-          label: '沟通与执行',
-          val: realRounds + ' 轮 · ' + realSteps + ' 步',
-          sub: '输出速度 ' + realSpeedLabel,
+          label: t('沟通与执行', 'Execution'),
+          val: t(realRounds + ' 轮 · ' + realSteps + ' 步', realRounds + ' rounds · ' + realSteps + ' steps'),
+          sub: t('输出速度 ', 'Throughput ') + realSpeedLabel,
           segments: [
-            { label: '模型输入', value: Math.max(inputTok, realRounds > 0 ? 60 : 0), color: '#4d6bfe' },
-            { label: '模型输出', value: Math.max(outputTok, realSteps > 0 ? 25 : 0), color: '#0ea5e9' },
-            { label: '思考推理', value: reasonTok, color: '#8b5cf6' },
+            { label: t('模型输入', 'Input'), value: Math.max(inputTok, realRounds > 0 ? 60 : 0), color: '#4d6bfe' },
+            { label: t('模型输出', 'Output'), value: Math.max(outputTok, realSteps > 0 ? 25 : 0), color: '#0ea5e9' },
+            { label: t('思考推理', 'Reasoning'), value: reasonTok, color: '#8b5cf6' },
           ],
         },
         {
           key: 'cluster',
-          label: '并发集群',
-          val: activeSlots + '/' + max + ' 槽',
+          label: t('并发集群', 'Concurrency'),
+          val: t(activeSlots + '/' + max + ' 槽', activeSlots + '/' + max + ' slots'),
           accent: true,
-          sub: '累计调度 ' + totalDispatchedSubagents + ' 个子代理',
+          sub: t('累计调度 ' + totalDispatchedSubagents + ' 个子代理', totalDispatchedSubagents + ' subagents dispatched'),
           segments: [
-            { label: '运行中槽位', value: activeSlots, color: '#4d6bfe' },
-            { label: '空闲可用槽位', value: Math.max(0, max - activeSlots), color: '#cbd5e1' },
+            { label: t('运行中槽位', 'Active Slots'), value: activeSlots, color: '#4d6bfe' },
+            { label: t('空闲可用槽位', 'Idle Slots'), value: Math.max(0, max - activeSlots), color: '#cbd5e1' },
           ],
         },
         {
           key: 'context',
-          label: '上下文与缓存',
+          label: t('上下文与缓存', 'Context & Cache'),
           val: ctxShort + ' · ' + realCacheShort,
-          sub: '总计 ' + realTokenLabel + ' tok · 费用 ' + costText,
+          sub: t('总计 ' + realTokenLabel + ' tok · 费用 ' + costText, 'Total ' + realTokenLabel + ' tok · Cost ' + costText),
           segments: [
-            { label: '缓存命中', value: cacheHitPct > 0 ? cacheHitPct : (realTokens > 0 ? 50 : 0), color: '#10b981' },
-            { label: '非缓存输入', value: cacheHitPct > 0 ? Math.max(0, 100 - cacheHitPct) : (realTokens > 0 ? 50 : 0), color: '#4d6bfe' },
+            { label: t('缓存命中', 'Cache Hit'), value: cacheHitPct > 0 ? cacheHitPct : (realTokens > 0 ? 50 : 0), color: '#10b981' },
+            { label: t('非缓存输入', 'Uncached'), value: cacheHitPct > 0 ? Math.max(0, 100 - cacheHitPct) : (realTokens > 0 ? 50 : 0), color: '#4d6bfe' },
           ],
         },
         {
           key: 'delivery',
-          label: '交付进度',
-          val: dagTasks.length > 0 ? (doneTasks + '/' + dagTasks.length + ' 分片') : '待立项拆解',
-          sub: '已提交摘要 ' + dagDigests.length + ' 份 · 排他锁 ' + shardLocks.length + ' 项',
+          label: t('交付进度', 'Delivery'),
+          val: dagTasks.length > 0 ? t(doneTasks + '/' + dagTasks.length + ' 分片', doneTasks + '/' + dagTasks.length + ' shards') : t('待立项拆解', 'Pending Launch'),
+          sub: t('已提交摘要 ' + dagDigests.length + ' 份 · 排他锁 ' + shardLocks.length + ' 项', dagDigests.length + ' digests · ' + shardLocks.length + ' locks'),
           segments: [
-            { label: '已完成分片', value: doneTasks, color: '#10b981' },
-            { label: '推进中/待审', value: Math.max(0, dagTasks.length - doneTasks), color: '#f59e0b' },
+            { label: t('已完成分片', 'Completed'), value: doneTasks, color: '#10b981' },
+            { label: t('推进中/待审', 'In Progress / Pending'), value: Math.max(0, dagTasks.length - doneTasks), color: '#f59e0b' },
           ],
         },
       ]
@@ -8723,7 +9111,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const renderDetailDrawer = () => {
         if (!expandedKey) return null
         const detailMeta = kpiCards.find((c) => c.key === expandedKey)
-        const titleText = detailMeta ? detailMeta.label + ' · 详细分析表' : '详细视图'
+        const titleText = detailMeta ? detailMeta.label + t(' · 详细分析表', ' · Breakdown') : t('详细视图', 'Details')
 
         let bodyNode = null
 
@@ -8731,34 +9119,34 @@ body[data-ds-dark-theme] .rt-anim-complete{
           const msgs = (sessionDetail && Array.isArray(sessionDetail.messages)) ? sessionDetail.messages : []
           const recentSteps = msgs.slice(-8).reverse()
           const segs = [
-            { label: '输入 Token', value: inputTok, display: domTel.inputLabel || '0', color: '#4d6bfe' },
-            { label: '输出 Token', value: outputTok, display: domTel.outputLabel || '0', color: '#0ea5e9' },
-            { label: '推理 Token', value: reasonTok, display: domTel.reasoningLabel || '0', color: '#8b5cf6' },
-            { label: '缓存命中率', value: Math.round(cacheHitPct * 10), display: cacheHitPct ? (cacheHitPct + '%') : '待命', color: '#10b981' },
+            { label: t('输入 Token', 'Input Tokens'), value: inputTok, display: domTel.inputLabel || '0', color: '#4d6bfe' },
+            { label: t('输出 Token', 'Output Tokens'), value: outputTok, display: domTel.outputLabel || '0', color: '#0ea5e9' },
+            { label: t('推理 Token', 'Reasoning Tokens'), value: reasonTok, display: domTel.reasoningLabel || '0', color: '#8b5cf6' },
+            { label: t('缓存命中率', 'Cache Hit'), value: Math.round(cacheHitPct * 10), display: cacheHitPct ? (cacheHitPct + '%') : t('待命', 'Idle'), color: '#10b981' },
           ]
           bodyNode = h('div', { className: 'rt-ov-detail-grid' },
             h('div', { className: 'rt-ov-detail-card' },
               h('div', { className: 'rt-ov-detail-card-head' },
-                h('span', null, '对话与吞吐统计'),
+                h('span', null, t('对话与吞吐统计', 'Dialogue & Throughput')),
                 h('span', { className: 'rt-mono', style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, realSpeedLabel)),
               h('div', { className: 'rt-ov-stat-tiles' },
                 h('div', { className: 'rt-ov-stat-tile' },
                   h('div', { className: 'rt-ov-stat-tile-val' }, String(realRounds)),
-                  h('div', { className: 'rt-ov-stat-tile-lbl' }, '轮次')),
+                  h('div', { className: 'rt-ov-stat-tile-lbl' }, t('轮次', 'Rounds'))),
                 h('div', { className: 'rt-ov-stat-tile' },
                   h('div', { className: 'rt-ov-stat-tile-val' }, String(realSteps)),
-                  h('div', { className: 'rt-ov-stat-tile-lbl' }, '步数')),
+                  h('div', { className: 'rt-ov-stat-tile-lbl' }, t('步数', 'Steps'))),
                 h('div', { className: 'rt-ov-stat-tile' },
                   h('div', { className: 'rt-ov-stat-tile-val' }, String(netChildren.length || domTel.subagentCount || 0)),
-                  h('div', { className: 'rt-ov-stat-tile-lbl' }, '子代理')),
+                  h('div', { className: 'rt-ov-stat-tile-lbl' }, t('子代理', 'Subagents'))),
                 h('div', { className: 'rt-ov-stat-tile' },
                   h('div', { className: 'rt-ov-stat-tile-val' }, realTokenLabel),
-                  h('div', { className: 'rt-ov-stat-tile-lbl' }, '总 Token'))),
+                  h('div', { className: 'rt-ov-stat-tile-lbl' }, t('总 Token', 'Total Tokens')))),
               h('div', { className: 'rt-ov-donut-wrap' },
                 h(RtMiniDonut, {
                   segments: segs.slice(0, 3),
                   centerMain: realTokenLabel,
-                  centerSub: '总用量',
+                  centerSub: t('总用量', 'Total'),
                 }),
                 h('div', { className: 'rt-ov-legend-grid' },
                   segs.map((s) => h('div', { key: s.label, className: 'rt-ov-legend-row' },
@@ -8768,15 +9156,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     h('span', { className: 'rt-ov-legend-val rt-mono' }, s.display)))))),
             h('div', { className: 'rt-ov-detail-card' },
               h('div', { className: 'rt-ov-detail-card-head' },
-                h('span', null, '最近会话轮步明细'),
-                detailLoading ? h('span', { className: 'rt-tag' }, '加载中…') : null),
+                h('span', null, t('最近会话轮步明细', 'Recent Session Steps')),
+                detailLoading ? h('span', { className: 'rt-tag' }, t('加载中…', 'Loading...')) : null),
               h('div', { className: 'rt-ov-table-wrap' },
                 h('table', { className: 'rt-ov-table' },
                   h('thead', null,
                     h('tr', null,
-                      h('th', null, '角色'),
-                      h('th', null, '摘要内容'),
-                      h('th', null, '时间'))),
+                      h('th', null, t('角色', 'Role')),
+                      h('th', null, t('摘要内容', 'Summary')),
+                      h('th', null, t('时间', 'Time')))),
                   h('tbody', null,
                     recentSteps.length > 0
                       ? recentSteps.map((m, idx) => h('tr', { key: 'msg-' + idx },
@@ -8785,22 +9173,35 @@ body[data-ds-dark-theme] .rt-anim-complete{
                           h('td', { className: 'rt-mono' }, m.at ? String(m.at).slice(11, 19) : '—')))
                       : h('tr', null,
                           h('td', { colSpan: 3, style: { color: 'var(--dsw-alias-label-secondary)', textAlign: 'center', padding: '14px' } },
-                            '暂无可展示的轮步事件，发送对话或启动子代理后将自动同步明细。')))))))
+                            t('暂无可展示的轮步事件，发送对话或启动子代理后将自动同步明细。', 'No step events yet. Details sync automatically once conversation or subagents start.'))))))))
         } else if (expandedKey === 'cluster') {
           const allWorkers = dagTasks.length > 0 ? dagTasks : netChildren
           bodyNode = h('div', { className: 'rt-ov-detail-card' },
             h('div', { className: 'rt-ov-detail-card-head' },
-              h('span', null, '并发槽位与子代理任务明细表（' + activeSlots + '/' + max + ' 槽占用）'),
+              h('span', null, t('并发槽位与子代理任务明细表（' + activeSlots + '/' + max + ' 槽占用）', 'Concurrency Slots & Worker Tasks (' + activeSlots + '/' + max + ' active)')),
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 style: { padding: '2px 9px', fontSize: 11 },
                 onClick: () => onGo('agents'),
-              }, '前往「集群」完整视图 →')),
+              }, t('前往「集群」完整视图 →', 'Full Cluster View →'))),
+            h('div', { className: 'rt-ov-stat-tiles', style: { marginBottom: 8 } },
+              h('div', { className: 'rt-ov-stat-tile' },
+                h('div', { className: 'rt-ov-stat-tile-val' }, parallelEffText),
+                h('div', { className: 'rt-ov-stat-tile-lbl' }, t('并行效率', 'Parallel Efficiency'))),
+              h('div', { className: 'rt-ov-stat-tile' },
+                h('div', { className: 'rt-ov-stat-tile-val' }, digestCompPctText),
+                h('div', { className: 'rt-ov-stat-tile-lbl' }, t('摘要压缩率', 'Digest Compression'))),
+              h('div', { className: 'rt-ov-stat-tile' },
+                h('div', { className: 'rt-ov-stat-tile-val' }, schemaTokenSavedText),
+                h('div', { className: 'rt-ov-stat-tile-lbl' }, t('Schema 节省 Token', 'Schema Token Saved'))),
+              h('div', { className: 'rt-ov-stat-tile' },
+                h('div', { className: 'rt-ov-stat-tile-val' }, scopeComplianceText),
+                h('div', { className: 'rt-ov-stat-tile-lbl' }, t('分片合规率', 'Scope Compliance')))),
             h(RtStackedBar, {
               segments: [
-                { label: '活跃槽位', value: activeSlots, display: activeSlots + ' 槽', color: '#4d6bfe' },
-                { label: '空闲槽位', value: Math.max(0, max - activeSlots), display: Math.max(0, max - activeSlots) + ' 槽', color: '#e2e8f0' },
+                { label: t('活跃槽位', 'Active Slots'), value: activeSlots, display: activeSlots + t(' 槽', ' slots'), color: '#4d6bfe' },
+                { label: t('空闲槽位', 'Idle Slots'), value: Math.max(0, max - activeSlots), display: Math.max(0, max - activeSlots) + t(' 槽', ' slots'), color: '#e2e8f0' },
               ],
             }),
             h('div', { className: 'rt-ov-table-wrap' },
@@ -8808,10 +9209,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 h('thead', null,
                   h('tr', null,
                     h('th', null, 'Wave'),
-                    h('th', null, '角色'),
-                    h('th', null, '任务标题 / 目标'),
-                    h('th', null, '状态'),
-                    h('th', null, '独占文件分片'))),
+                    h('th', null, t('角色', 'Role')),
+                    h('th', null, t('任务标题 / 目标', 'Task Title / Goal')),
+                    h('th', null, t('状态', 'Status')),
+                    h('th', null, t('独占文件分片', 'Owned Files')))),
                 h('tbody', null,
                   allWorkers.length > 0
                     ? allWorkers.slice(0, 12).map((w, idx) => h('tr', { key: 'wk-' + idx },
@@ -8824,26 +9225,23 @@ body[data-ds-dark-theme] .rt-anim-complete{
                           : '—')))
                     : h('tr', null,
                         h('td', { colSpan: 5, style: { color: 'var(--dsw-alias-label-secondary)', textAlign: 'center', padding: '14px' } },
-                          '当前工作台尚未派发子代理，前往「协同与审批」立项后将展示并发分片明细。'))))))
+                          t('当前工作台尚未派发子代理，前往「协同与审批」立项后将展示并发分片明细。', 'No subagents dispatched yet. Launch in "Collab & Approval" to view shards.')))))))
         } else if (expandedKey === 'context') {
           const nonCachePct = cacheHitPct > 0 ? Math.max(0, Number((100 - cacheHitPct).toFixed(1))) : 0
           const ctxSegments = [
-            { label: '输入 Token', value: inputTok || (ctxUsedNum > 0 ? Math.round(ctxUsedNum * 0.7) : 0), display: domTel.inputLabel || (ctxUsedNum > 0 ? fmtTokNum(ctxUsedNum) : '暂无采样'), color: '#4d6bfe' },
-            { label: '输出 Token', value: outputTok, display: domTel.outputLabel || '0', color: '#0ea5e9' },
-            { label: '推理 Token', value: reasonTok, display: domTel.reasoningLabel || '0', color: '#8b5cf6' },
-            { label: '剩余可用窗口', value: Math.max(0, ctxMaxNum - ctxUsedNum), display: ctxMaxNum > ctxUsedNum ? fmtTokNum(ctxMaxNum - ctxUsedNum) : '0', color: '#e2e8f0' },
+            { label: t('输入 Token', 'Input Tokens'), value: inputTok || (ctxUsedNum > 0 ? Math.round(ctxUsedNum * 0.7) : 0), display: domTel.inputLabel || (ctxUsedNum > 0 ? fmtTokNum(ctxUsedNum) : t('暂无采样', 'N/A')), color: '#4d6bfe' },
+            { label: t('输出 Token', 'Output Tokens'), value: outputTok, display: domTel.outputLabel || '0', color: '#0ea5e9' },
+            { label: t('推理 Token', 'Reasoning Tokens'), value: reasonTok, display: domTel.reasoningLabel || '0', color: '#8b5cf6' },
+            { label: t('剩余可用窗口', 'Remaining Window'), value: Math.max(0, ctxMaxNum - ctxUsedNum), display: ctxMaxNum > ctxUsedNum ? fmtTokNum(ctxMaxNum - ctxUsedNum) : '0', color: '#e2e8f0' },
           ]
           const cacheSegments = [
-            { label: '缓存命中率', value: cacheHitPct, display: cacheHitPct ? (cacheHitPct + '%') : '待命', color: '#10b981' },
-            { label: '非缓存输入', value: nonCachePct, display: nonCachePct ? (nonCachePct + '%') : '—', color: '#4d6bfe' },
+            { label: t('缓存命中率', 'Cache Hit Rate'), value: cacheHitPct, display: cacheHitPct ? (cacheHitPct + '%') : t('待命', 'Idle'), color: '#10b981' },
+            { label: t('非缓存输入', 'Uncached Input'), value: nonCachePct, display: nonCachePct ? (nonCachePct + '%') : '—', color: '#4d6bfe' },
           ]
-          const savedPct = pgProbe && typeof pgProbe.compression_ratio_pct === 'number'
-            ? pgProbe.compression_ratio_pct + '%'
-            : '暂无'
           bodyNode = h('div', { className: 'rt-ov-detail-grid' },
             h('div', { className: 'rt-ov-detail-card' },
               h('div', { className: 'rt-ov-detail-card-head' },
-                h('span', null, '当前上下文窗口构成'),
+                h('span', null, t('当前上下文窗口构成', 'Current Context Window Breakdown')),
                 h('span', { className: 'rt-mono', style: { fontSize: 11.5 } }, ctxShort + ' (' + ctxPctLabel + ')')),
               h(RtStackedBar, { segments: ctxSegments }),
               h('div', { className: 'rt-ov-legend-grid' },
@@ -8856,23 +9254,29 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 h('table', { className: 'rt-ov-table' },
                   h('tbody', null,
                     h('tr', null,
-                      h('td', null, '会话总消耗 Token'),
+                      h('td', null, t('会话总消耗 Token', 'Total Session Tokens')),
                       h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, realTokenLabel)),
                     h('tr', null,
-                      h('td', null, '参考费用（宿主实时采样）'),
+                      h('td', null, t('参考费用（宿主实时采样）', 'Estimated Cost (Live)')),
                       h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, costText)),
                     h('tr', null,
-                      h('td', null, 'Worker 摘要压缩率'),
-                      h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, savedPct)))))),
+                      h('td', null, t('Worker 摘要压缩率', 'Digest Compression Ratio')),
+                      h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, digestCompPctText)),
+                    h('tr', null,
+                      h('td', null, t('Schema 预估节省 Token', 'Schema Token Saved Est.')),
+                      h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, schemaTokenSavedText)),
+                    h('tr', null,
+                      h('td', null, t('并行效率 / 分片合规率', 'Parallel Efficiency / Scope Compliance')),
+                      h('td', { className: 'rt-mono', style: { textAlign: 'right', fontWeight: 700 } }, parallelEffText + ' · ' + scopeComplianceText)))))),
             h('div', { className: 'rt-ov-detail-card' },
               h('div', { className: 'rt-ov-detail-card-head' },
-                h('span', null, '缓存读取与输入比例'),
+                h('span', null, t('缓存读取与输入比例', 'Cache Read & Input Ratio')),
                 h('span', { className: 'rt-tag' }, realCacheShort)),
               h('div', { className: 'rt-ov-donut-wrap' },
                 h(RtMiniDonut, {
                   segments: cacheSegments,
-                  centerMain: cacheHitPct ? (cacheHitPct + '%') : '待命',
-                  centerSub: '缓存命中',
+                  centerMain: cacheHitPct ? (cacheHitPct + '%') : t('待命', 'Idle'),
+                  centerSub: t('缓存命中', 'Cache Hit'),
                 }),
                 h('div', { className: 'rt-ov-legend-grid' },
                   cacheSegments.map((s) => h('div', { key: s.label, className: 'rt-ov-legend-row' },
@@ -8884,50 +9288,50 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 h('table', { className: 'rt-ov-table' },
                   h('thead', null,
                     h('tr', null,
-                      h('th', null, '主机/子会话'),
-                      h('th', null, '模型'),
+                      h('th', null, t('主机/子会话', 'Session')),
+                      h('th', null, t('模型', 'Model')),
                       h('th', null, 'Token'))),
                   h('tbody', null,
                     hostSessions.length > 0
                       ? hostSessions.slice(0, 4).map((hs, idx) => h('tr', { key: 'hs-' + idx },
-                          h('td', null, String(hs.title || hs.id || '主会话').slice(0, 28)),
+                          h('td', null, String(hs.title || hs.id || t('主会话', 'Main Session')).slice(0, 28)),
                           h('td', { className: 'rt-mono' }, String(hs.model || '—').slice(0, 24)),
                           h('td', { className: 'rt-mono' }, fmtTokNum(hs.tokens || 0))))
                       : h('tr', null,
                           h('td', { colSpan: 3, style: { color: 'var(--dsw-alias-label-secondary)', textAlign: 'center', padding: '12px' } },
-                            '当前以本地 DOM 遥测为主，无多会话 Token 列表。')))))))
+                            t('当前以本地 DOM 遥测为主，无多会话 Token 列表。', 'Using live local DOM telemetry; no multi-session token list.'))))))))
         } else if (expandedKey === 'delivery') {
           const waveDefs = [
-            { wave: 1, name: 'Wave 1 · 立项与测绘', color: '#4d6bfe' },
-            { wave: 2, name: 'Wave 2 · 架构与分片', color: '#8b5cf6' },
-            { wave: 3, name: 'Wave 3 · 并发构建', color: '#0ea5e9' },
-            { wave: 4, name: 'Wave 4 · 审查与交付', color: '#10b981' },
+            { wave: 1, name: t('Wave 1 · 立项与测绘', 'Wave 1 · Discovery'), color: '#4d6bfe' },
+            { wave: 2, name: t('Wave 2 · 架构与分片', 'Wave 2 · Architecture'), color: '#8b5cf6' },
+            { wave: 3, name: t('Wave 3 · 并发构建', 'Wave 3 · Parallel Build'), color: '#0ea5e9' },
+            { wave: 4, name: t('Wave 4 · 审查与交付', 'Wave 4 · Review & Ship'), color: '#10b981' },
           ]
           bodyNode = h('div', { className: 'rt-ov-detail-card' },
             h('div', { className: 'rt-ov-detail-card-head' },
-              h('span', null, '4-Wave 工程交付进度与摘要明细'),
+              h('span', null, t('4-Wave 工程交付进度与摘要明细', '4-Wave Delivery Progress & Digests')),
               h('div', { style: { display: 'inline-flex', gap: 6, flexWrap: 'wrap' } },
-                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('collab') }, '协同与审批'),
-                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('assets') }, '架构模块'),
-                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('findings') }, '质量审查'),
-                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('report') }, '交付报告'))),
+                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('collab') }, t('协同与审批', 'Collab & Approval')),
+                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('assets') }, t('架构模块', 'Architecture')),
+                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('findings') }, t('质量审查', 'Quality')),
+                h('button', { type: 'button', className: 'rt-btn', style: { padding: '2px 9px', fontSize: 11 }, onClick: () => onGo('report') }, t('交付报告', 'Report')))),
             h('div', { className: 'rt-ov-wave-strip' },
               waveDefs.map((wd) => {
-                const wTasks = dagTasks.filter((t) => Number(t.wave || t.wave_no || 1) === wd.wave)
-                const wDone = wTasks.filter((t) => t.status === 'done' || t.status === 'approved' || t.status === 'completed').length
+                const wTasks = dagTasks.filter((tItem) => Number(tItem.wave || tItem.wave_no || 1) === wd.wave)
+                const wDone = wTasks.filter((tItem) => tItem.status === 'done' || tItem.status === 'approved' || tItem.status === 'completed').length
                 return h('div', { key: 'wd-' + wd.wave, className: 'rt-ov-wave-cell', style: { borderTop: '3px solid ' + wd.color } },
                   h('div', { style: { fontSize: 11.5, fontWeight: 700 } }, wd.name),
                   h('div', { className: 'rt-mono', style: { fontSize: 12, fontWeight: 700, color: wd.color } },
-                    wTasks.length > 0 ? (wDone + '/' + wTasks.length + ' 完成') : '0 分片'))
+                    wTasks.length > 0 ? t(wDone + '/' + wTasks.length + ' 完成', wDone + '/' + wTasks.length + ' done') : t('0 分片', '0 shards')))
               })),
             h('div', { className: 'rt-ov-table-wrap' },
               h('table', { className: 'rt-ov-table' },
                 h('thead', null,
                   h('tr', null,
-                    h('th', null, '角色'),
-                    h('th', null, '已提交摘要（worker_digests）'),
-                    h('th', null, '变更文件'),
-                    h('th', null, '审批状态'))),
+                    h('th', null, t('角色', 'Role')),
+                    h('th', null, t('已提交摘要（worker_digests）', 'Submitted Digest (worker_digests)')),
+                    h('th', null, t('变更文件', 'Files Touched')),
+                    h('th', null, t('审批状态', 'Approval')))),
                 h('tbody', null,
                   dagDigests.length > 0
                     ? dagDigests.slice(0, 10).map((d, idx) => h('tr', { key: 'dg-' + idx },
@@ -8936,10 +9340,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
                         h('td', { className: 'rt-mono' }, Array.isArray(d.files_touched) && d.files_touched.length > 0
                           ? d.files_touched.slice(0, 2).join(', ')
                           : '—'),
-                        h('td', null, d.approved ? '已审批' : '待审批')))
+                        h('td', null, d.approved ? t('已审批', 'Approved') : t('待审批', 'Pending'))))
                     : h('tr', null,
                         h('td', { colSpan: 4, style: { color: 'var(--dsw-alias-label-secondary)', textAlign: 'center', padding: '14px' } },
-                          '尚未收到 Worker 提交的执行摘要。'))))))
+                          t('尚未收到 Worker 提交的执行摘要。', 'No worker digests submitted yet.')))))))
         }
 
         return h('section', { className: 'rt-ov-detail-drawer', 'data-detail-key': expandedKey },
@@ -8953,42 +9357,68 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 className: 'rt-btn',
                 style: { padding: '2px 9px', fontSize: 11 },
                 onClick: () => setLocalRefresh((x) => x + 1),
-              }, '刷新'),
+              }, t('刷新', 'Refresh')),
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 style: { padding: '2px 9px', fontSize: 11 },
                 onClick: () => setExpandedKey(null),
-              }, '收起 ▴'))),
+              }, t('收起 ▴', 'Collapse ▴')))),
           bodyNode)
       }
+
+      const showBudgetBanner = Boolean(budgetGuard && (budgetGuard.warnNearLimit || budgetGuard.tripped))
 
       return h('div', { className: 'rt-main rt-ov' },
         err ? h('div', { className: 'rt-err', style: { margin: '0 16px 8px' } }, err) : null,
         h('div', { className: 'rt-ov-scroll' },
           h('div', { className: 'rt-bento-stack rt-bento-workspace' },
 
+            showBudgetBanner
+              ? h('div', {
+                  className: 'rt-ov-action-banner rt-budget-guard-banner ' + (budgetGuard.tripped ? 'is-tripped' : 'is-warn'),
+                  role: 'alert',
+                  style: {
+                    border: '1px solid ' + (budgetGuard.tripped ? 'rgba(239,68,68,0.55)' : 'rgba(245,158,11,0.55)'),
+                    background: budgetGuard.tripped ? 'rgba(239,68,68,0.09)' : 'rgba(245,158,11,0.09)',
+                    color: budgetGuard.tripped ? '#ef4444' : '#b45309',
+                  },
+                },
+                  h('span', { style: { fontWeight: 700 } },
+                    (budgetGuard.tripped
+                      ? t('预算熔断已触发：已暂停自动派发新分片。', 'Budget Circuit Breaker Tripped: auto-dispatch paused.')
+                      : t('预算接近上限预警：当前工作区消耗接近设定上限。', 'Budget Warning: workspace consumption is nearing configured limit.'))
+                    + (budgetGuard.reason ? (' ' + String(budgetGuard.reason)) : '')),
+                  h('div', { className: 'rt-spacer' }),
+                  h('button', {
+                    type: 'button',
+                    className: 'rt-btn' + (budgetGuard.tripped ? ' rt-btn-primary' : ''),
+                    style: { padding: '3px 10px', fontSize: 11.5, fontWeight: 700 },
+                    onClick: () => onGo('settings'),
+                  }, t('前往设置调整预算 →', 'Adjust Budget in Settings →')))
+              : null,
+
             pendingCount > 0
               ? h('div', { className: 'rt-ov-action-banner is-pending' },
                   h('span', { style: { fontWeight: 700 } },
-                    pendingCount + ' 项分片产出待验收审批'),
+                    t(pendingCount + ' 项分片产出待验收审批', pendingCount + ' shard output(s) awaiting approval')),
                   h('div', { className: 'rt-spacer' }),
                   h('button', {
                     type: 'button',
                     className: 'rt-btn rt-btn-primary',
                     style: { padding: '3px 10px', fontSize: 11.5, fontWeight: 700 },
                     onClick: () => onGo('collab'),
-                  }, '前往「协同与审批」'))
+                  }, t('前往「协同与审批」', 'Go to Collab & Approval')))
               : (!hasActiveWork
                   ? h('div', { className: 'rt-ov-action-banner is-empty' },
-                      h('span', null, '当前工作台尚无研发任务，可前往「协同与审批」澄清需求并立项。'),
+                      h('span', null, t('当前工作台尚无研发任务，可前往「协同与审批」澄清需求并立项。', 'No active tasks in this workspace yet. Launch from "Collab & Approval".')),
                       h('div', { className: 'rt-spacer' }),
                       h('button', {
                         type: 'button',
                         className: 'rt-btn rt-btn-primary',
                         style: { padding: '3px 10px', fontSize: 11.5, fontWeight: 700 },
                         onClick: () => onGo('collab'),
-                      }, '前往「协同与审批」'))
+                      }, t('前往「协同与审批」', 'Go to Collab & Approval')))
                   : null),
 
             h('div', { className: 'rt-ov-kpi-grid' },
@@ -8998,11 +9428,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   key: card.key,
                   className: 'rt-ov-kpi-card is-interactive' + (isOpen ? ' is-expanded' : ''),
                 }, clickable(() => toggleCard(card.key), {
-                  label: (isOpen ? '收起 ' : '展开 ') + card.label + '详细表',
+                  label: (isOpen ? t('收起 ', 'Collapse ') : t('展开 ', 'Expand ')) + card.label + t('详细表', ' Details'),
                 })),
                   h('div', { className: 'rt-ov-kpi-head' },
                     h('span', { className: 'rt-ov-kpi-label' }, card.label),
-                    h('span', { className: 'rt-ov-kpi-toggle' }, isOpen ? '▴ 收起' : '▾ 详表')),
+                    h('span', { className: 'rt-ov-kpi-toggle' }, isOpen ? t('▴ 收起', '▴ Hide') : t('▾ 详表', '▾ Details'))),
                   h('div', { className: 'rt-ov-kpi-val' + (card.accent ? ' accent' : '') }, card.val),
                   h(RtStackedBar, { mini: true, segments: card.segments }),
                   h('div', { className: 'rt-ov-kpi-sub' }, card.sub))
@@ -9030,6 +9460,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
 
     function AssetsTab(props) {
+      useLocale()
       const eng = props.engagement
       const snapshot = props.snapshot
       const refreshKey = props.refreshKey || 0
@@ -9089,7 +9520,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((r) => {
           if (my !== seq.current) return
           if (!r || r.ok === false) {
-            setState({ loading: false, error: (r && r.error) || '查询失败', total: 0, items: [] })
+            setState({ loading: false, error: (r && r.error) || t('查询失败', 'Query failed'), total: 0, items: [] })
             return
           }
           setState({ loading: false, error: null, total: r.total, items: r.items || [] })
@@ -9128,27 +9559,27 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const sideChildren = []
       sideChildren.push(h('div', Object.assign({
         key: 'all', className: 'rt-seg' + (cidr === null && view !== 'testing' ? ' on' : ''),
-      }, clickable(() => { setView('list'); setCidr(null) }, { label: '全部 C 段', expanded: cidr === null && view !== 'testing' })),
-        h('div', { className: 'rt-seg-cidr' }, '全部 C 段'),
-        h('div', { className: 'rt-seg-meta' }, segs.length + ' 个网段')))
+      }, clickable(() => { setView('list'); setCidr(null) }, { label: t('全部 C 段', 'All Groups'), expanded: cidr === null && view !== 'testing' })),
+        h('div', { className: 'rt-seg-cidr' }, t('全部 C 段', 'All Groups')),
+        h('div', { className: 'rt-seg-meta' }, segs.length + t(' 个网段', ' groups'))))
 
       sideChildren.push(h('div', Object.assign({
         key: 'testing', className: 'rt-seg' + (view === 'testing' ? ' on' : ''),
-        title: '正在跑的扫描 / 探测与进度（5 秒自动刷新）',
-      }, clickable(() => { setView('testing'); setCidr(null) }, { label: '当前测试', expanded: view === 'testing' })),
+        title: t('正在跑的扫描 / 探测与进度（5 秒自动刷新）', 'Active checks / probes & progress (auto-refresh every 5s)'),
+      }, clickable(() => { setView('testing'); setCidr(null) }, { label: t('当前测试', 'Active Checks'), expanded: view === 'testing' })),
         h('div', { className: 'rt-seg-cidr', style: { display: 'flex', alignItems: 'baseline', gap: 5 } },
-          h('span', { className: 'rt-scope rt-scope-testing', title: '当前测试（既非内网也非外网）' }, '测'),
-          h('span', { style: { flex: 1 } }, '当前测试')),
-        h('div', { className: 'rt-seg-meta' }, '正在跑的扫描与探测')))
+          h('span', { className: 'rt-scope rt-scope-testing', title: t('当前测试（既非内网也非外网）', 'Active checks (neither internal nor external)') }, t('测', 'RUN')),
+          h('span', { style: { flex: 1 } }, t('当前测试', 'Active Checks'))),
+        h('div', { className: 'rt-seg-meta' }, t('正在跑的扫描与探测', 'Running scans & probes'))))
 
       sideChildren.push(h('div', Object.assign({
         key: 'next', className: 'rt-seg' + (view === 'next' ? ' on' : ''),
-        title: '按待测状态 + 优先级 + 端口数排序，取前 10 个模块',
-      }, clickable(() => { setView('next'); setCidr(null) }, { label: '待验证模块 Top 10', expanded: view === 'next' })),
+        title: t('按待测状态 + 优先级 + 端口数排序，取前 10 个模块', 'Top 10 modules sorted by status + priority + ports'),
+      }, clickable(() => { setView('next'); setCidr(null) }, { label: t('待验证模块 Top 10', 'Top 10 Pending'), expanded: view === 'next' })),
         h('div', { className: 'rt-seg-cidr', style: { display: 'flex', alignItems: 'baseline', gap: 5 } },
-          h('span', { className: 'rt-scope rt-scope-testing', title: '待评估/待测队列' }, '下'),
-          h('span', { style: { flex: 1 } }, '待验证模块 Top 10')),
-        h('div', { className: 'rt-seg-meta' }, '待评估 ' + ((snapshot && snapshot.tests && snapshot.tests.untested) || 0) + ' 个')))
+          h('span', { className: 'rt-scope rt-scope-testing', title: t('待评估/待测队列', 'Pending verification queue') }, t('下', 'NEXT')),
+          h('span', { style: { flex: 1 } }, t('待验证模块 Top 10', 'Top 10 Pending'))),
+        h('div', { className: 'rt-seg-meta' }, t('待评估 ', 'Pending ') + ((snapshot && snapshot.tests && snapshot.tests.untested) || 0) + t(' 个', ''))))
 
       const segBlock = (title, list, kind) => {
         const open = sideCollapse.isOpen('scope:' + kind, false)
@@ -9156,87 +9587,87 @@ body[data-ds-dark-theme] .rt-anim-complete{
         const out = [h('div', {
           key: 'h' + kind, className: 'rt-sidehead rt-sidehead-btn',
           role: 'button', tabIndex: 0, 'aria-expanded': open ? 'true' : 'false',
-          title: (open ? '收起本组' : '展开本组') + '（并切回模块列表）',
+          title: (open ? t('收起本组', 'Collapse group') : t('展开本组', 'Expand group')) + t('（并切回模块列表）', ' (switch back to module list)'),
           onClick: () => { setView('list'); toggle() },
           onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setView('list'); toggle(e) } },
         },
           h('span', { className: 'rt-sec-caret' }, open ? '▾' : '▸'),
-          h('span', { className: 'rt-scope rt-scope-' + kind }, kind === 'internal' ? '内部' : '对外'),
-          h('span', null, title + ' · ' + list.length + ' 个 C 段'),
+          h('span', { className: 'rt-scope rt-scope-' + kind }, kind === 'internal' ? t('内部', 'INT') : t('对外', 'EXT')),
+          h('span', null, title + ' · ' + list.length + t(' 个 C 段', ' groups')),
           h('span', { className: 'rt-spacer' }),
-          h('span', { style: { fontWeight: 400 } }, list.reduce((n, x) => n + (x.assets || 0), 0) + ' 模块'))]
+          h('span', { style: { fontWeight: 400 } }, list.reduce((n, x) => n + (x.assets || 0), 0) + t(' 模块', ' modules')))]
         if (!open) return out
         for (const s of list) {
           out.push(h('div', Object.assign({
             key: s.cidr, className: 'rt-seg' + (cidr === s.cidr ? ' on' : ''),
-            title: (s.org || '未知归属') + ' · 存活 ' + (s.live || 0) + '/' + (s.assets || 0) + ' 个',
+            title: (s.org || t('未知归属', 'Unknown owner')) + t(' · 存活 ', ' · Live ') + (s.live || 0) + '/' + (s.assets || 0) + t(' 个', ''),
           }, clickable(() => { setView('list'); setCidr(s.cidr) },
-            { label: '筛选 C 段 ' + s.cidr, expanded: cidr === s.cidr && view !== 'testing' })),
+            { label: t('筛选 C 段 ', 'Filter group ') + s.cidr, expanded: cidr === s.cidr && view !== 'testing' })),
             h('div', { className: 'rt-seg-cidr', style: { display: 'flex', alignItems: 'baseline', gap: 5 } },
-              h('span', { className: 'rt-scope rt-scope-' + kind }, kind === 'internal' ? '内' : '外'),
+              h('span', { className: 'rt-scope rt-scope-' + kind }, kind === 'internal' ? t('内', 'I') : t('外', 'E')),
               h('span', { style: { flex: 1 } }, s.cidr),
               h('span', { className: 'rt-seg-meta', style: { margin: 0, whiteSpace: 'nowrap' } },
-                s.assets + ' 个'))))
+                s.assets + t(' 个', '')))))
         }
         return out
       }
       const segExternal = segs.filter((x) => x.scope !== 'internal')
       const segInternal = segs.filter((x) => x.scope === 'internal')
-      if (segExternal.length) sideChildren.push(...segBlock('对外服务模块', segExternal, 'external'))
-      if (segInternal.length) sideChildren.push(...segBlock('内部服务模块', segInternal, 'internal'))
+      if (segExternal.length) sideChildren.push(...segBlock(t('对外服务模块', 'External Modules'), segExternal, 'external'))
+      if (segInternal.length) sideChildren.push(...segBlock(t('内部服务模块', 'Internal Modules'), segInternal, 'internal'))
       const side = h('div', { className: 'rt-side' }, sideChildren)
 
       const toolbar = h('div', { className: 'rt-toolbar' },
         h('input', {
-          className: 'rt-input', style: { flex: '1 1 150px' }, placeholder: '搜索 IP / 域名 / 指纹（回车）',
+          className: 'rt-input', style: { flex: '1 1 150px' }, placeholder: t('搜索 IP / 域名 / 指纹（回车）', 'Search host / domain / stack (Enter)'),
           value: q, onChange: (e) => setQ(e.target.value),
           onKeyDown: (e) => { if (e.key === 'Enter') setQApplied(q) },
         }),
-        h('button', { className: 'rt-btn', onClick: () => setQApplied(q) }, '搜索'),
+        h('button', { className: 'rt-btn', onClick: () => setQApplied(q) }, t('搜索', 'Search')),
         (() => {
           const active = [service, port, prov, priority, testStatus, scope, assetState].filter(Boolean).length
           return h('button', {
             className: 'rt-btn' + (showFilters || active ? ' rt-btn-primary' : ''),
-            title: '展开更多筛选：服务 / 端口 / 来源 / 优先级 / 测试状态 / 范围',
+            title: t('展开更多筛选：服务 / 端口 / 来源 / 优先级 / 测试状态 / 范围', 'More filters: service / port / source / priority / status / scope'),
             onClick: () => setShowFilters((v) => !v),
-          }, '筛选' + (active ? ' (' + active + ')' : ''))
+          }, t('筛选', 'Filter') + (active ? ' (' + active + ')' : ''))
         })(),
         showFilters ? h('input', {
-          className: 'rt-input', style: { width: '78px' }, placeholder: '服务',
+          className: 'rt-input', style: { width: '78px' }, placeholder: t('服务', 'Service'),
           value: service, onChange: (e) => setService(e.target.value),
         }) : null,
         showFilters ? h('input', {
-          className: 'rt-input', style: { width: '60px' }, placeholder: '端口',
+          className: 'rt-input', style: { width: '60px' }, placeholder: t('端口', 'Port'),
           value: port, onChange: (e) => setPort(e.target.value),
         }) : null,
         showFilters ? h('select', { className: 'rt-input', value: scope, onChange: (e) => setScope(e.target.value) },
-          h('option', { value: '' }, '范围不限'),
-          h('option', { value: 'external' }, '仅对外服务模块'),
-          h('option', { value: 'internal' }, '仅内部服务模块')) : null,
-        showFilters ? h('select', { className: 'rt-input', value: prov, onChange: (e) => setProv(e.target.value), title: '按端口来源过滤（列表已不再单列显示，详情里可见）' },
-          h('option', { value: '' }, '来源不限'),
-          h('option', { value: 'passive' }, '仅被动'),
-          h('option', { value: 'active' }, '仅主动')) : null,
+          h('option', { value: '' }, t('范围不限', 'Any Scope')),
+          h('option', { value: 'external' }, t('仅对外服务模块', 'External Only')),
+          h('option', { value: 'internal' }, t('仅内部服务模块', 'Internal Only'))) : null,
+        showFilters ? h('select', { className: 'rt-input', value: prov, onChange: (e) => setProv(e.target.value), title: t('按端口来源过滤（列表已不再单列显示，详情里可见）', 'Filter by provenance (shown in details)') },
+          h('option', { value: '' }, t('来源不限', 'Any Source')),
+          h('option', { value: 'passive' }, t('仅被动', 'Passive Only')),
+          h('option', { value: 'active' }, t('仅主动', 'Active Only'))) : null,
         showFilters ? h('select', { className: 'rt-input', value: priority, onChange: (e) => setPriority(e.target.value) },
-          h('option', { value: '' }, '优先级不限'),
-          h('option', { value: 'high' }, '高优（高）'),
-          h('option', { value: 'medium' }, '一般（中）'),
-          h('option', { value: 'low' }, '低优（低）')) : null,
+          h('option', { value: '' }, t('优先级不限', 'Any Priority')),
+          h('option', { value: 'high' }, t('高优（高）', 'High')),
+          h('option', { value: 'medium' }, t('一般（中）', 'Medium')),
+          h('option', { value: 'low' }, t('低优（低）', 'Low'))) : null,
         showFilters ? h('select', { className: 'rt-input', value: testStatus, onChange: (e) => setTestStatus(e.target.value) },
-          h('option', { value: '' }, '测试状态不限'),
-          h('option', { value: 'untested' }, '未测试'),
-          h('option', { value: 'testing' }, '测试中'),
-          h('option', { value: 'tested' }, '已测试'),
-          h('option', { value: 'blocked' }, '受阻'),
-          h('option', { value: 'abandoned' }, '已跳过'),
-          h('option', { value: 'abandoned,blocked' }, '受阻或已跳过'),
-          h('option', { value: 'no_surface' }, '无接口面')) : null,
+          h('option', { value: '' }, t('测试状态不限', 'Any Status')),
+          h('option', { value: 'untested' }, t('未测试', 'Pending')),
+          h('option', { value: 'testing' }, t('测试中', 'Testing')),
+          h('option', { value: 'tested' }, t('已测试', 'Tested')),
+          h('option', { value: 'blocked' }, t('受阻', 'Blocked')),
+          h('option', { value: 'abandoned' }, t('已跳过', 'Skipped')),
+          h('option', { value: 'abandoned,blocked' }, t('受阻或已跳过', 'Blocked or Skipped')),
+          h('option', { value: 'no_surface' }, t('无接口面', 'No Surface'))) : null,
         h('div', { className: 'rt-spacer' }),
-        h('button', { className: 'rt-btn', title: '重新拉取快照与当前视图数据', onClick: () => { if (onRefresh) onRefresh() } }, '刷新'),
-        h('button', { className: 'rt-btn' + (view === 'next' ? ' rt-btn-primary' : ''), title: '按待测状态 + 优先级 + 端口数排序，取前 10 个模块', onClick: () => setView('next') }, '待验证模块 Top 10'),
-        h('button', { className: 'rt-btn' + (view === 'list' ? ' rt-btn-primary' : ''), onClick: () => setView('list') }, '列表'),
-        h('button', { className: 'rt-btn' + (view === 'timeline' ? ' rt-btn-primary' : ''), title: '按发现时间看模块（什么时候登记、哪天新增多少）', onClick: () => setView('timeline') }, '发现时间'),
-        h('button', { className: 'rt-btn' + (view === 'domain' ? ' rt-btn-primary' : ''), onClick: () => setView('domain') }, '域名'),
+        h('button', { className: 'rt-btn', title: t('重新拉取快照与当前视图数据', 'Refresh snapshot and view data'), onClick: () => { if (onRefresh) onRefresh() } }, t('刷新', 'Refresh')),
+        h('button', { className: 'rt-btn' + (view === 'next' ? ' rt-btn-primary' : ''), title: t('按待测状态 + 优先级 + 端口数排序，取前 10 个模块', 'Top 10 modules sorted by pending status + priority + ports'), onClick: () => setView('next') }, t('待验证模块 Top 10', 'Top 10 Pending')),
+        h('button', { className: 'rt-btn' + (view === 'list' ? ' rt-btn-primary' : ''), onClick: () => setView('list') }, t('列表', 'List')),
+        h('button', { className: 'rt-btn' + (view === 'timeline' ? ' rt-btn-primary' : ''), title: t('按发现时间看模块（什么时候登记、哪天新增多少）', 'View modules by discovery timeline'), onClick: () => setView('timeline') }, t('发现时间', 'Timeline')),
+        h('button', { className: 'rt-btn' + (view === 'domain' ? ' rt-btn-primary' : ''), onClick: () => setView('domain') }, t('域名', 'Domains')),
         h('button', { className: 'rt-btn' + (view === 'web' ? ' rt-btn-primary' : ''), onClick: () => setView('web') }, 'Web'))
 
       const tests = (snapshot && snapshot.tests) || {}
@@ -9254,32 +9685,32 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const noFilter = !testStatus && !priority && !scope && !prov && !assetState && !cidr
       const toggleTest = (v) => { setTestStatus((cur) => (cur === v ? '' : v)); setAssetState('') }
       const conclusion = h('div', { className: 'rt-concl' },
-        ConclItem('all', '个模块', snapStats.assets, noFilter, () => {
+        ConclItem('all', t('个模块', 'Modules'), snapStats.assets, noFilter, () => {
           setTestStatus(''); setPriority(''); setScope(''); setProv(''); setAssetState(''); setCidr(null)
         }),
-        ConclItem('live', '在线', snapStats.liveAssets, assetState === 'live', () => { setAssetState((v) => (v === 'live' ? '' : 'live')); setTestStatus('') }),
-        ConclItem('untested', '待测', tests.untested, testStatus === 'untested', () => toggleTest('untested')),
-        ConclItem('testing', '测试中', tests.testing, testStatus === 'testing', () => toggleTest('testing')),
-        ConclItem('tested', '已测', tests.tested, testStatus === 'tested', () => toggleTest('tested')),
-        ConclItem('giveup', '跳过', (tests.abandoned || 0) + (tests.blocked || 0), testStatus === 'abandoned,blocked', () => toggleTest('abandoned,blocked')),
+        ConclItem('live', t('在线', 'Live'), snapStats.liveAssets, assetState === 'live', () => { setAssetState((v) => (v === 'live' ? '' : 'live')); setTestStatus('') }),
+        ConclItem('untested', t('待测', 'Pending'), tests.untested, testStatus === 'untested', () => toggleTest('untested')),
+        ConclItem('testing', t('测试中', 'Testing'), tests.testing, testStatus === 'testing', () => toggleTest('testing')),
+        ConclItem('tested', t('已测', 'Tested'), tests.tested, testStatus === 'tested', () => toggleTest('tested')),
+        ConclItem('giveup', t('跳过', 'Skipped'), (tests.abandoned || 0) + (tests.blocked || 0), testStatus === 'abandoned,blocked', () => toggleTest('abandoned,blocked')),
         h('div', { className: 'rt-spacer' }),
         h('select', {
           className: 'rt-input', value: sort, onChange: (e) => setSort(e.target.value),
-          title: '列表排序方式',
+          title: t('列表排序方式', 'Sort order'),
         },
-          h('option', { value: 'priority' }, '排序：优先级优先'),
-          h('option', { value: 'todo' }, '排序：待测优先'),
-          h('option', { value: 'discovered' }, '排序：最近发现优先'),
-          h('option', { value: 'ports' }, '排序：端口多优先'),
-          h('option', { value: 'ip' }, '排序：按 IP')))
+          h('option', { value: 'priority' }, t('排序：优先级优先', 'Sort: Priority')),
+          h('option', { value: 'todo' }, t('排序：待测优先', 'Sort: Pending')),
+          h('option', { value: 'discovered' }, t('排序：最近发现优先', 'Sort: Recently Discovered')),
+          h('option', { value: 'ports' }, t('排序：端口多优先', 'Sort: Most Ports')),
+          h('option', { value: 'ip' }, t('排序：按 IP', 'Sort: By Host'))))
 
       const shardLockBanner = shardLocks.length > 0
         ? h('div', { className: 'rt-card', style: { margin: '6px 10px 4px', padding: '8px 10px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 6 } },
-              h('b', { style: { fontSize: 12 } }, '文件独占分片锁（ShardLock）'),
-              h('span', { className: 'rt-tag rt-tag-live' }, '锁定中 ' + shardLocks.length + ' 项'),
+              h('b', { style: { fontSize: 12 } }, t('文件独占分片锁（ShardLock）', 'Exclusive Shard Locks (ShardLock)')),
+              h('span', { className: 'rt-tag rt-tag-live' }, t('锁定中 ', 'Locked ') + shardLocks.length + t(' 项', '')),
               h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                'Wave 3 并行分片独占路径保护')),
+                t('Wave 3 并行分片独占路径保护', 'Wave 3 parallel shard exclusive path guard'))),
             h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
               shardLocks.slice(0, 16).map((lk, idx) => {
                 const pathStr = String(lk.file_path || lk.path || lk.glob || lk.target || ('shard-' + (idx + 1)))
@@ -9287,14 +9718,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 return h('span', {
                   key: 'slk-' + idx + '-' + pathStr,
                   className: 'rt-tag rt-mono',
-                  title: '独占路径：' + pathStr + ' · 持有者：' + ownerStr,
+                  title: t('独占路径：', 'Exclusive path: ') + pathStr + t(' · 持有者：', ' · Owner: ') + ownerStr,
                 }, pathStr + ' ← ' + ownerStr)
               })))
         : null
 
       const head = h('div', { className: 'rt-row head' },
-        h('span', null, 'IP / 节点'), h('span', null, '优先级'), h('span', null, '测试状态'),
-        h('span', null, '开放端口 / 服务'), h('span', null, '技术栈指纹'))
+        h('span', null, t('IP / 节点', 'Host / Module')), h('span', null, t('优先级', 'Priority')), h('span', null, t('测试状态', 'Test Status')),
+        h('span', null, t('开放端口 / 服务', 'Open Ports / Services')), h('span', null, t('技术栈指纹', 'Stack Fingerprint')))
 
       const rowNodes = []
       for (const it of displayItems) {
@@ -9306,13 +9737,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
         const morePorts = openPorts.length > 3 ? ' +' + (openPorts.length - 3) : ''
         rowNodes.push(h('div', Object.assign({
           key: 'r' + it.id, className: 'rt-row',
-        }, clickable(() => toggleRow(it.id), { label: '展开模块 ' + it.ip, expanded: openId === it.id })),
+        }, clickable(() => toggleRow(it.id), { label: t('展开模块 ', 'Expand module ') + it.ip, expanded: openId === it.id })),
           h('span', { className: 'rt-mono', style: { display: 'flex', alignItems: 'baseline', gap: 4, flexWrap: 'wrap' } },
             h('span', {
               className: 'rt-scope rt-scope-' + (it.scope === 'internal' ? 'internal' : 'external'),
-            }, it.scope === 'internal' ? '内' : '外'),
+            }, it.scope === 'internal' ? t('内', 'I') : t('外', 'E')),
             h('span', {
-              title: it.state === 'live' ? '在线' : String(it.state),
+              title: it.state === 'live' ? t('在线', 'Live') : String(it.state),
               style: {
                 width: 7, height: 7, borderRadius: '50%', flex: 'none', marginTop: 4,
                 background: it.state === 'live' ? '#4d6bfe' : '#94a3b8',
@@ -9321,12 +9752,12 @@ body[data-ds-dark-theme] .rt-anim-complete{
             h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis' } }, it.ip),
             h('span', {
               style: { fontSize: 10.5, color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap' },
-              title: '发现时间：' + (it.discovered_at ? fmt(it.discovered_at) : '未记录')
-                + (it.last_seen ? '\n最近采集：' + fmt(it.last_seen) : ''),
-            }, it.discovered_at ? fmtShort(it.discovered_at) : '发现时间未知')),
+              title: t('发现时间：', 'Discovered: ') + (it.discovered_at ? fmt(it.discovered_at) : t('未记录', 'Unknown'))
+                + (it.last_seen ? t('\n最近采集：', '\nLast seen: ') + fmt(it.last_seen) : ''),
+            }, it.discovered_at ? fmtShort(it.discovered_at) : t('发现时间未知', 'Time unknown'))),
           h('span', null, h(PriTag, { p: it.priority, title: it.potential || '' })),
           h('span', null, h(TestTag, { s: it.test_status }),
-            it.blocked_count ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455', marginLeft: 4 } }, '阻' + it.blocked_count) : null),
+            it.blocked_count ? h('span', { className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455', marginLeft: 4 } }, t('阻', 'Blk ') + it.blocked_count) : null),
           h('span', { title: portText }, (shownPorts || '—') + morePorts),
           h('span', { title: fpText }, fpText.length > 30 ? fpText.slice(0, 30) + '…' : fpText)))
 
@@ -9340,20 +9771,20 @@ body[data-ds-dark-theme] .rt-anim-complete{
             if (p.state !== 'open') continue
             portRows.push(h('div', { key: 'p' + p.port, className: 'rt-kv' },
               h('b', { className: 'rt-mono' }, p.port + '/' + p.proto),
-              h('span', null, [p.service, p.product, p.version].filter(Boolean).join(' ') || '未知服务'),
+              h('span', null, [p.service, p.product, p.version].filter(Boolean).join(' ') || t('未知服务', 'Unknown service')),
               p.url ? h('a', { className: 'rt-link', href: p.url, target: '_blank', rel: 'noreferrer', title: p.url }, p.title ? p.title : p.url) : null,
               h(ProvTag, { p: p.provenance })))
           }
           for (const f of (d.fingerprints || [])) {
             fpRows.push(h('div', { key: 'f' + (f.product || '') + (f.version || '') + (f.evidence || ''), className: 'rt-kv' },
               h('b', null, f.category || '—'),
-              h('span', null, [f.vendor, f.product, f.version].filter(Boolean).join(' ') + (f.evidence ? '（' + f.evidence + '）' : '')),
+              h('span', null, [f.vendor, f.product, f.version].filter(Boolean).join(' ') + (f.evidence ? ' (' + f.evidence + ')' : '')),
               h(ProvTag, { p: f.provenance })))
           }
           for (const o of (d.observations || []).slice(0, 8)) {
             obsRows.push(h('div', { key: 'o' + (o.attr || '') + (o.value || '') + (o.collected_at || ''), className: 'rt-kv' },
               h('b', null, o.attr || '—'),
-              h('span', null, (o.value || '') + ' · ' + (o.tool || '未知工具') + ' · ' + fmt(o.collected_at)),
+              h('span', null, (o.value || '') + ' · ' + (o.tool || t('未知工具', 'Unknown tool')) + ' · ' + fmt(o.collected_at)),
               h(ProvTag, { p: o.provenance })))
           }
         }
@@ -9362,46 +9793,46 @@ body[data-ds-dark-theme] .rt-anim-complete{
         const noteLines = d && d.test_notes ? d.test_notes.split('\n').filter(Boolean) : []
         const inner = d
           ? h('div', null,
-              h('div', { className: 'rt-kv' }, h('b', null, '测试'), h('span', null,
+              h('div', { className: 'rt-kv' }, h('b', null, t('测试', 'Status')), h('span', null,
                 h(TestTag, { s: d.test_status }),
-                d.blocked_count ? h('span', { className: 'rt-tag', style: { marginLeft: 6, color: '#ef4444', borderColor: '#ef444455' } }, '受阻 ' + d.blocked_count + ' 次') : null,
+                d.blocked_count ? h('span', { className: 'rt-tag', style: { marginLeft: 6, color: '#ef4444', borderColor: '#ef444455' } }, t('受阻 ', 'Blocked ') + d.blocked_count + t(' 次', 'x')) : null,
                 h('span', { style: { marginLeft: 8, color: 'var(--dsw-alias-label-secondary)' } },
-                  (d.test_updated_at ? fmt(d.test_updated_at) : '未测过') + (d.test_updated_by ? ' · ' + d.test_updated_by : '')))),
-              h('div', { className: 'rt-kv' }, h('b', null, '优先级'), h('span', null,
+                  (d.test_updated_at ? fmt(d.test_updated_at) : t('未测过', 'Not tested')) + (d.test_updated_by ? ' · ' + d.test_updated_by : '')))),
+              h('div', { className: 'rt-kv' }, h('b', null, t('优先级', 'Priority')), h('span', null,
                 h(PriTag, { p: d.priority }),
-                h('span', { style: { marginLeft: 8 } }, d.potential || '未评估'),
+                h('span', { style: { marginLeft: 8 } }, d.potential || t('未评估', 'Unassessed')),
                 d.assess_reason ? h('span', { style: { marginLeft: 8, color: 'var(--dsw-alias-label-secondary)' } }, d.assess_reason) : null)),
-              h('div', { className: 'rt-kv' }, h('b', null, '接口面'), h('span', null,
-                d.test_surface || (portRows.length ? '未记录（开放端口见下）' : '无开放端口'),
+              h('div', { className: 'rt-kv' }, h('b', null, t('接口面', 'Surface')), h('span', null,
+                d.test_surface || (portRows.length ? t('未记录（开放端口见下）', 'Unrecorded (see open ports below)') : t('无开放端口', 'No open ports')),
                 d.scope ? h('span', { className: 'rt-scope rt-scope-' + (d.scope === 'internal' ? 'internal' : 'external'), style: { marginLeft: 8 } },
-                  d.scope === 'internal' ? '内部服务模块' : '对外服务模块') : null)),
+                  d.scope === 'internal' ? t('内部服务模块', 'Internal Module') : t('对外服务模块', 'External Module')) : null)),
               h('span', Object.assign({ className: 'rt-more' },
-                clickable(() => setShowAll(all ? null : it.id), { label: all ? '收起模块详情' : '展开模块详情', expanded: all })),
-                all ? '收起全部 ▲' : '展开全部（端口 · 指纹 · 采集溯源 · 测试记录）▼'),
+                clickable(() => setShowAll(all ? null : it.id), { label: all ? t('收起模块详情', 'Collapse module details') : t('展开模块详情', 'Expand module details'), expanded: all })),
+                all ? t('收起全部 ▲', 'Collapse All ▲') : t('展开全部（端口 · 指纹 · 采集溯源 · 测试记录）▼', 'Expand All (Ports · Stack · Provenance · Notes) ▼')),
               all ? h('div', null,
-                h('div', { className: 'rt-kv' }, h('b', null, '主机名'), h('span', null, (d.names || []).map((n) => n.name).join(', ') || '—')),
-                h('div', { className: 'rt-kv' }, h('b', null, '发现时间'),
-                  h('span', { title: '本条模块第一次进入架构库的时刻（重复采集只刷新"最近采集"）' }, fmt(d.discovered_at)),
-                  h('b', { style: { minWidth: 0, marginLeft: 8 } }, '最近采集'), h('span', null, fmt(d.last_seen)),
-                  h('b', { style: { minWidth: 0, marginLeft: 8 } }, '数据源首见'), h('span', null, fmt(d.first_seen))),
-                h('div', { className: 'rt-kv' }, h('b', null, 'C 段'), h('span', null, d.segment_cidr)),
-                h('div', { className: 'rt-kv' }, h('b', null, '优先级'), h('span', null,
-                  (d.priority || '未评估') + (d.potential ? ' · 预期：' + d.potential : '')
-                  + (d.assess_reason ? ' · 依据：' + d.assess_reason : '')
-                  + (d.assessed_at ? '（' + fmt(d.assessed_at) + '）' : ''))),
-                h('div', { className: 'rt-kv' }, h('b', null, '来源'), h('span', null,
-                  '被动端口 ' + (d.passive || 0) + ' · 主动端口 ' + (d.active || 0))),
-                h('div', { style: { margin: '6px 0 3px', fontWeight: 600 } }, '开放端口 / 服务'),
+                h('div', { className: 'rt-kv' }, h('b', null, t('主机名', 'Hostnames')), h('span', null, (d.names || []).map((n) => n.name).join(', ') || '—')),
+                h('div', { className: 'rt-kv' }, h('b', null, t('发现时间', 'Discovered')),
+                  h('span', { title: t('本条模块第一次进入架构库的时刻（重复采集只刷新"最近采集"）', 'First recorded in architecture registry (rescan refreshes Last Seen only)') }, fmt(d.discovered_at)),
+                  h('b', { style: { minWidth: 0, marginLeft: 8 } }, t('最近采集', 'Last Seen')), h('span', null, fmt(d.last_seen)),
+                  h('b', { style: { minWidth: 0, marginLeft: 8 } }, t('数据源首见', 'First Seen')), h('span', null, fmt(d.first_seen))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('C 段', 'Group')), h('span', null, d.segment_cidr)),
+                h('div', { className: 'rt-kv' }, h('b', null, t('优先级', 'Priority')), h('span', null,
+                  (d.priority ? priLabel(d.priority) : t('未评估', 'Unassessed')) + (d.potential ? t(' · 预期：', ' · Expected: ') + d.potential : '')
+                  + (d.assess_reason ? t(' · 依据：', ' · Reason: ') + d.assess_reason : '')
+                  + (d.assessed_at ? ' (' + fmt(d.assessed_at) + ')' : ''))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('来源', 'Provenance')), h('span', null,
+                  t('被动端口 ', 'Passive ports ') + (d.passive || 0) + t(' · 主动端口 ', ' · Active ports ') + (d.active || 0))),
+                h('div', { style: { margin: '6px 0 3px', fontWeight: 600 } }, t('开放端口 / 服务', 'Open Ports / Services')),
                 h('div', null, portRows.length ? portRows : '—'),
-                h('div', { style: { margin: '6px 0 3px', fontWeight: 600 } }, '指纹'),
+                h('div', { style: { margin: '6px 0 3px', fontWeight: 600 } }, t('指纹', 'Fingerprints')),
                 h('div', null, fpRows.length ? fpRows : '—'),
                 noteLines.length
-                  ? h(Clip, { key: 'notes', label: '测试记录（' + noteLines.length + ' 条）', text: noteLines.join('\n') })
+                  ? h(Clip, { key: 'notes', label: t('测试记录（', 'Test Notes (') + noteLines.length + t(' 条）', ')'), text: noteLines.join('\n') })
                   : null,
-                h('div', { style: { margin: '6px 0 3px', fontWeight: 600 } }, '采集溯源（最近 8 条）'),
+                h('div', { style: { margin: '6px 0 3px', fontWeight: 600 } }, t('采集溯源（最近 8 条）', 'Observations (Latest 8)')),
                 h('div', null, obsRows.length ? obsRows : '—'))
                 : null)
-          : h('div', null, '加载中…')
+          : h('div', null, t('加载中…', 'Loading…'))
         rowNodes.push(h('div', {
           key: 'd' + it.id, className: 'rt-row',
           style: { cursor: 'default', gridTemplateColumns: '1fr' },
@@ -9411,33 +9842,33 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const listPane = h('div', { className: 'rt-table' },
         view === 'next'
           ? h('div', { className: 'rt-section', style: { padding: '8px 10px 4px' } },
-              '待验证模块 Top 10 · 按待测状态 → 优先级 → 端口数排序（只列未测/测试中）')
+              t('待验证模块 Top 10 · 按待测状态 → 优先级 → 端口数排序（只列未测/测试中）', 'Top 10 Pending Modules · Sorted by Status → Priority → Ports (Pending/Testing only)'))
           : null,
         head, rowNodes,
         !state.loading && !displayItems.length
-          ? h('div', { className: 'rt-empty' }, view === 'next' ? '没有待验证模块了：均已完成验证或已跳过。' : '没有匹配的模块')
+          ? h('div', { className: 'rt-empty' }, view === 'next' ? t('没有待验证模块了：均已完成验证或已跳过。', 'No pending modules: all completed or skipped.') : t('没有匹配的模块', 'No matching modules'))
           : null)
 
       const domainPane = h('div', { className: 'rt-table' },
-        domains === null ? h('div', { className: 'rt-empty' }, '加载中…')
+        domains === null ? h('div', { className: 'rt-empty' }, t('加载中…', 'Loading…'))
           : domains.length
           ? domains.map((g) => h('div', { key: g.domain },
               h('div', { className: 'rt-section', style: { padding: '8px 10px 4px' } },
                 h('a', { className: 'rt-link', href: 'http://' + g.domain, target: '_blank', rel: 'noreferrer' }, g.domain),
-                h('span', { className: 'rt-tag', style: { marginLeft: 8 } }, g.count + ' 个资产')),
+                h('span', { className: 'rt-tag', style: { marginLeft: 8 } }, g.count + t(' 个资产', ' hosts'))),
               g.assets.map((a) => h('div', Object.assign({
                 key: String(g.domain) + '\u0000' + a.id + '\u0000' + a.ip, className: 'rt-row',
                 style: { gridTemplateColumns: '150px 130px 70px 1fr', cursor: 'pointer' },
-              }, clickable(() => { setView('list'); setQ(''); setQApplied(a.ip) }, { label: '查看资产 ' + a.ip })),
+              }, clickable(() => { setView('list'); setQ(''); setQApplied(a.ip) }, { label: t('查看资产 ', 'View host ') + a.ip })),
                 h('span', { className: 'rt-mono' }, a.ip),
                 h('span', { className: 'rt-mono' }, a.segment),
-                h('span', null, h('span', { className: 'rt-tag rt-tag-' + (a.state === 'live' ? 'live' : 'dead') }, a.state === 'live' ? '存活' : a.state)),
+                h('span', null, h('span', { className: 'rt-tag rt-tag-' + (a.state === 'live' ? 'live' : 'dead') }, a.state === 'live' ? t('存活', 'Live') : a.state)),
                 h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, (a.names || []).join(', '))))))
-          : h('div', { className: 'rt-empty' }, cidr ? '该 C 段下暂无域名（切换到「全部 C 段」看全量）' : '暂无域名数据（信息收集阶段会写入域名）'))
+          : h('div', { className: 'rt-empty' }, cidr ? t('该 C 段下暂无域名（切换到「全部 C 段」看全量）', 'No domains in this group (switch to All Groups to view all)') : t('暂无域名数据（信息收集阶段会写入域名）', 'No domains recorded yet (populated during discovery)')))
 
       const webPane = h('div', { className: 'rt-table' },
         h('div', { className: 'rt-row head', style: { gridTemplateColumns: '1.6fr 1.2fr 130px 110px' } },
-          h('span', null, 'URL（可点击）'), h('span', null, '标题'), h('span', null, '资产'), h('span', null, '服务')),
+          h('span', null, t('URL（可点击）', 'URL (Clickable)')), h('span', null, t('标题', 'Title')), h('span', null, t('资产', 'Host')), h('span', null, t('服务', 'Service'))),
         (web || []).map((w) => {
           const url = w.url || ('http' + (w.port === 443 || w.port === 8443 || w.port === 9443 ? 's' : '') + '://' + w.ip + (w.port === 80 || w.port === 443 ? '' : ':' + w.port))
           return h('div', {
@@ -9449,8 +9880,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
             h('span', { className: 'rt-mono' }, w.ip + ' · ' + w.segment_cidr),
             h('span', { style: { fontSize: 11 } }, [w.service, w.product, w.version].filter(Boolean).join(' ')))
         }),
-        web === null ? h('div', { className: 'rt-empty' }, '加载中…')
-          : (!web.length ? h('div', { className: 'rt-empty' }, cidr ? '该 C 段下暂无 Web 资产' : '暂无 Web 资产（HTTP 探测后会写入 URL 与标题）') : null))
+        web === null ? h('div', { className: 'rt-empty' }, t('加载中…', 'Loading…'))
+          : (!web.length ? h('div', { className: 'rt-empty' }, cidr ? t('该 C 段下暂无 Web 资产', 'No Web endpoints in this group') : t('暂无 Web 资产（HTTP 探测后会写入 URL 与标题）', 'No Web endpoints yet (populated after HTTP probes)')) : null))
 
       let pane = listPane
       if (view === 'testing') pane = h(TestingTab, { engagement: eng, refreshKey: refreshKey })
@@ -9467,6 +9898,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function DiscoveryView(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [data, setData] = React.useState(null)
@@ -9476,49 +9908,50 @@ body[data-ds-dark-theme] .rt-anim-complete{
         if (!eng) return
         setData(null)
         api({ op: 'discoveryTimeline', engagement: eng, limit: 200 })
-          .then((r) => { if (!r || r.ok === false) setErr((r && r.error) || '加载失败'); else { setErr(null); setData(r) } },
+          .then((r) => { if (!r || r.ok === false) setErr((r && r.error) || t('加载失败', 'Load failed')); else { setErr(null); setData(r) } },
             (e) => setErr(String((e && e.message) || e)))
       }, [eng, refreshKey])
       if (err) return h('div', { className: 'rt-pane' }, h('div', { className: 'rt-err' }, err))
-      if (!data) return h('div', { className: 'rt-empty' }, '加载中…')
+      if (!data) return h('div', { className: 'rt-empty' }, t('加载中…', 'Loading…'))
       const recent = (data.recent || []).filter((a) => day === '' || String(a.discovered_at || '').slice(0, 10) === day)
       return h('div', { className: 'rt-pane', style: { flex: 1, minHeight: 0 } },
         h('div', { className: 'rt-card' },
-          h('h4', null, '资产发现时间线'),
+          h('h4', null, t('资产发现时间线', 'Module Discovery Timeline')),
           h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } },
-            '共 ' + ((data.span && data.span.total) || 0) + ' 台 · 最早 '
+            t('共 ', 'Total ') + ((data.span && data.span.total) || 0) + t(' 台 · 最早 ', ' · First ')
             + (data.span && data.span.first ? fmt(data.span.first) : '—')
-            + ' · 最近 ' + (data.span && data.span.last ? fmt(data.span.last) : '—')
-            + '（发现时间 = 第一次进入资产库的时刻；重复采集只刷新"最近采集"）')),
-        (data.days || []).length === 0 ? h('div', { className: 'rt-empty' }, '还没有资产。') : null,
+            + t(' · 最近 ', ' · Latest ') + (data.span && data.span.last ? fmt(data.span.last) : '—')
+            + t('（发现时间 = 第一次进入资产库的时刻；重复采集只刷新"最近采集"）', ' (Discovered = first registered time; rescans update Last Seen only)'))),
+        (data.days || []).length === 0 ? h('div', { className: 'rt-empty' }, t('还没有资产。', 'No modules registered yet.')) : null,
         h('div', { className: 'rt-card' },
-          h('h4', null, '按天统计', day
+          h('h4', null, t('按天统计', 'Daily Breakdown'), day
             ? h('span', Object.assign({ className: 'rt-tag', style: { marginLeft: 6, cursor: 'pointer' } },
-                clickable(() => setDay(''), { label: '清除按天筛选：' + day })), '清除筛选：' + day)
+                clickable(() => setDay(''), { label: t('清除按天筛选：', 'Clear day filter: ') + day })), t('清除筛选：', 'Clear filter: ') + day)
             : null),
           h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8 } },
             (data.days || []).map((d) => h('div', Object.assign({
               key: d.day, className: 'rt-seg' + (day === d.day ? ' on' : ''), style: { marginBottom: 0, cursor: 'pointer' },
-              title: d.day + '：新增 ' + d.assets + ' 台（内网 ' + d.internal + ' / 外网 ' + d.external + '）',
+              title: d.day + t('：新增 ', ': added ') + d.assets + t(' 台（内网 ', ' (Internal ') + d.internal + t(' / 外网 ', ' / External ') + d.external + ')',
             }, clickable(() => setDay(day === d.day ? '' : d.day),
-              { label: '筛选 ' + d.day + ' 发现的资产', expanded: day === d.day })),
+              { label: t('筛选 ', 'Filter ') + d.day + t(' 发现的资产', ' discoveries'), expanded: day === d.day })),
               h('div', { className: 'rt-seg-cidr' }, d.day),
-              h('div', { className: 'rt-seg-meta' }, d.assets + ' 台 · 内 ' + d.internal + ' / 外 ' + d.external))))),
+              h('div', { className: 'rt-seg-meta' }, d.assets + t(' 台 · 内 ', ' · Int ') + d.internal + t(' / 外 ', ' / Ext ') + d.external))))),
         h('div', { className: 'rt-card' },
-          h('h4', null, day ? day + ' 发现的资产（' + recent.length + '）' : '最近发现的资产（' + recent.length + '）'),
-          recent.length === 0 ? h('div', { className: 'rt-empty' }, '这一天没有新增资产。') : null,
+          h('h4', null, day ? day + t(' 发现的资产（', ' Discoveries (') + recent.length + ')' : t('最近发现的资产（', 'Recent Discoveries (') + recent.length + ')'),
+          recent.length === 0 ? h('div', { className: 'rt-empty' }, t('这一天没有新增资产。', 'No new modules discovered on this day.')) : null,
           recent.map((a) => h('div', { key: a.id, className: 'rt-kv' },
             h('b', { className: 'rt-mono', style: { minWidth: 110 } },
               h('span', { className: 'rt-scope rt-scope-' + (a.scope === 'internal' ? 'internal' : 'external'), style: { marginRight: 4 } },
-                a.scope === 'internal' ? '内' : '外'),
+                a.scope === 'internal' ? t('内', 'I') : t('外', 'E')),
               a.ip),
             h('span', { style: { minWidth: 132, fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
-              a.discovered_at ? fmt(a.discovered_at) : '时间未知'),
-            h('span', { style: { flex: 1 } }, (a.primary_name || '—') + (a.open_ports ? ' · ' + a.open_ports + ' 端口' : '')),
+              a.discovered_at ? fmt(a.discovered_at) : t('时间未知', 'Time unknown')),
+            h('span', { style: { flex: 1 } }, (a.primary_name || '—') + (a.open_ports ? ' · ' + a.open_ports + t(' 端口', ' ports') : '')),
             h(PriTag, { p: a.priority })))))
     }
 
     function PromptsTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const selectedRole = props.selectedRole || null
@@ -9536,7 +9969,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       React.useEffect(() => {
         if (!eng) return
         api({ op: 'prompts', engagement: eng }).then((r) => {
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '读取失败' }); return }
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('读取失败', 'Read failed') }); return }
           setRoles(r.roles || [])
           if (r.roles && r.roles.length) setActive((cur) => cur || r.roles[0].role)
         }, (e) => setMsg({ err: String((e && e.message) || e) }))
@@ -9552,11 +9985,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setMsg(null)
         api({ op: 'savePrompt', engagement: eng, role: active, content: draft }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '保存失败' }); return }
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('保存失败', 'Save failed') }); return }
           setRoles((list) => list.map((x) => (x.role === active
             ? Object.assign({}, x, { content: draft, updated_at: new Date().toISOString() })
             : x)))
-          setMsg({ ok: '已保存' })
+          setMsg({ ok: t('已保存', 'Saved') })
         }, (e) => { setBusy(false); setMsg({ err: String((e && e.message) || e) }) })
       }
 
@@ -9564,8 +9997,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setBusy(true); setMsg(null)
         api({ op: 'resetPrompts', engagement: eng, role: all ? undefined : active }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '恢复失败' }); return }
-          setMsg({ ok: '已恢复内置默认：' + (r.reset || []).join('、') })
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('恢复失败', 'Reset failed') }); return }
+          setMsg({ ok: t('已恢复内置默认：', 'Reset to built-in defaults: ') + (r.reset || []).join(', ') })
           api({ op: 'prompts', engagement: eng }).then((rr) => {
             if (rr && rr.ok) {
               setRoles(rr.roles || [])
@@ -9580,51 +10013,53 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const items = roles.map((r) => h('div', Object.assign({
         key: r.role, className: 'rt-item' + (active === r.role ? ' on' : ''),
       }, clickable(() => { setActive(r.role); setMsg(null) },
-        { label: '查看「' + r.title + '」提示词', expanded: active === r.role })),
+        { label: t('查看「', 'View "') + r.title + t('」提示词', '" prompt'), expanded: active === r.role })),
         h('div', { className: 'rt-item-name' }, r.title),
-        h('div', { className: 'rt-item-desc' }, (r.stale ? '旧版 · ' : '') + ((r.content || '').replace(/[#*`]/g, '').slice(0, 60) || '（空）'))))
+        h('div', { className: 'rt-item-desc' }, (r.stale ? t('旧版 · ', 'Legacy · ') : '') + ((r.content || '').replace(/[#*`]/g, '').slice(0, 60) || t('（空）', '(empty)')))))
 
       return h('div', { className: 'rt-split' },
         h('div', { className: 'rt-list' }, items),
         h('div', { className: 'rt-main' },
           h('div', { className: 'rt-toolbar' },
-            h('span', { style: { fontWeight: 600 } }, cur ? cur.title : '提示词'),
-            h('span', { className: 'rt-tag' }, '更新 ' + fmt(cur && cur.updated_at)),
-            cur && cur.stale ? h('span', { className: 'rt-tag rt-tag-active' }, '旧版提示词') : null,
+            h('span', { style: { fontWeight: 600 } }, cur ? cur.title : t('提示词', 'Prompts')),
+            h('span', { className: 'rt-tag' }, t('更新 ', 'Updated ') + fmt(cur && cur.updated_at)),
+            cur && cur.stale ? h('span', { className: 'rt-tag rt-tag-active' }, t('旧版提示词', 'Legacy Prompt')) : null,
             h('div', { className: 'rt-spacer' }),
             h('button', {
               className: 'rt-btn', disabled: busy,
-              title: preview ? '切换到 Markdown 源文编辑' : '预览渲染后的提示词',
+              title: preview ? t('切换到 Markdown 源文编辑', 'Switch to Markdown source editor') : t('预览渲染后的提示词', 'Preview rendered prompt'),
               onClick: () => setPreview((v) => !v),
-            }, preview ? '编辑' : '预览'),
+            }, preview ? t('编辑', 'Edit') : t('预览', 'Preview')),
             h('button', {
-              className: 'rt-btn', disabled: busy || !active, title: '把当前角色恢复成内置最新版提示词',
+              className: 'rt-btn', disabled: busy || !active, title: t('把当前角色恢复成内置最新版提示词', 'Reset current role to latest built-in prompt'),
               onClick: () => reset(false),
-            }, '恢复默认为当前'),
+            }, t('恢复默认为当前', 'Reset Current')),
             h('button', {
-              className: 'rt-btn', disabled: busy, title: '全部角色恢复成内置最新版提示词',
+              className: 'rt-btn', disabled: busy, title: t('全部角色恢复成内置最新版提示词', 'Reset all roles to latest built-in prompts'),
               onClick: () => reset(true),
-            }, '全部恢复默认'),
-            h('button', { className: 'rt-btn rt-btn-primary', disabled: busy || !active, onClick: save }, busy ? '保存中…' : '保存')),
+            }, t('全部恢复默认', 'Reset All')),
+            h('button', { className: 'rt-btn rt-btn-primary', disabled: busy || !active, onClick: save }, busy ? t('保存中…', 'Saving…') : t('保存', 'Save'))),
           msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
           h('div', { className: 'rt-pane' },
             preview
               ? h(Markdown, {
-                  className: 'rt-markdown rt-prompt-preview', text: draft || '（空）',
+                  className: 'rt-markdown rt-prompt-preview', text: draft || t('（空）', '(empty)'),
                   style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, maxHeight: '48vh' },
                 })
               : h('textarea', {
                   className: 'rt-textarea', value: draft, spellCheck: false,
                   onChange: (e) => setDraft(e.target.value),
-                  placeholder: '该角色的系统提示词（Markdown）',
+                  placeholder: t('该角色的系统提示词（Markdown）', 'System prompt for this role (Markdown)'),
                 }),
             h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', marginTop: 6 } },
               cur && cur.planner
-                ? '主会话实际使用预设 persona；此处 plan 文本仅作参考。'
-                : '保存后写入 agents/' + (active || 'role') + '.md，派活时通过 redteam_role_prompt 读取。'))))
+                ? t('主会话实际使用预设 persona；此处 plan 文本仅作参考。', 'Primary session uses preset persona; this plan text is for reference only.')
+                : t('保存后写入 agents/' + (active || 'role') + '.md，派活时通过 lmt_role_prompt 读取。',
+                    'Saved to agents/' + (active || 'role') + '.md; loaded by lmt_role_prompt on dispatch.')))))
     }
 
     function SkillsTab(props) {
+      useLocale()
       const refreshKey = props.refreshKey || 0
       const [items, setItems] = React.useState([])
       const [meta, setMeta] = React.useState({})
@@ -9642,7 +10077,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setBusy(true)
         api({ op: 'skillCatalog', refresh: force === true }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setErr((r && r.error) || '读取失败'); return }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('读取失败', 'Read failed')); return }
           setErr(null)
           setMeta(r || {})
           setItems(r.items || [])
@@ -9656,7 +10091,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setDetail(null)
         api({ op: 'skillRead', name: name }).then((r) => {
           if (r && r.ok) setDetail(r)
-          else setErr((r && r.error) || '读取失败')
+          else setErr((r && r.error) || t('读取失败', 'Read failed'))
         }, (e) => setErr(String((e && e.message) || e)))
       }
 
@@ -9673,25 +10108,26 @@ body[data-ds-dark-theme] .rt-anim-complete{
       if (brokenOnly) filtered = filtered.filter((s) => s.availability === 'broken' || s.availability === 'unknown')
       const availSummary = meta.availability ? meta.availability.summary : null
       const needRestart = err !== null && String(err).indexOf('unknown op') >= 0
+      const catLabel = (c) => (!c || c === '未分类') ? t('未分类', 'Uncategorized') : c
 
       const listItems = filtered.map((s) => h('div', Object.assign({
         key: s.name,
         className: 'rt-skill-row' + (active === s.name ? ' on' : '') + (s.availability === 'broken' ? ' broken' : ''),
         title: s.name + (s.description ? ' — ' + s.description : ''),
-      }, clickable(() => open(s.name), { label: '查看技能 ' + s.name, expanded: active === s.name })),
+      }, clickable(() => open(s.name), { label: t('查看技能 ', 'View skill ') + s.name, expanded: active === s.name })),
         h('span', {
           className: 'rt-avail rt-avail-' + (s.availability || 'unknown'),
           title: (s.availability === 'available'
-            ? '可用：正文能加载，必需的环境变量/本机路径/基础设施都在'
-            : (s.issues || []).map((x) => x.detail + (x.fix ? '\n  修复：' + x.fix : '')).join('\n')
-              || (s.problems || []).join('\n') || '未知'),
-        }, s.availability === 'available' ? '可用' : s.availability === 'broken' ? '不可用' : '未知'),
+            ? t('可用：正文能加载，必需的环境变量/本机路径/基础设施都在', 'Available: body loads cleanly and required env/paths/services are ready')
+            : (s.issues || []).map((x) => x.detail + (x.fix ? t('\n  修复：', '\n  Fix: ') + x.fix : '')).join('\n')
+              || (s.problems || []).join('\n') || t('未知', 'Unknown')),
+        }, s.availability === 'available' ? t('可用', 'Ready') : s.availability === 'broken' ? t('不可用', 'Broken') : t('未知', 'Unknown')),
         h('div', { className: 'rt-skill-main' },
           h('div', { className: 'rt-skill-name' }, s.name,
-            s.modelInvocable === false ? h('span', { className: 'rt-tag', style: { marginLeft: 5 } }, '仅人工') : null),
-          h('div', { className: 'rt-skill-desc' }, String(s.description || '（无描述）').replace(/[*`]/g, ''))),
-        h('span', { className: 'rt-tag' }, s.category || '未分类'),
-        h('span', { className: 'rt-tag' }, s.fromPlugin ? '插件' : '用户'),
+            s.modelInvocable === false ? h('span', { className: 'rt-tag', style: { marginLeft: 5 } }, t('仅人工', 'Manual')) : null),
+          h('div', { className: 'rt-skill-desc' }, String(s.description || t('（无描述）', '(no description)')).replace(/[*`]/g, ''))),
+        h('span', { className: 'rt-tag' }, catLabel(s.category)),
+        h('span', { className: 'rt-tag' }, s.fromPlugin ? t('插件', 'Plugin') : t('用户', 'User')),
         (s.problems || []).length > 0 && s.availability !== 'available'
           ? h('span', { className: 'rt-avail rt-avail-broken', title: String((s.issues && s.issues[0] && s.issues[0].detail) || s.problems[0]) }, '!')
           : null))
@@ -9700,122 +10136,128 @@ body[data-ds-dark-theme] .rt-anim-complete{
         h('div', { className: 'rt-list' },
           h('input', {
             className: 'rt-input', style: { width: '100%', marginBottom: 8, boxSizing: 'border-box' },
-            placeholder: '过滤技能', value: q, onChange: (e) => setQ(e.target.value),
+            placeholder: t('过滤技能', 'Filter skills'), value: q, onChange: (e) => setQ(e.target.value),
           }),
           h('select', {
             className: 'rt-input', style: { width: '100%', marginBottom: 8, boxSizing: 'border-box' },
             value: effectiveCat, onChange: (e) => setCat(e.target.value),
           },
-            h('option', { value: '' }, '全部分类（' + scoped.length + '）'),
+            h('option', { value: '' }, t('全部分类', 'All Categories') + ' (' + scoped.length + ')'),
             cats.map((c) => h('option', { key: c, value: c },
-              c + '（' + scoped.filter((s) => (s.category || '未分类') === c).length + '）'))),
+              catLabel(c) + ' (' + scoped.filter((s) => (s.category || '未分类') === c).length + ')'))),
           h('label', { className: 'rt-kb-check', style: { display: 'flex', margin: '0 0 6px' } },
             h('input', { type: 'checkbox', checked: redteamOnly, onChange: (e) => setRedteamOnly(e.target.checked) }),
-            '只看研发技能（' + redteamCount + ' 个，隐藏 DSH 通用）'),
+            t('只看研发技能（' + redteamCount + ' 个，隐藏 DSH 通用）', 'Engineering skills only (' + redteamCount + ', hide host generic)')),
           h('label', { className: 'rt-kb-check', style: { display: 'flex', margin: '0 0 6px' } },
             h('input', { type: 'checkbox', checked: srcOnly, onChange: (e) => setSrcOnly(e.target.checked) }),
-            '只看本插件自带（' + (meta.fromPlugin || 0) + ' 个）'),
+            t('只看本插件自带（' + (meta.fromPlugin || 0) + ' 个）', 'Built-in plugin skills only (' + (meta.fromPlugin || 0) + ')')),
           availSummary && (availSummary.broken > 0 || availSummary.unknown > 0)
             ? h('label', {
                 className: 'rt-kb-check', style: { display: 'flex', margin: '0 0 8px' },
-                title: '只看不可用（缺 key / 缺本机路径 / 基础设施还是占位符）或判不了可用性的技能',
+                title: t('只看不可用（缺 key / 缺本机路径 / 基础设施还是占位符）或判不了可用性的技能', 'Show only broken or unknown-availability skills'),
               },
                 h('input', { type: 'checkbox', checked: brokenOnly, onChange: (e) => setBrokenOnly(e.target.checked) }),
-                '只看不可用/未知（' + ((availSummary.broken || 0) + (availSummary.unknown || 0)) + ' 个）')
+                t('只看不可用/未知（' + ((availSummary.broken || 0) + (availSummary.unknown || 0)) + ' 个）', 'Broken / Unknown only (' + ((availSummary.broken || 0) + (availSummary.unknown || 0)) + ')'))
             : null,
           availSummary
             ? h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 6 } },
-                h('span', { className: 'rt-avail rt-avail-available' }, '可用 ' + (availSummary.available || 0)),
-                availSummary.broken > 0 ? h('span', { className: 'rt-avail rt-avail-broken' }, '不可用 ' + availSummary.broken) : null,
-                availSummary.unknown > 0 ? h('span', { className: 'rt-avail rt-avail-unknown' }, '未知 ' + availSummary.unknown) : null,
+                h('span', { className: 'rt-avail rt-avail-available' }, t('可用 ', 'Ready ') + (availSummary.available || 0)),
+                availSummary.broken > 0 ? h('span', { className: 'rt-avail rt-avail-broken' }, t('不可用 ', 'Broken ') + availSummary.broken) : null,
+                availSummary.unknown > 0 ? h('span', { className: 'rt-avail rt-avail-unknown' }, t('未知 ', 'Unknown ') + availSummary.unknown) : null,
                 h('span', Object.assign({
                   className: 'rt-tag', style: { cursor: 'pointer' },
-                  title: '技能正文或环境变量刚改过？点这里跳过 30 秒缓存重查',
-                }, clickable(() => load(true), { label: '重新检查技能可用性' })), '重查可用性'))
+                  title: t('技能正文或环境变量刚改过？点这里跳过 30 秒缓存重查', 'Re-check skill availability bypassing the 30s cache'),
+                }, clickable(() => load(true), { label: t('重新检查技能可用性', 'Re-check skill availability') })), t('重查可用性', 'Re-check')))
             : null,
           h('div', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', marginBottom: 6 } },
-            '共 ' + items.length + ' 个技能 · 当前显示 ' + filtered.length + ' 个 · 来自 ' + ((meta.byDir || []).length) + ' 个目录',
+            t('共 ' + items.length + ' 个技能 · 当前显示 ' + filtered.length + ' 个 · 来自 ' + ((meta.byDir || []).length) + ' 个目录',
+              'Total ' + items.length + ' skills · Showing ' + filtered.length + ' · From ' + ((meta.byDir || []).length) + ' dirs'),
             items.length > 100 ? h('div', { style: { marginTop: 3 } },
-              '（技能多来自其它插件注册的根或你自己的技能目录；本插件只自带 ' + (meta.fromPlugin || 0) + ' 个）') : null),
+              t('（技能多来自其它插件注册的根或你自己的技能目录；本插件只自带 ' + (meta.fromPlugin || 0) + ' 个）',
+                '(Many skills come from other plugins or your custom dir; this plugin includes ' + (meta.fromPlugin || 0) + ')')) : null),
           listItems),
         h('div', { className: 'rt-main' },
           h('div', { className: 'rt-toolbar' },
-            h('span', { style: { fontWeight: 600 } }, detail ? detail.name : '研发技能库'),
+            h('span', { style: { fontWeight: 600 } }, detail ? detail.name : t('研发技能库', 'Skill Library')),
             h('div', { className: 'rt-spacer' }),
-            h('button', { className: 'rt-btn', disabled: busy, onClick: () => load(true) }, busy ? '刷新中…' : '刷新')),
+            h('button', { className: 'rt-btn', disabled: busy, onClick: () => load(true) }, busy ? t('刷新中…', 'Refreshing…') : t('刷新', 'Refresh'))),
           err
             ? (needRestart
-                ? h('div', { className: 'rt-empty' }, '该模块的宿主代码已更新，需重启一次 dsh web 后生效')
+                ? h('div', { className: 'rt-empty' }, t('该模块的宿主代码已更新，需重启一次 dsh web 后生效', 'Host plugin code updated; restart dsh web to apply'))
                 : h('div', { className: 'rt-err' }, err))
             : null,
           detail
             ? h('div', { className: 'rt-pane' },
-                h('div', { className: 'rt-kv' }, h('b', null, '描述'), h('span', null, detail.description || '—')),
-                h('div', { className: 'rt-kv' }, h('b', null, '分类'), h('span', null, detail.category || '未分类')),
-                h('div', { className: 'rt-kv' }, h('b', null, '何时使用'), h('span', null, detail.whenToUse || '—')),
-                h('div', { className: 'rt-kv' }, h('b', null, '来源'), h('span', null, (detail.provider || '—') + ' / ' + (detail.source || '—'))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('描述', 'Description')), h('span', null, detail.description || '—')),
+                h('div', { className: 'rt-kv' }, h('b', null, t('分类', 'Category')), h('span', null, catLabel(detail.category))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('何时使用', 'When to Use')), h('span', null, detail.whenToUse || '—')),
+                h('div', { className: 'rt-kv' }, h('b', null, t('来源', 'Source')), h('span', null, (detail.provider || '—') + ' / ' + (detail.source || '—'))),
                 (() => {
                   const s2 = items.find((x) => x.name === detail.name)
                   if (!s2) return null
                   const avail = s2.availability || 'unknown'
                   return h('div', null,
-                    h('div', { className: 'rt-kv' }, h('b', null, '可用性'),
+                    h('div', { className: 'rt-kv' }, h('b', null, t('可用性', 'Availability')),
                       h('span', { className: 'rt-avail rt-avail-' + avail },
-                        avail === 'available' ? '可用' : avail === 'broken' ? '不可用' : '未知（正文读不到）')),
+                        avail === 'available' ? t('可用', 'Ready') : avail === 'broken' ? t('不可用', 'Broken') : t('未知（正文读不到）', 'Unknown (unreadable)'))),
                     (s2.issues || []).length > 0
-                      ? h('div', { className: 'rt-kv' }, h('b', null, '不可用原因'),
+                      ? h('div', { className: 'rt-kv' }, h('b', null, t('不可用原因', 'Issues')),
                           h('span', null, s2.issues.map((x, i) => h('div', { key: 'i' + i, style: { marginBottom: 6 } },
                             h('div', null, '· ' + x.detail),
                             x.fix
-                              ? h('div', { style: { marginLeft: 14, color: 'var(--dsw-alias-label-secondary)' } }, '修复：' + x.fix)
+                              ? h('div', { style: { marginLeft: 14, color: 'var(--dsw-alias-label-secondary)' } }, t('修复：', 'Fix: ') + x.fix)
                               : null))))
                       : (s2.problems || []).length > 0
-                        ? h('div', { className: 'rt-kv' }, h('b', null, '不可用原因'),
+                        ? h('div', { className: 'rt-kv' }, h('b', null, t('不可用原因', 'Issues')),
                             h('span', null, s2.problems.map((x, i) => h('div', { key: 'p' + i }, '· ' + x))))
                         : null,
                     (s2.needs_user || []).length > 0
-                      ? h('div', { className: 'rt-kv' }, h('b', null, '需要你提供'),
+                      ? h('div', { className: 'rt-kv' }, h('b', null, t('需要你提供', 'Action Needed')),
                           h('span', { style: { color: 'var(--dsw-alias-state-warn-primary, #f59e0b)' } },
                             s2.needs_user.map((x, i) => h('div', { key: 'n' + i }, '· ' + x))))
                       : null)
                 })(),
-                detail.path ? h('div', { className: 'rt-kv' }, h('b', null, '文件'), h('span', { className: 'rt-mono', style: { wordBreak: 'break-all' } }, detail.path)) : null,
+                detail.path ? h('div', { className: 'rt-kv' }, h('b', null, t('文件', 'File')), h('span', { className: 'rt-mono', style: { wordBreak: 'break-all' } }, detail.path)) : null,
                 h(Markdown, {
-                  className: 'rt-markdown rt-md-view', text: detail.content || '（空）',
+                  className: 'rt-markdown rt-md-view', text: detail.content || t('（空）', '(empty)'),
                   style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, maxHeight: '52vh' },
                 }))
             : h('div', { className: 'rt-pane' },
-                h('div', { className: 'rt-kv' }, h('b', null, '技能'),
-                  h('span', null, '共 ' + items.length + ' 个'
-                    + (availSummary ? ' · 可用 ' + (availSummary.available || 0)
-                      + ' / 不可用 ' + (availSummary.broken || 0)
-                      + ' / 未知 ' + (availSummary.unknown || 0) : ''))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('技能', 'Skills')),
+                  h('span', null, t('共 ', 'Total ') + items.length + t(' 个', '')
+                    + (availSummary ? ' · ' + t('可用 ', 'Ready ') + (availSummary.available || 0)
+                      + ' / ' + t('不可用 ', 'Broken ') + (availSummary.broken || 0)
+                      + ' / ' + t('未知 ', 'Unknown ') + (availSummary.unknown || 0) : ''))),
                 h('div', { className: 'rt-foot', style: { marginBottom: 8 } },
-                  '从左侧选择技能查看正文与可用性。'),
+                  t('从左侧选择技能查看正文与可用性。', 'Select a skill on the left to inspect its prompt and availability.')),
                 meta.availability && (meta.availability.broken || []).length > 0
                   ? h('div', { className: 'rt-hint' },
-                      h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '现在跑不起来的技能：'),
+                      h('div', { style: { fontWeight: 600, marginBottom: 4 } }, t('现在跑不起来的技能：', 'Unavailable skills:')),
                       meta.availability.broken.slice(0, 12).map((b) => h('div', { key: b.name },
                         '· ' + b.name + ' — '
-                        + String((b.issues && b.issues[0] && b.issues[0].detail) || (b.problems && b.problems[0]) || '未知')
-                        + (b.issues && b.issues[0] && b.issues[0].fix ? '（' + b.issues[0].fix + '）' : ''))))
-                  : h('div', { className: 'rt-empty' }, '没有不可用技能；左侧选择技能查看正文。'))))
+                        + String((b.issues && b.issues[0] && b.issues[0].detail) || (b.problems && b.problems[0]) || t('未知', 'Unknown'))
+                        + (b.issues && b.issues[0] && b.issues[0].fix ? ' (' + b.issues[0].fix + ')' : ''))))
+                  : h('div', { className: 'rt-empty' }, t('没有不可用技能；左侧选择技能查看正文。', 'All skills available; select a skill on the left to read.')))))
     }
 
     const SEV_LABEL = { critical: '严重', high: '高危', medium: '中危', low: '低危', info: '信息' }
+    const SEV_LABEL_EN = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info' }
     const STATUS_LABEL = { candidate: '待验证', confirmed: '已确认', 'false-positive': '误报', exploited: '已利用', fixed: '已修复' }
+    const STATUS_LABEL_EN = { candidate: 'Pending', confirmed: 'Confirmed', 'false-positive': 'False Positive', exploited: 'Verified', fixed: 'Fixed' }
+    const sevLabel = (s) => t(SEV_LABEL[s] || s, SEV_LABEL_EN[s] || s)
+    const vulnStatusLabel = (s) => t(STATUS_LABEL[s] || s, STATUS_LABEL_EN[s] || s)
     const sevClass = (s) => 'rt-sev rt-sev-' + (SEV_LABEL[s] ? s : 'info')
 
     function targetKeyOf(v) {
-      const t = String(v.target || '').trim()
-      if (t !== '') {
-        const url = /^([a-z][a-z0-9+.-]*:\/\/[^/?#\s]+)/i.exec(t)
+      const targetStr = String(v.target || '').trim()
+      if (targetStr !== '') {
+        const url = /^([a-z][a-z0-9+.-]*:\/\/[^/?#\s]+)/i.exec(targetStr)
         if (url) return url[1]
-        const head = /^([^\s/?#]+)/.exec(t)
+        const head = /^([^\s/?#]+)/.exec(targetStr)
         if (head) return head[1]
-        return t
+        return targetStr
       }
-      return v.asset_ip || '(未指定目标)'
+      return v.asset_ip || t('(未指定目标)', '(No target specified)')
     }
 
     function HttpBlock(props) {
@@ -9841,41 +10283,43 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const blocks = []
       if (evi) {
         blocks.push(h('div', { key: 'ev', className: 'rt-evi' },
-          h('div', { className: 'rt-evi-head' }, '证据摘要',
-            h('span', { className: 'rt-tag' }, looksHttp ? '原始报文' : '文本'),
+          h('div', { className: 'rt-evi-head' }, t('证据摘要', 'Evidence Summary'),
+            h('span', { className: 'rt-tag' }, looksHttp ? t('原始报文', 'Raw HTTP') : t('文本', 'Text')),
             h('div', { className: 'rt-spacer' }),
             h('button', {
               className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
               onClick: (e) => { e.stopPropagation(); copyText(evi) },
-            }, '复制')),
+            }, t('复制', 'Copy'))),
           looksHttp ? h(HttpBlock, { text: evi }) : h('pre', { className: 'rt-evi-body' }, evi)))
       }
       const http = v.http_evidence || []
       for (const e of http) {
         blocks.push(h('div', { key: 'h' + e.id, className: 'rt-evi' },
           h('div', { className: 'rt-evi-head' },
-            e.label || 'HTTP 证据',
+            e.label || t('HTTP 证据', 'HTTP Evidence'),
             h('span', { className: 'rt-tag' }, (e.method || '') + ' ' + (e.status === null || e.status === undefined ? '' : e.status)),
             h('div', { className: 'rt-spacer' }),
             h('span', { style: { fontWeight: 400, color: 'var(--dsw-alias-label-secondary)' } }, fmt(e.captured_at || e.created_at))),
           e.request ? h('div', null,
-            h('div', { className: 'rt-evi-head', style: { borderTop: 'none' } }, '▸ 请求报文（可用于接口联调复现）'),
+            h('div', { className: 'rt-evi-head', style: { borderTop: 'none' } }, t('▸ 请求报文（可用于接口联调复现）', '▸ Request (reproducible payload)')),
             h(HttpBlock, { text: e.request, compact: true })) : null,
           e.response ? h('div', null,
-            h('div', { className: 'rt-evi-head' }, '▸ 响应'),
+            h('div', { className: 'rt-evi-head' }, t('▸ 响应', '▸ Response')),
             h(HttpBlock, { text: e.response })) : null,
           e.note ? h('pre', { className: 'rt-evi-body', style: { maxHeight: 80 } }, e.note) : null))
       }
       if (blocks.length === 0) {
-        blocks.push(h('div', { key: 'none', className: 'rt-kv' }, h('b', null, '证据'),
-          h('span', { style: { color: 'var(--dsw-alias-state-error-primary)' } }, '缺失 —— 未验证/无证据的记录不计入交付报告，请补 redteam_http_evidence_add')))
+        blocks.push(h('div', { key: 'none', className: 'rt-kv' }, h('b', null, t('证据', 'Evidence')),
+          h('span', { style: { color: 'var(--dsw-alias-state-error-primary)' } },
+            t('缺失 —— 未验证/无证据的记录不计入交付报告，请补 lmt_artifact_record (kind=evidence)', 'Missing — unverified/no-evidence items are excluded from reports; add via lmt_artifact_record (kind=evidence)'))))
       }
       return h('div', { key: 'eviwrap' }, blocks)
     }
 
     function CredentialList(props) {
+      useLocale()
       const creds = props.items || []
-      if (!creds.length) return h('div', { className: 'rt-empty' }, '暂无凭据（录入配置密钥或连接参数后默认脱敏展示，秒级可复用）')
+      if (!creds.length) return h('div', { className: 'rt-empty' }, t('暂无凭据（录入配置密钥或连接参数后默认脱敏展示，秒级可复用）', 'No credentials yet (secrets are masked by default when saved)'))
       return h('div', { className: 'rt-pane' }, creds.map((c) => h('div', { key: 'c' + c.id, className: 'rt-cred' },
         h('div', { className: 'rt-cred-head' },
           h('span', { className: 'rt-cred-host' }, c.host),
@@ -9886,20 +10330,21 @@ body[data-ds-dark-theme] .rt-anim-complete{
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
             onClick: (e) => { e.stopPropagation(); copyText(String(c.secret_value || '')) },
-          }, '复制')),
-        h(SecretText, { value: c.secret_value, className: 'rt-secret', empty: '未记明文 —— 请补充 secret_value 后面板才能脱敏预览' }),
+          }, t('复制', 'Copy'))),
+        h(SecretText, { value: c.secret_value, className: 'rt-secret', empty: t('未记明文 —— 请补充 secret_value 后面板才能脱敏预览', 'No plaintext — set secret_value to enable masked preview') }),
         h('div', { className: 'rt-cred-meta' },
-          [c.source ? '来源 ' + c.source : null,
-            c.tool ? '工具 ' + c.tool : null,
-            c.secret_ref ? '证据 ' + c.secret_ref : null,
+          [c.source ? t('来源 ', 'Source ') + c.source : null,
+            c.tool ? t('工具 ', 'Tool ') + c.tool : null,
+            c.secret_ref ? t('证据 ', 'Ref ') + c.secret_ref : null,
             c.found_by_agent ? 'by ' + c.found_by_agent : null,
             c.found_at ? fmt(c.found_at) : null].filter(Boolean).join(' · ')),
-        c.note ? h('div', { className: 'rt-cred-meta' }, '备注：' + c.note) : null)))
+        c.note ? h('div', { className: 'rt-cred-meta' }, t('备注：', 'Note: ') + c.note) : null)))
     }
 
     function AccessList(props) {
+      useLocale()
       const accesses = props.items || []
-      if (!accesses.length) return h('div', { className: 'rt-empty' }, '暂无访问会话')
+      if (!accesses.length) return h('div', { className: 'rt-empty' }, t('暂无访问会话', 'No active access sessions'))
       return h('div', { className: 'rt-pane' }, accesses.map((a) => h('div', {
         key: 'a' + a.id, className: 'rt-vrow',
         style: { cursor: 'default', gridTemplateColumns: '1fr 110px 80px 80px 1fr' },
@@ -9912,6 +10357,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function ArtifactsTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [files, setFiles] = React.useState([])
@@ -9939,26 +10385,27 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const fileCount = (files || []).reduce((n, g) => n + (g.files || []).length, 0)
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '配置与构建产物'),
-          h('span', { className: 'rt-tag' }, '环境变量与密钥 ' + creds.length),
-          h('span', { className: 'rt-tag' }, '活跃服务连接 ' + accesses.length),
-          h('span', { className: 'rt-tag' }, '构建与验证脚本 ' + fileCount),
+          h('span', { style: { fontWeight: 600 } }, t('配置与构建产物', 'Config & Build Artifacts')),
+          h('span', { className: 'rt-tag' }, t('环境变量与密钥 ', 'Env & Keys ') + creds.length),
+          h('span', { className: 'rt-tag' }, t('活跃服务连接 ', 'Active Connections ') + accesses.length),
+          h('span', { className: 'rt-tag' }, t('构建与验证脚本 ', 'Build & Verification Scripts ') + fileCount),
           h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新')),
+          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? t('刷新中…', 'Refreshing…') : t('刷新', 'Refresh'))),
         err ? h('div', { className: 'rt-err' }, err) : null,
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           h('details', { className: 'rt-card' },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '环境变量与密钥 · ' + creds.length + '（默认脱敏，点开查看）'),
+            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, t('环境变量与密钥 · ', 'Env & Keys · ') + creds.length + t('（默认脱敏，点开查看）', ' (masked by default; click to expand)')),
             h(CredentialList, { items: creds })),
           h('details', { className: 'rt-card' },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '活跃服务连接 · ' + accesses.length),
+            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, t('活跃服务连接 · ', 'Active Connections · ') + accesses.length),
             h(AccessList, { items: accesses })),
           h('details', { className: 'rt-card' },
-            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, '构建与验证脚本 · ' + fileCount),
+            h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, t('构建与验证脚本 · ', 'Build & Verification Scripts · ') + fileCount),
             h(AttackFilesTab, { engagement: eng, refreshKey: refreshKey }))))
     }
 
     function FindingsTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [sev, setSev] = React.useState('')
@@ -9987,7 +10434,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((r) => {
           if (my !== seqRef.current) return
           if (!r || r.ok === false) {
-            setState({ loading: false, error: (r && r.error) || '查询失败', total: 0, items: [], stats: null })
+            setState({ loading: false, error: (r && r.error) || t('查询失败', 'Query failed'), total: 0, items: [], stats: null })
             return
           }
           setState({ loading: false, error: null, total: r.total, items: r.items || [], stats: r.stats || null })
@@ -10003,8 +10450,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const setVulnStatus = (id, next) => {
         setMsg(null)
         api({ op: 'updateVuln', engagement: eng, id: id, patch: { status: next } }).then((r) => {
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '更新失败' }); return }
-          setMsg({ ok: '已更新为「' + (STATUS_LABEL[next] || next) + '」' })
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('更新失败', 'Update failed') }); return }
+          setMsg({ ok: t('已更新为「', 'Updated to "') + vulnStatusLabel(next) + t('」', '"') })
           load()
         }, (e) => setMsg({ err: String((e && e.message) || e) }))
       }
@@ -10021,24 +10468,24 @@ body[data-ds-dark-theme] .rt-anim-complete{
       })
 
       const conclusion = h('div', { className: 'rt-concl' },
-        h('span', { className: 'rt-concl-group' }, '质量'),
-        ConclItem('exp', '已确认修复/验证', (stats.byStatus.exploited || 0), status === 'exploited', () => setStatus((v) => (v === 'exploited' ? '' : 'exploited'))),
-        ConclItem('gain', '影响范围', (stats.withGained || 0), gainOnly, () => setGainOnly((v) => !v)),
-        h('span', { className: 'rt-concl-group' }, '等级'),
-        ConclItem('crit', '严重', (stats.bySeverity.critical || 0), sev === 'critical', () => setSev((v) => (v === 'critical' ? '' : 'critical'))),
-        ConclItem('high', '高危', (stats.bySeverity.high || 0), sev === 'high', () => setSev((v) => (v === 'high' ? '' : 'high'))),
+        h('span', { className: 'rt-concl-group' }, t('质量', 'Quality')),
+        ConclItem('exp', t('已确认修复/验证', 'Verified / Fixed'), (stats.byStatus.exploited || 0), status === 'exploited', () => setStatus((v) => (v === 'exploited' ? '' : 'exploited'))),
+        ConclItem('gain', t('影响范围', 'Impact Scope'), (stats.withGained || 0), gainOnly, () => setGainOnly((v) => !v)),
+        h('span', { className: 'rt-concl-group' }, t('等级', 'Severity')),
+        ConclItem('crit', t('严重', 'Critical'), (stats.bySeverity.critical || 0), sev === 'critical', () => setSev((v) => (v === 'critical' ? '' : 'critical'))),
+        ConclItem('high', t('高危', 'High'), (stats.bySeverity.high || 0), sev === 'high', () => setSev((v) => (v === 'high' ? '' : 'high'))),
         h('details', { className: 'rt-concl-extra' },
-          h('summary', null, '已确认 ' + (stats.byStatus.confirmed || 0) + ' · 中危 ' + (stats.bySeverity.medium || 0)),
+          h('summary', null, t('已确认 ', 'Confirmed ') + (stats.byStatus.confirmed || 0) + t(' · 中危 ', ' · Medium ') + (stats.bySeverity.medium || 0)),
           h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 4 } },
-            ConclItem('conf', '已确认', (stats.byStatus.confirmed || 0), status === 'confirmed', () => setStatus((v) => (v === 'confirmed' ? '' : 'confirmed'))),
-            ConclItem('med', '中危', (stats.bySeverity.medium || 0), sev === 'medium', () => setSev((v) => (v === 'medium' ? '' : 'medium'))))),
+            ConclItem('conf', t('已确认', 'Confirmed'), (stats.byStatus.confirmed || 0), status === 'confirmed', () => setStatus((v) => (v === 'confirmed' ? '' : 'confirmed'))),
+            ConclItem('med', t('中危', 'Medium'), (stats.bySeverity.medium || 0), sev === 'medium', () => setSev((v) => (v === 'medium' ? '' : 'medium'))))),
         h('div', { className: 'rt-spacer' }),
         h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-          '默认按模块聚合 · 当前显示 ' + visibleItems.length + ' / 共 ' + (state.total || 0) + ' 条 · ' + (stats.targetGroups || 0) + ' 个目标模块'))
+          t('默认按模块聚合 · 当前显示 ', 'Grouped by module · Showing ') + visibleItems.length + t(' / 共 ', ' / ') + (state.total || 0) + t(' 条 · ', ' · ') + (stats.targetGroups || 0) + t(' 个目标模块', ' target groups')))
 
       const head = h('div', { className: 'rt-vrow head' },
-        h('span', null, '等级'), h('span', null, '缺陷 / 编号'), h('span', null, '目标模块'),
-        h('span', null, '影响范围'), h('span', null, '状态'), h('span', null, '置信'))
+        h('span', null, t('等级', 'Severity')), h('span', null, t('缺陷 / 编号', 'Finding / ID')), h('span', null, t('目标模块', 'Module')),
+        h('span', null, t('影响范围', 'Impact')), h('span', null, t('状态', 'Status')), h('span', null, t('置信', 'Conf.')))
 
       const allFiles = (files || []).flatMap((g) => (g.files || []).map((f) => Object.assign({ target: g.target }, f)))
       const filesByVuln = new Map()
@@ -10057,45 +10504,45 @@ body[data-ds-dark-theme] .rt-anim-complete{
           key: 'v' + v.id, className: 'rt-vrow',
           style: compact ? { cursor: 'pointer', gridTemplateColumns: '58px minmax(0,1fr) 104px 68px' } : { cursor: 'pointer' },
         }, clickable(() => setOpenId(open ? null : v.id))),
-          h('span', null, h('span', { className: sevClass(v.severity) }, SEV_LABEL[v.severity] || v.severity)),
+          h('span', null, h('span', { className: sevClass(v.severity) }, sevLabel(v.severity))),
           h('span', { title: v.title || '' }, h('span', { className: 'rt-sec-caret' }, open ? '▾' : '▸'), (v.cve ? v.cve + ' ' : '') + (v.title || '')),
           compact ? null : h('span', { className: 'rt-mono', title: v.target || '' }, v.target || v.asset_ip || '—'),
           h('span', { title: v.gained || '' },
             gainedList.length
               ? h('span', { className: 'rt-gain', style: { maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block' } }, gainedList[0] + (gainedList.length > 1 ? ' +' + (gainedList.length - 1) : ''))
               : h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '—')),
-          h('span', null, h('span', { className: 'rt-tag' }, STATUS_LABEL[v.status] || v.status)),
+          h('span', null, h('span', { className: 'rt-tag' }, vulnStatusLabel(v.status))),
           compact ? null : h('span', null, v.confidence === null || v.confidence === undefined ? '—' : Math.round(v.confidence * 100) + '%')))
         if (openId !== v.id) return out
         out.push(h('div', {
           key: 'vd' + v.id, className: 'rt-vrow',
           style: { cursor: 'default', gridTemplateColumns: '1fr' },
         }, h('div', { className: 'rt-vdetail' },
-          h('div', { className: 'rt-kv' }, h('b', null, '影响范围'),
+          h('div', { className: 'rt-kv' }, h('b', null, t('影响范围', 'Impact Scope')),
             gainedList.length
               ? h('span', null, gainedList.map((g, gi) => h('span', { key: 'g' + gi, className: 'rt-gain', style: { marginRight: 6 } }, g)))
               : h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } },
-                  '未记录 —— 验证确认影响范围后请用 redteam_vuln_update 补充 gained')),
-          h('div', { className: 'rt-kv' }, h('b', null, '目标模块'), h('span', { className: 'rt-mono', style: { wordBreak: 'break-all' } }, v.target || '—')),
-          h('div', { className: 'rt-kv' }, h('b', null, '所属节点'), h('span', null, (v.asset_ip || '—') + ' · ' + (v.segment_cidr || ''))),
-          h('div', { className: 'rt-kv' }, h('b', null, '来源'), h('span', null, (v.source || '—') + ' · ' + (v.found_by_agent || '—') + ' · ' + fmt(v.found_at))),
+                  t('未记录 —— 验证确认影响范围后请用 lmt_artifact_record 补充 gained', 'Not recorded — update gained via lmt_artifact_record after verification'))),
+          h('div', { className: 'rt-kv' }, h('b', null, t('目标模块', 'Module')), h('span', { className: 'rt-mono', style: { wordBreak: 'break-all' } }, v.target || '—')),
+          h('div', { className: 'rt-kv' }, h('b', null, t('所属节点', 'Host')), h('span', null, (v.asset_ip || '—') + ' · ' + (v.segment_cidr || ''))),
+          h('div', { className: 'rt-kv' }, h('b', null, t('来源', 'Source')), h('span', null, (v.source || '—') + ' · ' + (v.found_by_agent || '—') + ' · ' + fmt(v.found_at))),
           detailEvidence(v),
           (() => {
             const mine = filesByVuln.get(Number(v.id)) || []
-            return h('div', { className: 'rt-kv' }, h('b', null, '构建与验证脚本'),
+            return h('div', { className: 'rt-kv' }, h('b', null, t('构建与验证脚本', 'Build & Verification Scripts')),
               mine.length
                 ? h('span', null, mine.map((f, fi) => h('div', { key: 'af' + fi, style: { marginBottom: 3 } },
-                    '· ' + (f.kind ? '[' + f.kind + '] ' : '') + (f.name || '(未命名)')
+                    '· ' + (f.kind ? '[' + f.kind + '] ' : '') + (f.name || t('(未命名)', '(unnamed)'))
                     + (f.description ? ' — ' + f.description : ''),
                     h('div', { className: 'rt-mono', style: { fontSize: 11, marginLeft: 12, color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' } }, f.path || ''))))
                 : h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } },
-                    '（无）用 redteam_attack_file_add 把该缺陷关联的复现测试或修复脚本归档，并带上 vuln_id'))
+                    t('（无）用 lmt_artifact_record (kind=evidence) 把该缺陷关联的复现测试或修复脚本归档，并带上 vuln_id', '(none) Attach repro/fix scripts with lmt_artifact_record (kind=evidence) and vuln_id')))
           })(),
           h('div', { className: 'rt-actions' },
-            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'confirmed') } }, '确认'),
-            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'exploited') } }, '已验证'),
-            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'false-positive') } }, '误报'),
-            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'fixed') } }, '已修复')))))
+            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'confirmed') } }, t('确认', 'Confirm')),
+            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'exploited') } }, t('已验证', 'Verified')),
+            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'false-positive') } }, t('误报', 'False Positive')),
+            h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); setVulnStatus(v.id, 'fixed') } }, t('已修复', 'Fixed'))))))
         return out
       }
 
@@ -10121,21 +10568,21 @@ body[data-ds-dark-theme] .rt-anim-complete{
           rows.push(h(Section, {
             key: 'sec:' + g.key, tone: 'target',
             title: g.key,
-            count: g.vulns.length + ' 项缺陷',
+            count: g.vulns.length + t(' 项缺陷', ' findings'),
             sub: [
-              SEV_LABEL[g.top.severity] || g.top.severity,
-              g.exploited ? '已验证 ' + g.exploited : null,
-              g.top.asset_ip && g.top.asset_ip !== g.key ? '节点 ' + g.top.asset_ip : null,
+              sevLabel(g.top.severity),
+              g.exploited ? t('已验证 ', 'Verified ') + g.exploited : null,
+              g.top.asset_ip && g.top.asset_ip !== g.key ? t('节点 ', 'Host ') + g.top.asset_ip : null,
             ].filter(Boolean).join(' · '),
             right: g.gained.length
               ? g.gained.slice(0, 2).join(' / ') + (g.gained.length > 2 ? ' +' + (g.gained.length - 2) : '')
-              : '未记录影响范围',
+              : t('未记录影响范围', 'No impact recorded'),
             open: collapse.isOpen(key, defOpen),
             onToggle: collapse.toggle(key, defOpen),
           }, g.vulns.map((v) => vulnRows(v, true))))
         }
         if (!list.length && !state.loading && !state.error) {
-          rows.push(h('div', { key: 'none', className: 'rt-empty' }, resultsOnly ? '当前没有已确认修复/验证的关键缺陷；点「显示全部」看全部审查记录。' : '暂无审查与缺陷记录'))
+          rows.push(h('div', { key: 'none', className: 'rt-empty' }, resultsOnly ? t('当前没有已确认修复/验证的关键缺陷；点「显示全部」看全部审查记录。', 'No verified/fixed key findings; click "Show All" to inspect all records.') : t('暂无审查与缺陷记录', 'No review or defect records yet')))
         }
       } else {
         for (const v of visibleItems) rows.push(...vulnRows(v))
@@ -10143,54 +10590,54 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
       const toolbar = h('div', { className: 'rt-toolbar' },
         h('input', {
-          className: 'rt-input', style: { flex: '1 1 140px' }, placeholder: '搜索标题 / 编号 / 模块（回车）',
+          className: 'rt-input', style: { flex: '1 1 140px' }, placeholder: t('搜索标题 / 编号 / 模块（回车）', 'Search title / ID / module (Enter)'),
           value: q, onChange: (e) => setQ(e.target.value),
           onKeyDown: (e) => { if (e.key === 'Enter') setQApplied(q) },
         }),
-        h('button', { className: 'rt-btn', onClick: () => setQApplied(q) }, '搜索'),
+        h('button', { className: 'rt-btn', onClick: () => setQApplied(q) }, t('搜索', 'Search')),
         h('select', { className: 'rt-input', value: sev, onChange: (e) => setSev(e.target.value) },
-          h('option', { value: '' }, '全部等级'),
-          h('option', { value: 'critical' }, '严重'),
-          h('option', { value: 'high' }, '高危'),
-          h('option', { value: 'medium' }, '中危'),
-          h('option', { value: 'low' }, '低危'),
-          h('option', { value: 'info' }, '信息')),
+          h('option', { value: '' }, t('全部等级', 'All Severities')),
+          h('option', { value: 'critical' }, t('严重', 'Critical')),
+          h('option', { value: 'high' }, t('高危', 'High')),
+          h('option', { value: 'medium' }, t('中危', 'Medium')),
+          h('option', { value: 'low' }, t('低危', 'Low')),
+          h('option', { value: 'info' }, t('信息', 'Info'))),
         h('select', { className: 'rt-input', value: status, onChange: (e) => setStatus(e.target.value) },
-          h('option', { value: '' }, '全部状态'),
-          h('option', { value: 'candidate' }, '待验证'),
-          h('option', { value: 'confirmed' }, '已确认'),
-          h('option', { value: 'exploited' }, '已确认修复/验证'),
-          h('option', { value: 'false-positive' }, '误报'),
-          h('option', { value: 'fixed' }, '已修复')),
+          h('option', { value: '' }, t('全部状态', 'All Statuses')),
+          h('option', { value: 'candidate' }, t('待验证', 'Pending')),
+          h('option', { value: 'confirmed' }, t('已确认', 'Confirmed')),
+          h('option', { value: 'exploited' }, t('已确认修复/验证', 'Verified / Fixed')),
+          h('option', { value: 'false-positive' }, t('误报', 'False Positive')),
+          h('option', { value: 'fixed' }, t('已修复', 'Fixed'))),
         h('button', {
           className: 'rt-btn' + (resultsOnly ? ' rt-btn-primary' : ''),
-          title: '默认只显示已验证或已记录影响范围的关键缺陷；点一下显示全部候选/已确认项',
+          title: t('默认只显示已验证或已记录影响范围的关键缺陷；点一下显示全部候选/已确认项', 'Show only verified or impact-recorded key findings; click to show all'),
           onClick: () => setResultsOnly((v) => !v),
-        }, resultsOnly ? '只看关键缺陷 ✓' : '显示全部'))
+        }, resultsOnly ? t('只看关键缺陷 ✓', 'Key Findings Only ✓') : t('显示全部', 'Show All')))
 
       return h('div', { className: 'rt-main' }, toolbar, conclusion,
         h('div', { className: 'rt-subtabs' },
-          h('span', { className: 'rt-subtab on' }, '审查项 ' + visibleItems.length),
+          h('span', { className: 'rt-subtab on' }, t('审查项 ', 'Items ') + visibleItems.length),
           h('div', { className: 'rt-spacer' }),
           grouped ? h('button', {
-            className: 'rt-btn', title: '展开所有目标模块',
+            className: 'rt-btn', title: t('展开所有目标模块', 'Expand all target modules'),
             onClick: () => collapse.setAll(visibleItems.map((v) => 'target:' + targetKeyOf(v)), true),
-          }, '全部展开') : null,
+          }, t('全部展开', 'Expand All')) : null,
           grouped ? h('button', {
-            className: 'rt-btn', title: '收起所有目标模块',
+            className: 'rt-btn', title: t('收起所有目标模块', 'Collapse all target modules'),
             onClick: () => collapse.setAll(visibleItems.map((v) => 'target:' + targetKeyOf(v)), false),
-          }, '全部收起') : null,
+          }, t('全部收起', 'Collapse All')) : null,
           h('button', {
             className: 'rt-btn' + (grouped ? ' rt-btn-primary' : ''),
-            title: grouped ? '当前：按目标模块聚合' : '当前：平铺每条缺陷',
+            title: grouped ? t('当前：按目标模块聚合', 'Current: Grouped by module') : t('当前：平铺每条缺陷', 'Current: Flat list'),
             onClick: () => setGrouped((g) => !g),
-          }, grouped ? '按目标聚合' : '平铺列表')),
+          }, grouped ? t('按目标聚合', 'Group by Module') : t('平铺列表', 'Flat List'))),
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
-        needRestart ? h('div', { className: 'rt-empty' }, '该模块的宿主代码已更新，需重启一次 dsh web 后生效') : null,
+        needRestart ? h('div', { className: 'rt-empty' }, t('该模块的宿主代码已更新，需重启一次 dsh web 后生效', 'Host plugin code updated; restart dsh web to apply')) : null,
         state.error && !needRestart ? h('div', { className: 'rt-err' }, state.error) : null,
         h('div', { className: 'rt-table' }, grouped ? null : head, rows,
           !state.loading && !visibleItems.length && !state.error
-            ? h('div', { className: 'rt-empty' }, resultsOnly ? '当前没有已确认修复/验证的关键缺陷；点「显示全部」看全部审查记录。' : '暂无审查与缺陷记录')
+            ? h('div', { className: 'rt-empty' }, resultsOnly ? t('当前没有已确认修复/验证的关键缺陷；点「显示全部」看全部审查记录。', 'No verified/fixed key findings; click "Show All" to inspect all records.') : t('暂无审查与缺陷记录', 'No review or defect records yet'))
             : null))
     }
 
@@ -10207,7 +10654,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const grouped = new Set(groups.reduce((acc, g) => acc.concat(g.items.map((x) => x.id)), []))
       const rest = (reportItems || []).filter((x) => !grouped.has(x.id))
       if (rest.length > 0) {
-        groups.push({ code: 'other', name: '其他得分', color: '#64748b', ordinal: groups.length + 1,
+        groups.push({ code: 'other', name: t('其他得分', 'Other Milestones'), color: '#64748b', ordinal: groups.length + 1,
           points: rest.reduce((n, x) => n + (x.counted ? x.points : 0), 0),
           cumulative: 0, items: rest })
       }
@@ -10215,6 +10662,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function ReportV2(props) {
+      useLocale()
       const { report, eng, mdText, busy, load, copy, download, msg } = props
       const summary = report.summary || {}
       const table = (headers, rows) => {
@@ -10224,113 +10672,115 @@ body[data-ds-dark-theme] .rt-anim-complete{
         return h('div', { className: 'rt-r2-table-wrap' },
           h('table', { className: 'rt-r2-table' }, head, body))
       }
+      const strengthLabel = (s) => s === '强' ? t('强', 'Strong') : (s === '弱' ? t('弱', 'Weak') : s)
       const proofCard = (g) => h('div', { className: 'rt-r2-proof', key: 'proof' + (g.asset.id || g.asset.ip) },
         h('div', { className: 'rt-r2-proof-head' },
-          h('b', { className: 'rt-mono' }, g.asset.ip || g.asset.primary_name || '未命名资产'),
+          h('b', { className: 'rt-mono' }, g.asset.ip || g.asset.primary_name || t('未命名资产', 'Unnamed Module')),
           g.asset.primary_name ? h('span', { className: 'rt-r2-muted' }, g.asset.primary_name) : null,
           h('div', { className: 'rt-spacer' }),
           h('span', { className: 'rt-tag' }, g.type),
-          h('span', { className: 'rt-tag ' + (g.strength === '强' ? 'rt-tag-live' : 'rt-tag-warn') }, '证明 ' + g.strength)),
-        h('div', { className: 'rt-r2-proof-line' }, h('b', null, '归属证据 '), g.proof || '待补'),
+          h('span', { className: 'rt-tag ' + (g.strength === '强' ? 'rt-tag-live' : 'rt-tag-warn') }, t('证明 ', 'Proof ') + strengthLabel(g.strength))),
+        h('div', { className: 'rt-r2-proof-line' }, h('b', null, t('归属证据 ', 'Ownership Proof ')), g.proof || t('待补', 'Pending')),
         (g.shots || []).length > 0
-          ? h(ShotStrip, { eng: eng, shots: g.shots, total: g.shots.length, title: '归属截图' })
-          : h('div', { className: 'rt-r2-empty' }, '归属截图待补'))
+          ? h(ShotStrip, { eng: eng, shots: g.shots, total: g.shots.length, title: t('归属截图', 'Ownership Screenshots') })
+          : h('div', { className: 'rt-r2-empty' }, t('归属截图待补', 'Ownership screenshots pending')))
       const proofSection = (title, list) => h('div', null,
         h('h3', { className: 'rt-r2-h3' }, title),
         (list || []).length === 0
-          ? h('div', { className: 'rt-r2-empty' }, '未采集到对应资产证据。')
+          ? h('div', { className: 'rt-r2-empty' }, t('未采集到对应资产证据。', 'No matching module proof collected.'))
           : h('div', { className: 'rt-r2-proof-grid' }, list.map(proofCard)))
       const code = (text, label) => h('div', { className: 'rt-r2-code' },
         h('div', { className: 'rt-r2-code-head' },
           h('span', null, label), h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn', onClick: () => copy(String(text || ''), label) }, '复制')),
+          h('button', { className: 'rt-btn', onClick: () => copy(String(text || ''), label) }, t('复制', 'Copy'))),
         h('pre', { className: 'rt-r2-pre' }, String(text || '')))
       const reproItem = (x, heading) => h('div', { className: 'rt-r2-item', key: 'ri' + heading },
         h('h5', { className: 'rt-r2-h5' }, heading + ' ' + (x.target || x.asset_ip || '')),
         h('div', { className: 'rt-r2-item-line' },
-          h('b', null, '变更说明 '),
+          h('b', null, t('变更说明 ', 'Change Summary ')),
           x.vuln ? [x.vuln.cve, x.vuln.title].filter(Boolean).join(' ') : (x.how || x.point_name)),
-        x.vuln_source === 'step' ? h('div', { className: 'rt-r2-muted' }, '关联自研发执行步骤，记分时未显式填写') : null,
-        x.evidence ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '结果 '), x.evidence) : null,
-        x.replay_cmd ? code(x.replay_cmd, /^(powershell|pwsh)/i.test(x.replay_cmd) ? 'PowerShell' : 'Bash / 命令') : null,
-        (x.requests || []).slice(0, 3).map((q, qi) => q.request ? code(q.request, 'HTTP 报文 ' + (qi + 1)) : null),
+        x.vuln_source === 'step' ? h('div', { className: 'rt-r2-muted' }, t('关联自研发执行步骤，记分时未显式填写', 'Linked from engineering step')) : null,
+        x.evidence ? h('div', { className: 'rt-r2-item-line' }, h('b', null, t('结果 ', 'Result ')), x.evidence) : null,
+        x.replay_cmd ? code(x.replay_cmd, /^(powershell|pwsh)/i.test(x.replay_cmd) ? 'PowerShell' : t('Bash / 命令', 'Bash / Command')) : null,
+        (x.requests || []).slice(0, 3).map((q, qi) => q.request ? code(q.request, t('HTTP 报文 ', 'HTTP Request ') + (qi + 1)) : null),
         (!x.replay_cmd && !(x.requests || []).some((q) => q.request))
-          ? h('div', { className: 'rt-r2-gap' }, '复现缺口：没有留存真实命令或 HTTP 报文。') : null,
+          ? h('div', { className: 'rt-r2-gap' }, t('复现缺口：没有留存真实命令或 HTTP 报文。', 'Repro gap: no replay command or HTTP payload recorded.')) : null,
         (x.attack_files || []).length > 0
-          ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '构建与验证脚本 '),
-              h('span', { className: 'rt-mono' }, x.attack_files.map((f) => f.path).join('、'))) : null,
+          ? h('div', { className: 'rt-r2-item-line' }, h('b', null, t('构建与验证脚本 ', 'Build & Verification Scripts ')),
+              h('span', { className: 'rt-mono' }, x.attack_files.map((f) => f.path).join(', '))) : null,
         (x.steps || []).some((s) => s.evidence_ref)
-          ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '证据文件 '),
-              h('span', { className: 'rt-mono' }, Array.from(new Set(x.steps.map((s) => s.evidence_ref).filter(Boolean))).join('、'))) : null,
-        (x.shots || []).length > 0 ? h(ShotStrip, { eng: eng, shots: x.shots, total: x.shots.length, title: '复现截图' }) : null,
-        (x.gaps || []).length > 0 ? h('div', { className: 'rt-r2-gap' }, '复现材料：' + x.gaps.join('；')) : null)
+          ? h('div', { className: 'rt-r2-item-line' }, h('b', null, t('证据文件 ', 'Evidence Files ')),
+              h('span', { className: 'rt-mono' }, Array.from(new Set(x.steps.map((s) => s.evidence_ref).filter(Boolean))).join(', '))) : null,
+        (x.shots || []).length > 0 ? h(ShotStrip, { eng: eng, shots: x.shots, total: x.shots.length, title: t('复现截图', 'Repro Screenshots') }) : null,
+        (x.gaps || []).length > 0 ? h('div', { className: 'rt-r2-gap' }, t('复现材料：', 'Missing Repro: ') + x.gaps.join('; ')) : null)
       const reproList = (list, headingPrefix, kind) => (list || []).map((g, i) => {
         if (kind === 'boundary') {
           return h('div', { className: 'rt-r2-group', key: 'b' + i },
-            h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' 联调通道' + (i + 1)),
-            h('div', { className: 'rt-r2-item-line' }, h('b', null, '入口 '), h('span', { className: 'rt-mono' }, g.entry || '—')),
+            h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + t(' 联调通道', ' Bridge Channel ') + (i + 1)),
+            h('div', { className: 'rt-r2-item-line' }, h('b', null, t('入口 ', 'Entry ')), h('span', { className: 'rt-mono' }, g.entry || '—')),
             g.tunnel
-              ? h('div', { className: 'rt-r2-item-line' }, h('b', null, '通道 '), h('span', { className: 'rt-mono' },
+              ? h('div', { className: 'rt-r2-item-line' }, h('b', null, t('通道 ', 'Channel ')), h('span', { className: 'rt-mono' },
                   (g.tunnel.kind || 'socks5') + ' ' + (g.tunnel.listen || '') + (g.tunnel.reach ? ' → ' + g.tunnel.reach : '')))
-              : h('div', { className: 'rt-r2-gap' }, '通道记录缺失，需补联调证据。'),
-            g.tunnel && g.tunnel.command ? code(g.tunnel.command, '通道建立命令') : null,
+              : h('div', { className: 'rt-r2-gap' }, t('通道记录缺失，需补联调证据。', 'Channel record missing; add bridge proof.')),
+            g.tunnel && g.tunnel.command ? code(g.tunnel.command, t('通道建立命令', 'Channel Setup Command')) : null,
             g.items.map((x, j) => reproItem(x, headingPrefix + (i + 1) + '.' + (j + 1))))
         }
         if (kind === 'internet') {
           return h('div', { className: 'rt-r2-group', key: 'g' + i },
-            h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' ' + (g.asset.ip || g.asset.primary_name || '未命名模块')),
+            h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' ' + (g.asset.ip || g.asset.primary_name || t('未命名模块', 'Unnamed Module'))),
             g.items.map((x, j) => reproItem(x, headingPrefix + (i + 1) + '.' + (j + 1))))
         }
         return h('div', { className: 'rt-r2-group', key: 's' + i },
-          h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' ' + (g.label || '网段') + ' “' + (g.cidr || '未归属网段') + '”'),
+          h('h4', { className: 'rt-r2-h4' }, headingPrefix + (i + 1) + ' ' + (g.label || t('网段', 'Group')) + ' "' + (g.cidr || t('未归属网段', 'Unassigned')) + '"'),
           (g.assets || []).map((a, ai) => h('div', { className: 'rt-r2-asset', key: 'a' + ai },
-            h('h5', { className: 'rt-r2-h5' }, (a.asset.ip || a.asset.primary_name || '未命名模块')),
+            h('h5', { className: 'rt-r2-h5' }, (a.asset.ip || a.asset.primary_name || t('未命名模块', 'Unnamed Module'))),
             a.items.map((x, xi) => reproItem(x, headingPrefix + (i + 1) + '.' + (ai + 1) + '.' + (xi + 1))))))
       })
       const stageSection = (s, i) => {
         const codeStr = s.code
         const list = (report.stage_tables && report.stage_tables[codeStr]) || []
-        const headers = codeStr === 'internet' ? ['序号', '里程碑项', '分值', 'URL', '凭据']
-          : codeStr === 'boundary' ? ['序号', '里程碑项', '分值', '对外入口点']
-            : ['序号', '里程碑项', '分值', '模块', '凭据']
+        const headers = codeStr === 'internet' ? [t('序号', '#'), t('里程碑项', 'Milestone'), t('分值', 'Pts'), 'URL', t('凭据', 'Creds')]
+          : codeStr === 'boundary' ? [t('序号', '#'), t('里程碑项', 'Milestone'), t('分值', 'Pts'), t('对外入口点', 'External Entry')]
+            : [t('序号', '#'), t('里程碑项', 'Milestone'), t('分值', 'Pts'), t('模块', 'Module'), t('凭据', 'Creds')]
         const rows = list.map((r) => codeStr === 'internet' ? [r.seq, r.point_name, '+' + r.points, r.url, r.credential]
           : codeStr === 'boundary' ? [r.seq, r.point_name, '+' + r.points, r.entry]
             : [r.seq, r.point_name, '+' + r.points, r.asset, r.credential])
         return h('div', { key: 'st' + codeStr },
-          h('h3', { className: 'rt-r2-h3' }, '2.' + (i + 1) + ' ' + s.name + '（' + s.count + ' 项 / +' + s.points + ' 分）'),
-          list.length === 0 ? h('div', { className: 'rt-r2-empty' }, '本阶段无里程碑项。') : table(headers, rows))
+          h('h3', { className: 'rt-r2-h3' }, '2.' + (i + 1) + ' ' + s.name + ' (' + s.count + t(' 项', ' items') + ' / +' + s.points + t(' 分', ' pts') + ')'),
+          list.length === 0 ? h('div', { className: 'rt-r2-empty' }, t('本阶段无里程碑项。', 'No milestones in this stage.')) : table(headers, rows))
       }
       return h('div', { className: 'rt-main rt-r2' },
         h('div', { className: 'rt-toolbar rt-r2-toolbar' },
-          h('span', { style: { fontWeight: 700 } }, 'LMTAgent 研发交付报告'),
-          h('span', { className: 'rt-tag rt-tag-live' }, '合计 ' + summary.points + ' 分'),
-          h('span', { className: 'rt-tag' }, summary.count + ' 项得分'),
-          h('span', { className: 'rt-tag' + (summary.incomplete ? ' rt-tag-warn' : ' rt-tag-live') }, '可复现 ' + (summary.count - (summary.incomplete || 0)) + '/' + summary.count),
+          h('span', { style: { fontWeight: 700 } }, t('LMTAgent 研发交付报告', 'LMTAgent Delivery Report')),
+          h('span', { className: 'rt-tag rt-tag-live' }, t('合计 ', 'Total ') + summary.points + t(' 分', ' pts')),
+          h('span', { className: 'rt-tag' }, summary.count + t(' 项得分', ' achieved')),
+          h('span', { className: 'rt-tag' + (summary.incomplete ? ' rt-tag-warn' : ' rt-tag-live') }, t('可复现 ', 'Reproducible ') + (summary.count - (summary.incomplete || 0)) + '/' + summary.count),
           h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn', disabled: busy || !mdText, onClick: () => copy(mdText, '整份报告') }, '复制全文'),
-          h('button', { className: 'rt-btn', disabled: busy || !mdText, onClick: () => download(mdText, report.target || eng) }, '下载 .md'),
-          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? '生成中…' : '重新生成')),
+          h('button', { className: 'rt-btn', disabled: busy || !mdText, onClick: () => copy(mdText, t('整份报告', 'Full Report')) }, t('复制全文', 'Copy All')),
+          h('button', { className: 'rt-btn', disabled: busy || !mdText, onClick: () => download(mdText, report.target || eng) }, t('下载 .md', 'Download .md')),
+          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? t('生成中…', 'Generating…') : t('重新生成', 'Regenerate'))),
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
         h('div', { className: 'rt-r2-scroll' },
           h('section', { className: 'rt-r2-section', id: 'rt-r2-assets' },
-            h('h2', { className: 'rt-r2-h2' }, '一、模块与服务归属证明'),
-            proofSection('1.1 对外服务模块归属证明', report.asset_proof && report.asset_proof.internet),
-            proofSection('1.2 内部入口模块归属证明', report.asset_proof && report.asset_proof.internal_entry)),
+            h('h2', { className: 'rt-r2-h2' }, t('一、模块与服务归属证明', '1. Module & Service Ownership')),
+            proofSection(t('1.1 对外服务模块归属证明', '1.1 External Service Ownership'), report.asset_proof && report.asset_proof.internet),
+            proofSection(t('1.2 内部入口模块归属证明', '1.2 Internal Entry Ownership'), report.asset_proof && report.asset_proof.internal_entry)),
           h('section', { className: 'rt-r2-section', id: 'rt-r2-scores' },
-            h('h2', { className: 'rt-r2-h2' }, '二、里程碑得分汇总表'),
-            table(['阶段', '计分项', '得分'], (report.stage_summary || []).map((s) => [s.name, s.count, '+' + s.points])),
+            h('h2', { className: 'rt-r2-h2' }, t('二、里程碑得分汇总表', '2. Milestone Summary')),
+            table([t('阶段', 'Stage'), t('计分项', 'Items'), t('得分', 'Points')], (report.stage_summary || []).map((s) => [s.name, s.count, '+' + s.points])),
             (report.stage_summary || []).map(stageSection)),
           h('section', { className: 'rt-r2-section', id: 'rt-r2-repro' },
-            h('h2', { className: 'rt-r2-h2' }, '三、里程碑交付复现'),
-            h('h3', { className: 'rt-r2-h3' }, '3.1 对外服务模块交付复现'),
-            (report.repro && report.repro.internet || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无对外服务模块得分项。') : reproList(report.repro.internet, '3.1.', 'internet'),
-            h('h3', { className: 'rt-r2-h3' }, '3.2 跨网联调通道交付复现'),
-            (report.repro && report.repro.boundary || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无跨网联调通道得分项。') : reproList(report.repro.boundary, '3.2.', 'boundary'),
-            h('h3', { className: 'rt-r2-h3' }, '3.3 内部服务模块交付复现'),
-            (report.repro && report.repro.internal_segments || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, '无内部服务模块得分项。') : reproList(report.repro.internal_segments, '3.3.', 'internal'))))
+            h('h2', { className: 'rt-r2-h2' }, t('三、里程碑交付复现', '3. Milestone Reproduction')),
+            h('h3', { className: 'rt-r2-h3' }, t('3.1 对外服务模块交付复现', '3.1 External Module Reproduction')),
+            (report.repro && report.repro.internet || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, t('无对外服务模块得分项。', 'No external module items.')) : reproList(report.repro.internet, '3.1.', 'internet'),
+            h('h3', { className: 'rt-r2-h3' }, t('3.2 跨网联调通道交付复现', '3.2 Bridge Channel Reproduction')),
+            (report.repro && report.repro.boundary || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, t('无跨网联调通道得分项。', 'No bridge channel items.')) : reproList(report.repro.boundary, '3.2.', 'boundary'),
+            h('h3', { className: 'rt-r2-h3' }, t('3.3 内部服务模块交付复现', '3.3 Internal Module Reproduction')),
+            (report.repro && report.repro.internal_segments || []).length === 0 ? h('div', { className: 'rt-r2-empty' }, t('无内部服务模块得分项。', 'No internal module items.')) : reproList(report.repro.internal_segments, '3.3.', 'internal'))))
     }
 
     function ReportTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [data, setData] = React.useState(null)
@@ -10343,7 +10793,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         if (!eng) return
         setBusy(true); setMsg(null)
         api({ op: 'scoreReport', engagement: eng }).then((r) => {
-          if (!r || r.ok === false) { setBusy(false); setErr((r && r.error) || '生成失败'); return }
+          if (!r || r.ok === false) { setBusy(false); setErr((r && r.error) || t('生成失败', 'Generation failed')); return }
           if ((!r.stages || r.stages.length === 0) && (r.items || []).length > 0) {
             api({ op: 'scoreChain', engagement: eng }).then((c) => {
               setBusy(false); setErr(null); setData(Object.assign({}, r, { stages: groupByStage(r.items, c) }))
@@ -10372,8 +10822,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
           a.download = 'report-' + safe + '.md'
           a.click()
           URL.revokeObjectURL(url)
-          setMsg({ ok: '已下载：' + label })
-        } catch (e) { setMsg({ err: '下载失败：' + ((e && e.message) || e) }) }
+          setMsg({ ok: t('已下载：', 'Downloaded: ') + label })
+        } catch (e) { setMsg({ err: t('下载失败：', 'Download failed: ') + ((e && e.message) || e) }) }
       }
 
       const items = (data && data.items) || []
@@ -10390,150 +10840,151 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const gapItems = items.filter((x) => x.incomplete === true || (Array.isArray(x.gaps) && x.gaps.length > 0))
       const gapPreview = gapItems.slice(0, 12).map((x) => h('div', {
         key: 'gap' + x.id, className: 'rt-rep-missing', style: { marginBottom: 4 },
-      }, '#' + x.seq + ' ' + x.point_name + ' · ' + (x.target || x.asset_ip || '未标目标') + '：'
-        + ((x.gaps || []).join('；') || '缺少复现材料')))
+      }, '#' + x.seq + ' ' + x.point_name + ' · ' + (x.target || x.asset_ip || t('未标目标', 'Untargeted')) + ': '
+        + ((x.gaps || []).join('; ') || t('缺少复现材料', 'Missing repro artifacts'))))
       const fullText = mdText
         .replace(/^<a id="[^"]*"><\/a>\s*$/gm, '')
-        .replace(/^!\[[^\]]*\]\([^)]*\)\s*$/gm, '> 证据截图见下方卡片视图或导出包。')
+        .replace(/^!\[[^\]]*\]\([^)]*\)\s*$/gm, t('> 证据截图见下方卡片视图或导出包。', '> Screenshots are shown in card view or export bundle.'))
       const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳']
 
       const card = (x) => h('div', { key: 'r' + x.id, className: 'rt-rep' },
         h('div', { className: 'rt-rep-head' },
           h('span', { className: 'rt-rep-idx' }, String(x.seq)),
           h('span', { className: 'rt-rep-name' }, x.point_name),
-          h('span', { className: 'rt-flow-pts' }, '+' + x.points + ' 分'),
-          x.nth_of_point > 1 ? h('span', { className: 'rt-tag' }, '同类第 ' + x.nth_of_point + ' 次') : null,
+          h('span', { className: 'rt-flow-pts' }, '+' + x.points + t(' 分', ' pts')),
+          x.nth_of_point > 1 ? h('span', { className: 'rt-tag' }, t('同类第 ' + x.nth_of_point + ' 次', 'Occurrence #' + x.nth_of_point)) : null,
           h('div', { className: 'rt-spacer' }),
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
-            onClick: () => copy((x.requests || []).map((v) => v.request || '').filter(Boolean).join('\n\n'), '第 ' + x.seq + ' 项请求'),
-          }, '复制请求')),
+            onClick: () => copy((x.requests || []).map((v) => v.request || '').filter(Boolean).join('\n\n'), t('第 ' + x.seq + ' 项请求', 'Request #' + x.seq)),
+          }, t('复制请求', 'Copy Request'))),
         h('div', { className: 'rt-rep-meta' },
-          h('span', null, h('b', null, '目标 ')), h('span', { className: 'rt-mono' }, x.target || x.asset_ip || '—')),
-        x.gained ? h('div', { className: 'rt-rep-meta' }, h('b', null, '交付 '), h('span', null, x.gained)) : null,
-        x.vuln ? h('div', { className: 'rt-rep-meta' }, h('b', null, '关联项 '),
+          h('span', null, h('b', null, t('目标 ', 'Target '))), h('span', { className: 'rt-mono' }, x.target || x.asset_ip || '—')),
+        x.gained ? h('div', { className: 'rt-rep-meta' }, h('b', null, t('交付 ', 'Delivered ')), h('span', null, x.gained)) : null,
+        x.vuln ? h('div', { className: 'rt-rep-meta' }, h('b', null, t('关联项 ', 'Linked Item ')),
           h('span', null, [x.vuln.cve, x.vuln.title].filter(Boolean).join(' ')
-            + (x.vuln_source === 'step' ? '（关联自研发执行步骤）' : ''))) : null,
-        x.evidence ? h('div', { className: 'rt-rep-meta' }, h('b', null, '结果 '),
+            + (x.vuln_source === 'step' ? t('（关联自研发执行步骤）', ' (linked from engineering step)') : ''))) : null,
+        x.evidence ? h('div', { className: 'rt-rep-meta' }, h('b', null, t('结果 ', 'Result ')),
           h('span', null, String(x.evidence).replace(/\n+/g, ' '))) : null,
-        x.recorded_at ? h('div', { className: 'rt-rep-meta' }, h('b', null, '取得时间 '),
-          h('span', null, fmt(x.recorded_at) + (x.recorded_by ? '（' + (ROLE_LABEL[x.recorded_by] || x.recorded_by) + '）' : ''))) : null,
-        h(ShotStrip, { eng: eng, shots: x.shots, total: x.shot_total, title: '证据截图' }),
+        x.recorded_at ? h('div', { className: 'rt-rep-meta' }, h('b', null, t('取得时间 ', 'Recorded ')),
+          h('span', null, fmt(x.recorded_at) + (x.recorded_by ? ' (' + roleLabel(x.recorded_by) + ')' : ''))) : null,
+        h(ShotStrip, { eng: eng, shots: x.shots, total: x.shot_total, title: t('证据截图', 'Evidence Screenshots') }),
         h('details', { className: 'rt-rep-trace', open: x.incomplete === true || (x.steps || []).length === 0 },
           h('summary', { className: 'rt-rep-trace-head', style: { cursor: 'pointer' } },
-            h('span', { className: 'rt-rep-trace-title' }, '复现步骤（点击展开）'),
-            (x.steps || []).length ? h('span', { className: 'rt-tag' }, (x.steps || []).length + ' 个动作') : null,
-            (x.credentials || []).length ? h('span', { className: 'rt-tag' }, (x.credentials || []).length + ' 条凭据') : null,
-            (x.tunnels || []).length ? h('span', { className: 'rt-tag' }, (x.tunnels || []).length + ' 条通道') : null,
-            x.incomplete ? h('span', { className: 'rt-tag rt-tag-warn' }, '复现材料待补') : h('span', { className: 'rt-tag rt-tag-live' }, '可复现')),
+            h('span', { className: 'rt-rep-trace-title' }, t('复现步骤（点击展开）', 'Reproduction Steps (click to expand)')),
+            (x.steps || []).length ? h('span', { className: 'rt-tag' }, (x.steps || []).length + t(' 个动作', ' steps')) : null,
+            (x.credentials || []).length ? h('span', { className: 'rt-tag' }, (x.credentials || []).length + t(' 条凭据', ' creds')) : null,
+            (x.tunnels || []).length ? h('span', { className: 'rt-tag' }, (x.tunnels || []).length + t(' 条通道', ' channels')) : null,
+            x.incomplete ? h('span', { className: 'rt-tag rt-tag-warn' }, t('复现材料待补', 'Repro Incomplete')) : h('span', { className: 'rt-tag rt-tag-live' }, t('可复现', 'Reproducible'))),
           h('div', { style: { paddingTop: 6 } },
             x.how ? h('div', { className: 'rt-rep-trace-how' }, x.how) : null,
             (x.steps || []).length === 0
               ? h('div', { className: 'rt-rep-missing' },
-                  '本条未关联动作步骤，复现入口见上方「复现」。需要补记动作时用 redteam_chain_add（title / detail / tool / result），记分时也可带 point_code + evidence 一次完成。')
+                  t('本条未关联动作步骤，复现入口见上方「复现」。需要补记动作时用 lmt_artifact_record（title / detail / tool / result），也可带 point_code + evidence 一次完成。',
+                    'No linked action steps. Add steps with lmt_artifact_record (title / detail / tool / result) or include point_code + evidence when recording.'))
               : (x.steps || []).map((s, si) => h('div', { key: 's' + s.id, className: 'rt-rep-step' },
                   h('div', { className: 'rt-rep-step-head' },
                     h('span', { className: 'rt-rep-step-no' }, String(si + 1)),
-                    h('span', { className: 'rt-rep-step-title' }, s.title || '(未命名动作)'),
-                    s.agent ? h('span', { className: 'rt-tag' }, ROLE_LABEL[s.agent] || s.agent) : null,
+                    h('span', { className: 'rt-rep-step-title' }, s.title || t('(未命名动作)', '(unnamed step)')),
+                    s.agent ? h('span', { className: 'rt-tag' }, roleLabel(s.agent)) : null,
                     s.stage_code ? h('span', { className: 'rt-tag' }, s.stage_code) : null,
-                    s.inferred ? h('span', { className: 'rt-tag' }, '按同模块推断') : null,
+                    s.inferred ? h('span', { className: 'rt-tag' }, t('按同模块推断', 'Inferred by module')) : null,
                     h('div', { className: 'rt-spacer' }),
                     s.recorded_at ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, fmt(s.recorded_at)) : null),
                   s.detail ? h('div', { className: 'rt-rep-step-detail' }, s.detail) : null,
                   h('div', { className: 'rt-rep-step-cmd' },
-                    h('b', null, '执行 '),
+                    h('b', null, t('执行 ', 'Run ')),
                     s.tool
                       ? h('span', { className: 'rt-mono' }, s.tool)
-                      : h('span', { style: { color: 'var(--dsw-alias-state-warn-primary, #f59e0b)' } }, '未记录实际命令（redteam_chain_add 的 tool）')),
+                      : h('span', { style: { color: 'var(--dsw-alias-state-warn-primary, #f59e0b)' } }, t('未记录实际命令（lmt_artifact_record 的 tool）', 'No command recorded (tool in lmt_artifact_record)'))),
                   s.tool ? h('div', { style: { marginTop: 3 } },
                     h('button', {
                       className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
-                      onClick: () => copy(String(s.tool), '第 ' + (si + 1) + ' 步命令'),
-                    }, '复制命令')) : null,
-                  s.result ? h('div', { className: 'rt-rep-step-result' }, h('b', null, '结果 '), String(s.result).replace(/\n+/g, ' ')) : null,
-                  s.evidence_ref ? h('div', { className: 'rt-rep-step-result' }, h('b', null, '证据 '), h('span', { className: 'rt-mono' }, s.evidence_ref)) : null)),
+                      onClick: () => copy(String(s.tool), t('第 ' + (si + 1) + ' 步命令', 'Step ' + (si + 1) + ' Command')),
+                    }, t('复制命令', 'Copy Command'))) : null,
+                  s.result ? h('div', { className: 'rt-rep-step-result' }, h('b', null, t('结果 ', 'Result ')), String(s.result).replace(/\n+/g, ' ')) : null,
+                  s.evidence_ref ? h('div', { className: 'rt-rep-step-result' }, h('b', null, t('证据 ', 'Evidence ')), h('span', { className: 'rt-mono' }, s.evidence_ref)) : null)),
             (x.credentials || []).length
               ? h('div', { className: 'rt-rep-src' },
-                  h('div', { className: 'rt-rep-src-title' }, '关联凭据（来源可追溯）'),
+                  h('div', { className: 'rt-rep-src-title' }, t('关联凭据（来源可追溯）', 'Linked Credentials (Traceable)')),
                   (x.credentials || []).map((c) => h('div', { key: 'c' + c.id, className: 'rt-kv' },
                     h('b', { className: 'rt-mono', style: { minWidth: 120 } }, c.host || '—'),
-                    h('span', null, (c.username || '(无用户名)') + ' / ' + (c.secret_type || 'password')
-                      + (c.privilege ? ' · 权限 ' + c.privilege : '')
-                      + ' · 来源 ' + (c.source || '未标注')
-                      + (c.tool ? ' · 取得方式 ' + String(c.tool).replace(/\n+/g, ' ').slice(0, 160) : '')))))
+                    h('span', null, (c.username || t('(无用户名)', '(no user)')) + ' / ' + (c.secret_type || 'password')
+                      + (c.privilege ? t(' · 权限 ', ' · Role ') + c.privilege : '')
+                      + t(' · 来源 ', ' · Source ') + (c.source || t('未标注', 'Unspecified'))
+                      + (c.tool ? t(' · 取得方式 ', ' · Via ') + String(c.tool).replace(/\n+/g, ' ').slice(0, 160) : '')))))
               : null,
             (x.tunnels || []).length
               ? h('div', { className: 'rt-rep-src' },
-                  h('div', { className: 'rt-rep-src-title' }, '用到的联调通道'),
-                  (x.tunnels || []).map((t) => h('div', { key: 't' + t.id, className: 'rt-kv' },
-                    h('b', { className: 'rt-mono', style: { minWidth: 120 } }, (t.kind || 'socks5') + ' ' + (t.listen || '')),
-                    h('span', null, '入口 ' + (t.entry || '未登记')
-                      + (t.reach ? ' · 可达 ' + t.reach : '')
-                      + ' · 目标侧 ' + (t.entry_kind || '未声明')
-                      + (t.status ? ' · ' + t.status : '')
-                      + (t.command ? ' · 命令 ' + String(t.command).replace(/\n+/g, ' ').slice(0, 160) : '')))))
+                  h('div', { className: 'rt-rep-src-title' }, t('用到的联调通道', 'Bridge Channels Used')),
+                  (x.tunnels || []).map((tn) => h('div', { key: 't' + tn.id, className: 'rt-kv' },
+                    h('b', { className: 'rt-mono', style: { minWidth: 120 } }, (tn.kind || 'socks5') + ' ' + (tn.listen || '')),
+                    h('span', null, t('入口 ', 'Entry ') + (tn.entry || t('未登记', 'Unregistered'))
+                      + (tn.reach ? t(' · 可达 ', ' · Reach ') + tn.reach : '')
+                      + t(' · 目标侧 ', ' · Target side ') + (tn.entry_kind || t('未声明', 'Undeclared'))
+                      + (tn.status ? ' · ' + tn.status : '')
+                      + (tn.command ? t(' · 命令 ', ' · Cmd ') + String(tn.command).replace(/\n+/g, ' ').slice(0, 160) : '')))))
               : null,
             (x.webshells || []).length
               ? h('div', { className: 'rt-rep-src' },
-                  h('div', { className: 'rt-rep-src-title' }, '用到的服务端点'),
+                  h('div', { className: 'rt-rep-src-title' }, t('用到的服务端点', 'Service Endpoints Used')),
                   (x.webshells || []).map((w) => h('div', { key: 'w' + w.id, className: 'rt-kv' },
                     h('b', { className: 'rt-mono', style: { minWidth: 120 } }, w.shell_type || 'endpoint'),
                     h('span', null, (w.url || ''),
-                      w.pass_key ? h(React.Fragment, null, ' · 口令/密钥 ', h(SecretText, { value: w.pass_key })) : null,
-                      (w.privilege ? ' · 权限 ' + w.privilege : '') + (w.status ? ' · ' + w.status : '')))))
+                      w.pass_key ? h(React.Fragment, null, t(' · 口令/密钥 ', ' · Secret '), h(SecretText, { value: w.pass_key })) : null,
+                      (w.privilege ? t(' · 权限 ', ' · Role ') + w.privilege : '') + (w.status ? ' · ' + w.status : '')))))
               : null,
             (x.attack_files || []).length
               ? h('div', { className: 'rt-rep-src' },
-                  h('div', { className: 'rt-rep-src-title' }, '构建脚本（可复现路径）'),
+                  h('div', { className: 'rt-rep-src-title' }, t('构建脚本（可复现路径）', 'Build Scripts (Reproducible Paths)')),
                   (x.attack_files || []).map((f) => h('div', { key: 'f' + f.id, className: 'rt-kv' },
-                    h('b', { className: 'rt-mono', style: { minWidth: 120 } }, f.name || '文件'),
+                    h('b', { className: 'rt-mono', style: { minWidth: 120 } }, f.name || t('文件', 'File')),
                     h('span', null,
                       (f.kind ? ' · ' + f.kind : '')
                       + (f.description ? ' · ' + f.description : '')
                       + ' · ',
                       h('span', { className: 'rt-mono' }, f.path || '')))))
               : null,
-            (x.gaps || []).length ? h('div', { className: 'rt-rep-missing' }, '复现材料：' + x.gaps.join('；')) : null),
+            (x.gaps || []).length ? h('div', { className: 'rt-rep-missing' }, t('复现材料：', 'Missing Repro: ') + x.gaps.join('; ')) : null),
           (x.requests || []).length === 0
-            ? h('div', { className: 'rt-rep-missing' }, '本条没有原始 HTTP 报文（该成果经命令行/其他协议取得，复现入口见上方「复现步骤」）')
+            ? h('div', { className: 'rt-rep-missing' }, t('本条没有原始 HTTP 报文（该成果经命令行/其他协议取得，复现入口见上方「复现步骤」）', 'No raw HTTP payload (verified via CLI/other protocol; see Reproduction Steps above)'))
             : (x.requests || []).map((r, ri) => h('div', { key: 'q' + ri, className: 'rt-rep-req' },
                 h('div', { className: 'rt-rep-req-head' },
-                  h('span', null, '复现请求 ' + (ri + 1) + (r.source === 'auto' ? '（按目标路径自动匹配，请核对）' : '')),
+                  h('span', null, t('复现请求 ', 'Repro Request ') + (ri + 1) + (r.source === 'auto' ? t('（按目标路径自动匹配，请核对）', ' (auto-matched by target path; please verify)') : '')),
                   h('span', { className: 'rt-tag' }, (r.method || 'GET') + ' ' + (r.status === null || r.status === undefined ? '' : r.status)),
                   h('div', { className: 'rt-spacer' }),
                   h('button', {
                     className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
-                    onClick: () => copy(String(r.request || ''), '请求 ' + (ri + 1)),
-                  }, '复制请求报文')),
+                    onClick: () => copy(String(r.request || ''), t('请求 ', 'Request ') + (ri + 1)),
+                  }, t('复制请求报文', 'Copy Request'))),
                 h('pre', { className: 'rt-rep-http' }, r.request || ((r.method || 'GET') + ' ' + (r.url || '') + ' HTTP/1.1')),
                 r.response ? h('div', null,
-                  h('div', { className: 'rt-rep-req-head' }, h('span', null, '响应摘要')),
+                  h('div', { className: 'rt-rep-req-head' }, h('span', null, t('响应摘要', 'Response Summary'))),
                   h('pre', { className: 'rt-rep-http', style: { maxHeight: 160 } }, String(r.response).slice(0, 1600))) : null)),
-          x.note ? h('div', { className: 'rt-rep-meta' }, h('b', null, '备注 '), h('span', null, x.note)) : null))
+          x.note ? h('div', { className: 'rt-rep-meta' }, h('b', null, t('备注 ', 'Note ')), h('span', null, x.note)) : null))
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, 'LMTAgent 研发交付报告（四段式）'),
-          summary ? h('span', { className: 'rt-tag rt-tag-live' }, '合计 ' + summary.points + ' 分') : null,
-          summary ? h('span', { className: 'rt-tag' }, summary.count + ' 项得分') : null,
+          h('span', { style: { fontWeight: 600 } }, t('LMTAgent 研发交付报告（四段式）', 'LMTAgent Delivery Report (4-Stage)')),
+          summary ? h('span', { className: 'rt-tag rt-tag-live' }, t('合计 ', 'Total ') + summary.points + t(' 分', ' pts')) : null,
+          summary ? h('span', { className: 'rt-tag' }, summary.count + t(' 项得分', ' achieved')) : null,
           summary ? h('span', { className: 'rt-tag' + (summary.missingRequests ? '' : ' rt-tag-live') },
-            summary.withRequests + '/' + summary.count + ' 项带原始请求') : null,
+            summary.withRequests + '/' + summary.count + t(' 项带原始请求', ' with raw requests')) : null,
           summary ? h('span', {
             className: 'rt-tag' + (summary.incomplete ? ' rt-tag-warn' : ' rt-tag-live'),
-            title: '复现链是否完整：有执行步骤、写了实际命令、关联了缺陷/凭据/通道',
-          }, '可复现 ' + (summary.count - (summary.incomplete || 0)) + '/' + summary.count) : null,
+            title: t('复现链是否完整：有执行步骤、写了实际命令、关联了缺陷/凭据/通道', 'Completeness of reproduction chain: steps, commands, linked items'),
+          }, t('可复现 ', 'Reproducible ') + (summary.count - (summary.incomplete || 0)) + '/' + summary.count) : null,
           summary && summary.serviceCappedExcluded
             ? h('span', {
                 className: 'rt-tag rt-tag-warn',
-                title: (summary.serviceCapped || []).map((x) => (x.service || '') + '｜' + (x.point_name || '')).join('\n')
-                  || '同一模块同一端口的重复命中：服务已拿满，不计分、不进报告',
-              }, '同服务已拿满不计分 ' + summary.serviceCappedExcluded)
+                title: (summary.serviceCapped || []).map((x) => (x.service || '') + ' | ' + (x.point_name || '')).join('\n')
+                  || t('同一模块同一端口的重复命中：服务已拿满，不计分、不进报告', 'Duplicate hits on the same module & port: capped'),
+              }, t('同服务已拿满不计分 ', 'Service-capped ') + summary.serviceCappedExcluded)
             : null,
           h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn', disabled: busy || !mdText, onClick: () => copy(mdText, '整份报告') }, '复制全文'),
-          h('button', { className: 'rt-btn', disabled: busy || !mdText, onClick: () => download(mdText, (data && data.target) || eng) }, '下载 .md'),
-          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? '生成中…' : '重新生成')),
+          h('button', { className: 'rt-btn', disabled: busy || !mdText, onClick: () => copy(mdText, t('整份报告', 'Full Report')) }, t('复制全文', 'Copy All')),
+          h('button', { className: 'rt-btn', disabled: busy || !mdText, onClick: () => download(mdText, (data && data.target) || eng) }, t('下载 .md', 'Download .md')),
+          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? t('生成中…', 'Generating…') : t('重新生成', 'Regenerate'))),
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
         err ? h('div', { className: 'rt-err' }, err) : null,
         gapItems.length
@@ -10542,20 +10993,20 @@ body[data-ds-dark-theme] .rt-anim-complete{
               style: { margin: '0 0 8px', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, padding: '6px 8px' },
             },
               h('summary', { style: { cursor: 'pointer', fontWeight: 600 } },
-                '复现缺口 ' + gapItems.length + ' 项（点击看要补什么）'),
+                t('复现缺口 ' + gapItems.length + ' 项（点击看要补什么）', 'Repro Gaps: ' + gapItems.length + ' items (click for details)')),
               h('div', { style: { marginTop: 6, maxHeight: 220, overflow: 'auto' } },
                 gapPreview,
                 gapItems.length > 12
-                  ? h('div', { className: 'rt-foot' }, '仅列前 12 项，其余见下方卡片。')
+                  ? h('div', { className: 'rt-foot' }, t('仅列前 12 项，其余见下方卡片。', 'Showing first 12 items; see cards below for the rest.'))
                   : null))
-          : h('div', { className: 'rt-foot', style: { marginBottom: 6 } }, '复现材料完整。'),
+          : h('div', { className: 'rt-foot', style: { marginBottom: 6 } }, t('复现材料完整。', 'Reproduction artifacts complete.')),
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           h('details', { className: 'rt-rep-full', style: { margin: '0 0 10px' } },
             h('summary', { className: 'rt-rep-trace-head', style: { cursor: 'pointer', fontWeight: 600 } },
-              '详细报告查看（架构归属 / 里程碑汇总 / 凭据汇总 / 交付复现）'),
+              t('详细报告查看（架构归属 / 里程碑汇总 / 凭据汇总 / 交付复现）', 'Full Report Preview (Ownership / Milestones / Credentials / Reproduction)')),
             h('div', { className: 'rt-rep-full-body' },
               h('div', { className: 'rt-rep-full-head' },
-                h('span', { style: { fontWeight: 600 } }, '详细报告查看 · 全屏预览'),
+                h('span', { style: { fontWeight: 600 } }, t('详细报告查看 · 全屏预览', 'Detailed Report · Full Preview')),
                 h('div', { className: 'rt-spacer' }),
                 h('button', {
                   className: 'rt-btn',
@@ -10563,15 +11014,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     const d = e.currentTarget.closest('details')
                     if (d) d.open = false
                   },
-                }, '关闭')),
+                }, t('关闭', 'Close'))),
               h('div', { className: 'rt-foot', style: { padding: '4px 0' } },
-                '与导出 Markdown 同源；截图见卡片视图。'),
+                t('与导出 Markdown 同源；截图见卡片视图。', 'Same source as exported Markdown; screenshots shown in card view.')),
               h(Markdown, { className: 'rt-markdown', text: fullText }))),
           stages.length
             ? h('div', { className: 'rt-rep-list' },
                 h('div', { className: 'rt-rep-tools' },
-                  h('button', { className: 'rt-btn', onClick: () => collapse.setAll(stages.map((s) => 'st:' + s.code), true) }, '全部展开'),
-                  h('button', { className: 'rt-btn', onClick: () => collapse.setAll(stages.map((s) => 'st:' + s.code), false) }, '全部折叠')),
+                  h('button', { className: 'rt-btn', onClick: () => collapse.setAll(stages.map((s) => 'st:' + s.code), true) }, t('全部展开', 'Expand All')),
+                  h('button', { className: 'rt-btn', onClick: () => collapse.setAll(stages.map((s) => 'st:' + s.code), false) }, t('全部折叠', 'Collapse All'))),
                 stages.map((st) => {
                   const open = collapse.isOpen('st:' + st.code, false)
                   const toggle = collapse.toggle('st:' + st.code, false)
@@ -10583,25 +11034,28 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       h('span', { className: 'rt-sec-caret' }, open ? '▾' : '▸'),
                       h('span', { className: 'rt-rep-no', style: { background: st.color } }, CIRCLED[st.ordinal - 1] || st.ordinal),
                       h('span', { className: 'rt-rep-stage-name' }, st.name),
-                      h('span', { className: 'rt-rep-stage-n' }, st.items.length + ' 项'),
+                      h('span', { className: 'rt-rep-stage-n' }, st.items.length + t(' 项', ' items')),
                       h('div', { className: 'rt-spacer' }),
                       h('span', { className: 'rt-rep-pts', style: { background: st.color + '22', color: st.color, borderColor: st.color + '66' } },
-                        '+' + st.points + ' 分'),
-                      h('span', { className: 'rt-ap-cum' }, '累计 ' + st.cumulative + ' 分')),
+                        '+' + st.points + t(' 分', ' pts')),
+                      h('span', { className: 'rt-ap-cum' }, t('累计 ', 'Cumul. ') + st.cumulative + t(' 分', ' pts'))),
                     open ? h('div', { className: 'rt-rep-body' }, st.items.map(card)) : null)
                 }))
-            : (data === null ? h('div', { className: 'rt-empty' }, '加载中…')
+            : (data === null ? h('div', { className: 'rt-empty' }, t('加载中…', 'Loading…'))
                 : h('div', { className: 'rt-empty' },
-                    h('div', null, '暂无可交付的里程碑成果。'),
+                    h('div', null, t('暂无可交付的里程碑成果。', 'No deliverable milestone results yet.')),
                     h('div', { style: { marginTop: 6, fontSize: 12 } },
-                      '达成后使用 redteam_score_hit 与 redteam_http_evidence_add 补充交付记录。')))),
+                      t('达成后使用 lmt_artifact_record 补充交付与验证记录。', 'Record milestones via lmt_artifact_record once completed.'))))),
         h('div', { className: 'rt-foot' },
-          h('span', null, '按「模块归属 → 里程碑汇总 → 凭据 → 交付复现」组织，凭据默认脱敏')))
+          h('span', null, t('按「模块归属 → 里程碑汇总 → 凭据 → 交付复现」组织，凭据默认脱敏', 'Organized by Ownership → Milestones → Credentials → Reproduction; secrets masked by default'))))
     }
 
     const FILE_KIND = { poc: '验证', exp: '自动化', script: '脚本', wordlist: '配置', other: '其他' }
+    const FILE_KIND_EN = { poc: 'Verify', exp: 'Automation', script: 'Script', wordlist: 'Config', other: 'Other' }
+    const fileKindLabel = (k) => t(FILE_KIND[k] || k || '—', FILE_KIND_EN[k] || k || '—')
 
     function AttackFilesTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [folders, setFolders] = React.useState([])
@@ -10615,7 +11069,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setBusy(true)
         api({ op: 'attackFiles', engagement: eng }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setErr((r && r.error) || '读取失败'); return }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('读取失败', 'Read failed')); return }
           setErr(null)
           setFolders(r.items || [])
         }, (e) => { setBusy(false); setErr(String((e && e.message) || e)) })
@@ -10627,7 +11081,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setDetail(null)
         api({ op: 'readAttackFile', engagement: eng, id: f.id }).then((r) => {
           if (r && r.ok) setDetail(r)
-          else setErr((r && r.error) || '读取失败')
+          else setErr((r && r.error) || t('读取失败', 'Read failed'))
         }, (e) => setErr(String((e && e.message) || e)))
       }
 
@@ -10641,47 +11095,52 @@ body[data-ds-dark-theme] .rt-anim-complete{
           }, clickable(() => openFile(f))),
             h('span', { className: 'rt-sec-caret' }, detail && detail.id === f.id ? '▾' : '▸'),
             h('span', { className: 'rt-mono' }, f.name),
-            h('span', null, h('span', { className: 'rt-tag rt-tag-active' }, FILE_KIND[f.kind] || f.kind || '—')),
+            h('span', null, h('span', { className: 'rt-tag rt-tag-active' }, fileKindLabel(f.kind))),
             h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' }, title: f.description || '' }, f.description || '—')))
           if (!detail || detail.id !== f.id) continue
           fileNodes.push(h('div', {
             key: 'ad' + f.id, className: 'rt-vrow', style: { cursor: 'default', gridTemplateColumns: '1fr' },
           }, h('div', { className: 'rt-vdetail' },
-            h('div', { className: 'rt-kv' }, h('b', null, '效果'), h('span', null, detail.evidence || '—')),
-            h('div', { className: 'rt-kv' }, h('b', null, '路径'), h('span', { className: 'rt-mono', style: { wordBreak: 'break-all' } }, detail.path)),
-            h('div', { className: 'rt-kv' }, h('b', null, '记录'), h('span', null, fmt(detail.created_at) + (detail.created_by ? ' · ' + detail.created_by : ''))),
+            h('div', { className: 'rt-kv' }, h('b', null, t('效果', 'Effect')), h('span', null, detail.evidence || '—')),
+            h('div', { className: 'rt-kv' }, h('b', null, t('路径', 'Path')), h('span', { className: 'rt-mono', style: { wordBreak: 'break-all' } }, detail.path)),
+            h('div', { className: 'rt-kv' }, h('b', null, t('记录', 'Recorded')), h('span', null, fmt(detail.created_at) + (detail.created_by ? ' · ' + detail.created_by : ''))),
             /\.md$/i.test(detail.name || detail.path || '')
               ? h(Markdown, {
-                  className: 'rt-markdown rt-md-view', text: detail.content || '（空）',
+                  className: 'rt-markdown rt-md-view', text: detail.content || t('（空）', '(empty)'),
                   style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, maxHeight: '40vh' },
                 })
-              : h('pre', { className: 'rt-md', style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, maxHeight: '40vh', padding: '10px 12px' } }, detail.content || '（空）'))))
+              : h('pre', { className: 'rt-md', style: { border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, maxHeight: '40vh', padding: '10px 12px' } }, detail.content || t('（空）', '(empty)')))))
         }
         rows.push(h(Section, {
           key: 'sec:' + folder.folder, tone: 'folder', title: folder.folder + '/',
-          count: folder.count + ' 个文件',
+          count: folder.count + t(' 个文件', ' files'),
           open: collapse.isOpen(fKey, true), onToggle: collapse.toggle(fKey, true),
-        }, fileNodes.length ? fileNodes : h('div', { className: 'rt-atest-meta' }, '（空）')))
+        }, fileNodes.length ? fileNodes : h('div', { className: 'rt-atest-meta' }, t('（空）', '(empty)'))))
       }
 
       const total = folders.reduce((n, f) => n + f.count, 0)
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '构建与验证脚本'),
-          h('span', { className: 'rt-tag' }, folders.length + ' 个模块 / ' + total + ' 个文件'),
+          h('span', { style: { fontWeight: 600 } }, t('构建与验证脚本', 'Build & Verification Scripts')),
+          h('span', { className: 'rt-tag' }, folders.length + t(' 个模块 / ', ' modules / ') + total + t(' 个文件', ' files')),
           h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新')),
+          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? t('刷新中…', 'Refreshing…') : t('刷新', 'Refresh'))),
         err ? h('div', { className: 'rt-err' }, err) : null,
         h('div', { className: 'rt-table' },
           rows,
-          !folders.length ? h('div', { className: 'rt-empty' }, '暂无构建与验证脚本') : null),
-        h('div', { className: 'rt-foot' }, h('span', null, '目录：attack-files/<模块|服务>/')))
+          !folders.length ? h('div', { className: 'rt-empty' }, t('暂无构建与验证脚本', 'No build or verification scripts yet')) : null),
+        h('div', { className: 'rt-foot' }, h('span', null, t('目录：attack-files/<模块|服务>/', 'Directory: attack-files/<module|service>/'))))
     }
 
     const POC_KIND_LABEL = { poc: '验证用例', exp: '回归脚本', script: '脚本', template: '模板', payload: '测试夹具' }
+    const POC_KIND_LABEL_EN = { poc: 'Test Case', exp: 'Regression', script: 'Script', template: 'Template', payload: 'Fixture' }
     const POC_SOURCE_LABEL = { web: '开源社区', self: '自研沉淀', manual: '人工录入', 'nuclei-template': '标准模板', kb: '模式库' }
+    const POC_SOURCE_LABEL_EN = { web: 'Open Source', self: 'In-House', manual: 'Manual', 'nuclei-template': 'Template', kb: 'Pattern KB' }
+    const pocKindLabel = (k) => t(POC_KIND_LABEL[k] || k || '模板', POC_KIND_LABEL_EN[k] || k || 'Template')
+    const pocSourceLabel = (s) => t(POC_SOURCE_LABEL[s] || s || '—', POC_SOURCE_LABEL_EN[s] || s || '—')
 
     function KnowledgeTab(props) {
+      useLocale()
       const refreshKey = props.refreshKey || 0
       const curEng = props.engagement || ''
       const [data, setData] = React.useState(null)
@@ -10711,7 +11170,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setBusy(true); setMsg(null)
         api(Object.assign({ op: 'pocSearch' }, params)).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setErr((r && r.error) || '读取失败'); return }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('读取失败', 'Read failed')); return }
           setErr(null); setData(r)
         }, (e) => { setBusy(false); setErr(String((e && e.message) || e)) })
       }
@@ -10735,7 +11194,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setOpenId(id); setDetail(null); setDetailBusy(true)
         api({ op: 'pocGet', id: id }).then((r) => {
           setDetailBusy(false)
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '读取失败' }); return }
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('读取失败', 'Read failed') }); return }
           setDetail(r)
         }, (e) => { setDetailBusy(false); setMsg({ err: String((e && e.message) || e) }) })
       }
@@ -10744,8 +11203,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setMsg(okFlag ? { ok: message } : { err: message })
       })
       const useIt = (row) => {
-        api({ op: 'pocUse', id: row.id, used_on: '控制台手动标记' }).then(() => {
-          setMsg({ ok: '已记一次复用：' + row.title })
+        api({ op: 'pocUse', id: row.id, used_on: t('控制台手动标记', 'Marked manually in UI') }).then(() => {
+          setMsg({ ok: t('已记一次复用：', 'Recorded reuse: ') + row.title })
           query()
         }, (e) => setMsg({ err: String((e && e.message) || e) }))
       }
@@ -10763,123 +11222,123 @@ body[data-ds-dark-theme] .rt-anim-complete{
             className: 'rt-kb-head',
           }, clickable(() => open(x.id), { expanded: isOpen })),
             h('span', { className: 'rt-sec-caret' }, isOpen ? '▾' : '▸'),
-            h('span', { className: 'rt-kb-kind k-' + (x.kind || 'poc') }, POC_KIND_LABEL[x.kind] || x.kind || '模板'),
+            h('span', { className: 'rt-kb-kind k-' + (x.kind || 'poc') }, pocKindLabel(x.kind)),
             h('span', { className: 'rt-kb-title' }, x.title),
             x.cve ? h('span', { className: 'rt-tag rt-tag-passive' }, x.cve) : null,
             x.component ? h('span', { className: 'rt-tag' }, x.component) : null,
             x.verified === 1
-              ? h('span', { className: 'rt-tag rt-tag-live' }, '已验证')
-              : h('span', { className: 'rt-tag rt-tag-warn' }, '未验证'),
+              ? h('span', { className: 'rt-tag rt-tag-live' }, t('已验证', 'Verified'))
+              : h('span', { className: 'rt-tag rt-tag-warn' }, t('未验证', 'Unverified')),
             h('div', { className: 'rt-spacer' }),
-            h('span', { className: 'rt-tag' }, POC_SOURCE_LABEL[x.source] || x.source || '—'),
-            x.hit_count ? h('span', { className: 'rt-tag' }, '复用 ' + x.hit_count) : null),
+            h('span', { className: 'rt-tag' }, pocSourceLabel(x.source)),
+            x.hit_count ? h('span', { className: 'rt-tag' }, t('复用 ', 'Reused ') + x.hit_count) : null),
           h('div', { className: 'rt-kb-sub' },
-            [x.category ? '归类 ' + (POC_CAT_NAME[x.category] || x.category) : null,
-              x.versions ? '适用版本 ' + x.versions : null,
+            [x.category ? t('归类 ', 'Category ') + pocCatLabel(x.category) : null,
+              x.versions ? t('适用版本 ', 'Versions ') + x.versions : null,
               x.language || null,
               x.tags || null,
-              '建立时间 ' + fmt(x.created_at),
-              (x.engagement_name || x.engagement_id) ? '来源工作区 ' + (x.engagement_name || x.engagement_id) : null,
-              x.asset_target ? '关联模块 ' + x.asset_target : null,
-              x.found_by_agent ? '沉淀角色 ' + (ROLE_LABEL[x.found_by_agent] || x.found_by_agent) : null,
-              x.source_url ? '来源 ' + x.source_url : null].filter(Boolean).join(' · ')),
+              t('建立时间 ', 'Created ') + fmt(x.created_at),
+              (x.engagement_name || x.engagement_id) ? t('来源工作区 ', 'Workspace ') + (x.engagement_name || x.engagement_id) : null,
+              x.asset_target ? t('关联模块 ', 'Module ') + x.asset_target : null,
+              x.found_by_agent ? t('沉淀角色 ', 'Author ') + roleLabel(x.found_by_agent) : null,
+              x.source_url ? t('来源 ', 'Source ') + x.source_url : null].filter(Boolean).join(' · ')),
           isOpen
             ? h('div', { className: 'rt-kb-body' },
-                detailBusy && !d ? h('div', { className: 'rt-empty' }, '读取中…') : null,
+                detailBusy && !d ? h('div', { className: 'rt-empty' }, t('读取中…', 'Loading…')) : null,
                 d ? h('div', null,
-                  d.usage ? h('div', { className: 'rt-kv' }, h('b', null, '用法'), h('span', { className: 'rt-mono' }, d.usage)) : null,
-                  d.description ? h('div', { className: 'rt-kv' }, h('b', null, '说明'), h('span', null, d.description)) : null,
-                  d.verified_note ? h('div', { className: 'rt-kv' }, h('b', null, '验证证据'), h('span', null, d.verified_note)) : null,
-                  d.used_on ? h('div', { className: 'rt-kv' }, h('b', null, '最近使用'), h('span', null, d.used_on)) : null,
-                  d.path ? h('div', { className: 'rt-kv' }, h('b', null, '落盘'), h('span', { className: 'rt-mono' }, d.path)) : null,
+                  d.usage ? h('div', { className: 'rt-kv' }, h('b', null, t('用法', 'Usage')), h('span', { className: 'rt-mono' }, d.usage)) : null,
+                  d.description ? h('div', { className: 'rt-kv' }, h('b', null, t('说明', 'Notes')), h('span', null, d.description)) : null,
+                  d.verified_note ? h('div', { className: 'rt-kv' }, h('b', null, t('验证证据', 'Proof')), h('span', null, d.verified_note)) : null,
+                  d.used_on ? h('div', { className: 'rt-kv' }, h('b', null, t('最近使用', 'Last Used')), h('span', null, d.used_on)) : null,
+                  d.path ? h('div', { className: 'rt-kv' }, h('b', null, t('落盘', 'Disk Path')), h('span', { className: 'rt-mono' }, d.path)) : null,
                   h('div', { className: 'rt-kb-actions' },
-                    h('button', { className: 'rt-btn', disabled: !d.content, onClick: () => copy(d.content || '', '模板正文') }, '复制正文'),
-                    h('button', { className: 'rt-btn', onClick: () => useIt(x) }, '记一次复用'),
-                    d.source_url ? h('button', { className: 'rt-btn', onClick: () => copy(d.source_url, '来源链接') }, '复制来源') : null),
+                    h('button', { className: 'rt-btn', disabled: !d.content, onClick: () => copy(d.content || '', t('模板正文', 'Template Body')) }, t('复制正文', 'Copy Body')),
+                    h('button', { className: 'rt-btn', onClick: () => useIt(x) }, t('记一次复用', 'Record Reuse')),
+                    d.source_url ? h('button', { className: 'rt-btn', onClick: () => copy(d.source_url, t('来源链接', 'Source URL')) }, t('复制来源', 'Copy Source')) : null),
                   d.content
-                    ? h('pre', { className: 'rt-rep-http' }, d.content.length > 12000 ? d.content.slice(0, 12000) + '\n…（已截断，完整内容见落盘文件）' : d.content)
-                    : h('div', { className: 'rt-empty' }, '这条只有元数据，没有正文 —— 拿到正文后用 redteam_poc_update 补上'))
+                    ? h('pre', { className: 'rt-rep-http' }, d.content.length > 12000 ? d.content.slice(0, 12000) + t('\n…（已截断，完整内容见落盘文件）', '\n… (truncated; see disk file for full content)') : d.content)
+                    : h('div', { className: 'rt-empty' }, t('这条只有元数据，没有正文 —— 拿到正文后用 lmt_artifact_record (kind=pattern) 补上', 'Metadata only; add body with lmt_artifact_record (kind=pattern)')))
                 : null)
             : null)
       }
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '工程模式与验证模板库'),
+          h('span', { style: { fontWeight: 600 } }, t('工程模式与验证模板库', 'Engineering Pattern & Template KB')),
           h('input', {
             className: 'rt-input', style: { flex: '1 1 150px', minWidth: 120 },
-            placeholder: '搜 规则编号 / 组件 / 关键字', value: q,
+            placeholder: t('搜 规则编号 / 组件 / 关键字', 'Search rule ID / component / keyword'), value: q,
             onChange: (e) => setQ(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') query() },
           }),
-          h('button', { className: 'rt-btn rt-btn-primary', disabled: busy, onClick: () => query() }, busy ? '检索中…' : '检索'),
-          h('span', { className: 'rt-tag' }, stats.total + ' 条'),
-          h('span', { className: 'rt-tag rt-tag-live' }, '已验证 ' + stats.verified),
-          h('span', { className: 'rt-tag' }, '累计复用 ' + (stats.reused || 0)),
+          h('button', { className: 'rt-btn rt-btn-primary', disabled: busy, onClick: () => query() }, busy ? t('检索中…', 'Searching…') : t('检索', 'Search')),
+          h('span', { className: 'rt-tag' }, stats.total + t(' 条', ' entries')),
+          h('span', { className: 'rt-tag rt-tag-live' }, t('已验证 ', 'Verified ') + stats.verified),
+          h('span', { className: 'rt-tag' }, t('累计复用 ', 'Reused ') + (stats.reused || 0)),
           (stats.uncategorized || 0) > 0 && (stats.uncategorized || 0) !== stats.total
-            ? h('span', { className: 'rt-tag rt-tag-warn', title: '这些条目还没归类：智能体回填时用 redteam_poc_add 的 category 参数标一下' }, '未归类 ' + stats.uncategorized)
+            ? h('span', { className: 'rt-tag rt-tag-warn', title: t('这些条目还没归类：智能体回填时用 lmt_artifact_record 的 category 参数标一下', 'Uncategorized entries; set category via lmt_artifact_record') }, t('未归类 ', 'Uncategorized ') + stats.uncategorized)
             : null,
-          tpl.total ? h('span', { className: 'rt-tag rt-tag-passive' }, '本机模板 ' + tpl.total) : null,
+          tpl.total ? h('span', { className: 'rt-tag rt-tag-passive' }, t('本机模板 ', 'Local Templates ') + tpl.total) : null,
           engagement
             ? h('span', Object.assign({
                 className: 'rt-tag rt-tag-live',
                 style: { cursor: 'pointer' },
-                title: '只看当前工作区沉淀的模式与模板（跟随当前会话）；点一下回到全库',
-              }, clickable(() => { setEngagement(''); query({ engagement: undefined }) }, { label: '取消工作区筛选：' + engagement })), '来源工作区 ' + engagement + ' ✕')
-            : h('span', { className: 'rt-tag rt-tag-passive', title: '当前显示全部工作区的工程模式库；面板跟随会话后会自动筛到对应项目' }, '全库共享'),
+                title: t('只看当前工作区沉淀的模式与模板（跟随当前会话）；点一下回到全库', 'Filtered to current workspace; click to show all'),
+              }, clickable(() => { setEngagement(''); query({ engagement: undefined }) }, { label: t('取消工作区筛选：', 'Clear workspace filter: ') + engagement })), t('来源工作区 ', 'Workspace ') + engagement + ' ✕')
+            : h('span', { className: 'rt-tag rt-tag-passive', title: t('当前显示全部工作区的工程模式库；面板跟随会话后会自动筛到对应项目', 'Showing patterns across all workspaces') }, t('全库共享', 'Shared Across All')),
           h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn' + (grouped ? ' rt-btn-primary' : ''), title: '按归类分组显示 / 平铺显示', onClick: () => setGrouped(!grouped) }, grouped ? '按归类分组' : '平铺显示'),
-          h('button', { className: 'rt-btn', disabled: busy, onClick: () => query() }, busy ? '检索中…' : '刷新')),
+          h('button', { className: 'rt-btn' + (grouped ? ' rt-btn-primary' : ''), title: t('按归类分组显示 / 平铺显示', 'Group by category / Flat list'), onClick: () => setGrouped(!grouped) }, grouped ? t('按归类分组', 'Grouped') : t('平铺显示', 'Flat')),
+          h('button', { className: 'rt-btn', disabled: busy, onClick: () => query() }, busy ? t('检索中…', 'Searching…') : t('刷新', 'Refresh'))),
         h('div', { className: 'rt-kb-cats' },
           (stats.byCategory || []).filter((c) => c.n > 0).map((c) => h('span', Object.assign({
             key: c.code,
             className: 'rt-concl-i' + (category === c.code ? ' on' : ''),
-            title: c.hint || ('筛选：' + (POC_CAT_NAME[c.code] || c.code)),
+            title: c.hint || (t('筛选：', 'Filter: ') + pocCatLabel(c.code)),
           }, clickable(() => {
             const next = category === c.code ? '' : c.code
             setCategory(next)
             query({ category: next || undefined })
-          }, { label: '筛选归类：' + (POC_CAT_NAME[c.code] || c.code), expanded: category === c.code })),
+          }, { label: t('筛选归类：', 'Filter category: ') + pocCatLabel(c.code), expanded: category === c.code })),
             h('b', null, String(c.n || 0)),
-            h('span', null, (POC_CAT_NAME[c.code] || c.code) + (c.verified ? '（已验证 ' + c.verified + '）' : ''))))),
+            h('span', null, pocCatLabel(c.code) + (c.verified ? ' (' + t('已验证 ', 'verified ') + c.verified + ')' : ''))))),
         h('div', { className: 'rt-kb-filter' },
           h('input', {
-            className: 'rt-input', style: { flex: 1, minWidth: 140 }, placeholder: '搜 规则编号 / 组件 / 关键字（正文也会搜）',
+            className: 'rt-input', style: { flex: 1, minWidth: 140 }, placeholder: t('搜 规则编号 / 组件 / 关键字（正文也会搜）', 'Search rule ID / component / keyword (full-text)'),
             value: q, onChange: (e) => setQ(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') query() },
           }),
           h('select', { className: 'rt-input', style: { maxWidth: 120 }, value: category, onChange: (e) => { setCategory(e.target.value); query({ category: e.target.value || undefined }) } },
-            h('option', { value: '' }, '全部归类'),
-            POC_CAT_ORDER.map((k) => h('option', { key: k, value: k }, POC_CAT_NAME[k]))),
+            h('option', { value: '' }, t('全部归类', 'All Categories')),
+            POC_CAT_ORDER.map((k) => h('option', { key: k, value: k }, pocCatLabel(k)))),
           h('input', {
             className: 'rt-input', style: { maxWidth: 160 }, list: 'rt-kb-engs',
-            placeholder: '来源工作区（可搜索）', value: engagement,
-            title: '输入工作区名筛选，回车或点「检索」生效；清空 = 全部来源',
+            placeholder: t('来源工作区（可搜索）', 'Workspace (searchable)'), value: engagement,
+            title: t('输入工作区名筛选，回车或点「检索」生效；清空 = 全部来源', 'Filter by workspace; empty = all'),
             onChange: (e) => setEngagement(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') query({ engagement: engagement || undefined }) },
           }),
           h('datalist', { id: 'rt-kb-engs' },
-            h('option', { value: '' }, '全部来源工作区'),
+            h('option', { value: '' }, t('全部来源工作区', 'All Workspaces')),
             (engagement && !(stats.byEngagement || []).some((e) => e.engagement === engagement)
-              ? [h('option', { key: '__cur', value: engagement }, engagement + '（0）')]
+              ? [h('option', { key: '__cur', value: engagement }, engagement + ' (0)')]
               : []),
-            (stats.byEngagement || []).map((e) => h('option', { key: e.engagement, value: e.engagement }, e.engagement + '（' + e.n + '）'))),
+            (stats.byEngagement || []).map((e) => h('option', { key: e.engagement, value: e.engagement }, e.engagement + ' (' + e.n + ')'))),
           h('input', {
-            className: 'rt-input', style: { width: 120 }, placeholder: '关联模块筛选',
+            className: 'rt-input', style: { width: 120 }, placeholder: t('关联模块筛选', 'Filter by module'),
             value: assetTarget, onChange: (e) => setAssetTarget(e.target.value),
             onKeyDown: (e) => { if (e.key === 'Enter') query() },
           }),
           h('select', { className: 'rt-input', style: { maxWidth: 110 }, value: kind, onChange: (e) => { setKind(e.target.value); query({ kind: e.target.value || undefined }) } },
-            h('option', { value: '' }, '全部类型'),
-            Object.keys(POC_KIND_LABEL).map((k) => h('option', { key: k, value: k }, POC_KIND_LABEL[k]))),
+            h('option', { value: '' }, t('全部类型', 'All Kinds')),
+            Object.keys(POC_KIND_LABEL).map((k) => h('option', { key: k, value: k }, pocKindLabel(k)))),
           h('label', { className: 'rt-kb-check' },
             h('input', { type: 'checkbox', checked: verifiedOnly, onChange: (e) => { setVerifiedOnly(e.target.checked); query({ verified: e.target.checked || undefined }) } }),
-            '只看已验证'),
-          h('button', { className: 'rt-btn rt-btn-primary', onClick: () => query() }, '检索')),
+            t('只看已验证', 'Verified Only')),
+          h('button', { className: 'rt-btn rt-btn-primary', onClick: () => query() }, t('检索', 'Search'))),
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
         err ? h('div', { className: 'rt-err' },
           /engagement required|unknown op/i.test(err)
-            ? '工程模式库接口由 host 侧提供，当前 dsh web 还是旧进程 —— 请重启 dsh web（dsh-restart）后刷新页面。'
+            ? t('工程模式库接口由 host 侧提供，当前 dsh web 还是旧进程 —— 请重启 dsh web（dsh-restart）后刷新页面。', 'Pattern KB API is served by host; restart dsh web (dsh-restart) and reload.')
             : err) : null,
         h('div', { className: 'rt-table' },
           (() => {
@@ -10896,12 +11355,12 @@ body[data-ds-dark-theme] .rt-anim-complete{
             for (const code of order) {
               const list = buckets.get(code)
               out.push(h('div', { key: 'g' + code, className: 'rt-kb-cat' },
-                h('span', { className: 'rt-kb-cat-name' }, POC_CAT_NAME[code] || code),
-                h('span', { className: 'rt-tag' }, list.length + ' 条'),
-                h('span', { className: 'rt-tag rt-tag-live' }, '已验证 ' + list.filter((x) => x.verified === 1).length),
+                h('span', { className: 'rt-kb-cat-name' }, pocCatLabel(code)),
+                h('span', { className: 'rt-tag' }, list.length + t(' 条', ' entries')),
+                h('span', { className: 'rt-tag rt-tag-live' }, t('已验证 ', 'Verified ') + list.filter((x) => x.verified === 1).length),
                 h('span', { className: 'rt-spacer' }),
                 h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-                  '最近建立 ' + fmt(list.map((x) => x.created_at).filter(Boolean).sort().pop()))))
+                  t('最近建立 ', 'Latest ') + fmt(list.map((x) => x.created_at).filter(Boolean).sort().pop()))))
               for (const x of list) out.push(card(x))
             }
             return out
@@ -10909,29 +11368,30 @@ body[data-ds-dark-theme] .rt-anim-complete{
           tplItems.length
             ? h('div', { className: 'rt-kb-tpl' },
                 h('div', { className: 'rt-ap-sub' },
-                  '本机标准模板命中 · ' + tplItems.length + ' 条'),
-                tplItems.map((t, i) => h('div', { key: 't' + i, className: 'rt-kb-tpl-row' },
-                  h('span', { className: 'rt-tag' }, t.severity || '—'),
-                  h('span', { className: 'rt-mono rt-kb-tpl-path', title: t.path }, t.path),
-                  h('span', { className: 'rt-kb-tpl-name', title: t.name }, t.name || ''),
+                  t('本机标准模板命中 · ', 'Local Template Matches · ') + tplItems.length + t(' 条', '')),
+                tplItems.map((tplItem, i) => h('div', { key: 't' + i, className: 'rt-kb-tpl-row' },
+                  h('span', { className: 'rt-tag' }, tplItem.severity || '—'),
+                  h('span', { className: 'rt-mono rt-kb-tpl-path', title: tplItem.path }, tplItem.path),
+                  h('span', { className: 'rt-kb-tpl-name', title: tplItem.name }, tplItem.name || ''),
                   h('button', {
                     className: 'rt-btn', style: { padding: '0 6px', fontSize: 10.5 },
-                    onClick: () => copy(t.path, '模板路径'),
-                  }, '复制路径'))),
-                tpl.dir ? h('div', { className: 'rt-foot' }, h('span', null, '模板目录：' + tpl.dir)) : null)
+                    onClick: () => copy(tplItem.path, t('模板路径', 'Template Path')),
+                  }, t('复制路径', 'Copy Path')))),
+                tpl.dir ? h('div', { className: 'rt-foot' }, h('span', null, t('模板目录：', 'Template Dir: ') + tpl.dir)) : null)
             : null,
-          data === null ? h('div', { className: 'rt-empty' }, '加载中…') : null,
+          data === null ? h('div', { className: 'rt-empty' }, t('加载中…', 'Loading…')) : null,
           data !== null && !items.length && !tplItems.length
             ? h('div', { className: 'rt-empty' },
-                h('div', null, q || kind || verifiedOnly ? '没有命中，请换个关键字再试。' : '工程模式库暂无记录。'),
+                h('div', null, q || kind || verifiedOnly ? t('没有命中，请换个关键字再试。', 'No matches; try another query.') : t('工程模式库暂无记录。', 'No patterns in KB yet.')),
                 h('div', { style: { marginTop: 6, fontSize: 12 } },
-                  '通过 redteam_poc_search 检索复用，验证通过后由 redteam_poc_add 回填。'))
+                  t('通过 lmt_artifact_query 检索复用，验证通过后由 lmt_artifact_record (kind=pattern) 回填。', 'Search with lmt_artifact_query and contribute back via lmt_artifact_record (kind=pattern).')))
             : null),
         h('div', { className: 'rt-foot' },
-          h('span', null, '全局共享（跨工作区）· 落盘 pocs/<code>/')))
+          h('span', null, t('全局共享（跨工作区）· 落盘 pocs/<code>/', 'Globally shared across workspaces · stored in pocs/<code>/'))))
     }
 
     function ScoreTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [data, setData] = React.useState(null)
@@ -10947,7 +11407,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setBusy(true)
         api({ op: 'scores', engagement: eng }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setErr((r && r.error) || '读取失败'); return }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('读取失败', 'Read failed')); return }
           setErr(null)
           setData(r)
         }, (e) => { setBusy(false); setErr(String((e && e.message) || e)) })
@@ -10963,17 +11423,18 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const setField = (k, v) => setForm((f) => Object.assign({}, f, { [k]: v }))
 
       const save = () => {
-        if (!form || !form.name) { setMsg({ err: '名称不能为空' }); return }
+        if (!form || !form.name) { setMsg({ err: t('名称不能为空', 'Name is required') }); return }
         setBusy(true)
         setMsg(null)
         api({ op: 'saveScorePoint', engagement: eng, point: form }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '保存失败' }); return }
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('保存失败', 'Save failed') }); return }
           if (r.overridden === false) {
-            setMsg({ err: '已保存「启用/停用」。分值未改动：这是随《软件工程 4-Wave 交付质量门禁规范》分发的内置里程碑项，'
-              + '权重 / 上限 / 验收口径由规范锁定。要自定义里程碑项时请「+ 新增里程碑」。' })
+            setMsg({ err: t('已保存「启用/停用」。分值未改动：这是随《软件工程 4-Wave 交付质量门禁规范》分发的内置里程碑项，'
+              + '权重 / 上限 / 验收口径由规范锁定。要自定义里程碑项时请「+ 新增里程碑」。',
+              'Saved enabled state. Weight unchanged: built-in milestones are locked by the 4-Wave Delivery Quality Gate Spec. Click "+ Add Milestone" to create a custom one.') })
           } else {
-            setMsg({ ok: r.note || '已保存' })
+            setMsg({ ok: r.note || t('已保存', 'Saved') })
           }
           setForm(null)
           load()
@@ -10985,8 +11446,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setMsg(null)
         api({ op: 'deleteScorePoint', engagement: eng, id: form.id }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '删除失败' }); return }
-          setMsg({ ok: '已删除' })
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('删除失败', 'Delete failed') }); return }
+          setMsg({ ok: t('已删除', 'Deleted') })
           setForm(null)
           setOpenId(null)
           load()
@@ -11040,11 +11501,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
           rows.push(h('div', { key: 'g-' + g.key, className: 'rt-score-group' },
             h('span', null, g.name),
             h('span', { className: 'rt-sg-sub' },
-              g.tiers.length + ' 项'
-              + (g.capSum > 0 ? ' · 上限独立，不跨项累加' : '')),
+              g.tiers.length + t(' 项', ' items')
+              + (g.capSum > 0 ? t(' · 上限独立，不跨项累加', ' · Independent caps') : '')),
             h('div', { className: 'rt-spacer' }),
             g.points > 0
-              ? h('span', { className: 'rt-tag rt-tag-active' }, '+' + g.points + ' 分')
+              ? h('span', { className: 'rt-tag rt-tag-active' }, '+' + g.points + t(' 分', ' pts'))
               : null))
         }
         for (const p of g.tiers) {
@@ -11057,18 +11518,19 @@ body[data-ds-dark-theme] .rt-anim-complete{
             h('span', null, h('span', {
               className: achieved ? 'rt-pri rt-pri-high' : 'rt-pri rt-pri-low',
               style: achieved ? {} : { background: 'var(--dsw-alias-bg-layer-2)', color: 'var(--dsw-alias-label-secondary)' },
-            }, p.points + '分')),
+            }, p.points + t('分', 'pt'))),
             h('span', { title: p.name + (p.description ? '\n' + p.description : '') },
               shortName(p.name)),
             h('span', { title: p.capped > 0
-              ? '已计入 ' + p.counted + ' 次，另有 ' + p.capped + ' 条因「' + (p.scope_label || '验收口径') + '」或已达上限不计分'
+              ? t('已计入 ' + p.counted + ' 次，另有 ' + p.capped + ' 条因「' + (p.scope_label || '验收口径') + '」或已达上限不计分',
+                  'Counted ' + p.counted + '; ' + p.capped + ' excluded due to scope/cap')
               : (p.scope_label || '') },
-              h('span', { className: 'rt-sec-count' }, p.hits.length > 0 ? p.counted + ' 次达成' : '未达成'),
+              h('span', { className: 'rt-sec-count' }, p.hits.length > 0 ? p.counted + t(' 次达成', 'x achieved') : t('未达成', 'Pending')),
               p.cap > 0
-                ? h('span', { className: 'rt-scope' }, '　额度已用 ' + (p.cap_used === null ? 0 : p.cap_used) + '/' + p.cap)
+                ? h('span', { className: 'rt-scope' }, t('　额度已用 ', ' · Quota ') + (p.cap_used === null ? 0 : p.cap_used) + '/' + p.cap)
                 : null),
             h('span', { style: { textAlign: 'right' } }, p.earned > 0
-              ? h('span', { className: 'rt-tag rt-tag-active' }, '+' + p.earned + ' 分')
+              ? h('span', { className: 'rt-tag rt-tag-active' }, '+' + p.earned + t(' 分', ' pts'))
               : h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } }, '—'))))
           if (!open) continue
           const hitNodes = p.hits.map((hh, hi) => h('div', {
@@ -11077,168 +11539,171 @@ body[data-ds-dark-theme] .rt-anim-complete{
           },
             h('span', { className: 'rt-hit-idx' }, String(hi + 1)),
             h('span', { className: 'rt-hit-asset', title: hh.target || hh.asset_ip || '' },
-              hh.asset_ip || hh.target || '未指定模块'),
-            hh.self_created ? h('span', { className: 'rt-tag rt-tag-warn', title: '自建测试环境记录，只作过程留痕' }, '测试记录 · 不计分') : null,
+              hh.asset_ip || hh.target || t('未指定模块', 'No module specified')),
+            hh.self_created ? h('span', { className: 'rt-tag rt-tag-warn', title: t('自建测试环境记录，只作过程留痕', 'Local test env record, trace only') }, t('测试记录 · 不计分', 'Test Record · Unscored')) : null,
             hh.capped ? h('span', {
               className: 'rt-tag rt-tag-warn',
-              title: hh.capped_reason || '同一模块同一服务端点只计最高权重一条',
-            }, '模块已封顶 · 不计分' + (hh.service ? '（' + hh.service + '）' : '')) : null,
-            hh.shot_count ? h('span', { className: 'rt-tag', title: '这条记录附有验收截图' },
-              '图 ' + hh.shot_count) : null,
+              title: hh.capped_reason || t('同一模块同一服务端点只计最高权重一条', 'One highest-weight score per module & endpoint'),
+            }, t('模块已封顶 · 不计分', 'Capped · Unscored') + (hh.service ? ' (' + hh.service + ')' : '')) : null,
+            hh.shot_count ? h('span', { className: 'rt-tag', title: t('这条记录附有验收截图', 'Includes verification screenshot') },
+              t('图 ', 'Img ') + hh.shot_count) : null,
             h('span', { className: 'rt-hit-time' }, fmt(hh.recorded_at)),
             h('button', {
               className: 'rt-btn', style: { padding: '0 5px', fontSize: 10.5 },
-              title: '复制这一条',
+              title: t('复制这一条', 'Copy this entry'),
               onClick: (e) => {
                 e.stopPropagation()
                 copyText((hh.asset_ip || hh.target || '') + '  ' + (hh.evidence || ''))
               },
-            }, '复制'),
+            }, t('复制', 'Copy')),
             hh.evidence
               ? h('span', { className: 'rt-hit-txt', title: hh.evidence }, String(hh.evidence).replace(/\n+/g, ' '))
-              : h('span', { className: 'rt-hit-txt none' }, '未填验收摘要')))
+              : h('span', { className: 'rt-hit-txt none' }, t('未填验收摘要', 'No verification summary'))))
           rows.push(h('div', {
             key: 'spd' + p.id, className: 'rt-score-row',
             style: { cursor: 'default', gridTemplateColumns: '1fr' },
           }, h('div', { className: 'rt-score-detail' },
-            p.description ? h('div', { className: 'rt-kv' }, h('b', null, '验收条件'), h('span', null, p.description)) : null,
-            h('div', { className: 'rt-kv' }, h('b', null, '状态'),
-              h('span', null, (p.enabled ? '启用' : '停用') + ' · ' + p.points + ' 分/次 · 达成 ' + p.hits.length +
-                ' 次 = ' + p.earned + ' 分' + (p.self_created ? '（另有 ' + p.self_created + ' 次测试记录不计分）' : '') +
-                (p.capped ? '（另有 ' + p.capped + ' 次同模块重复达成不计分）' : ''))),
+            p.description ? h('div', { className: 'rt-kv' }, h('b', null, t('验收条件', 'Criteria')), h('span', null, p.description)) : null,
+            h('div', { className: 'rt-kv' }, h('b', null, t('状态', 'Status')),
+              h('span', null, (p.enabled ? t('启用', 'Enabled') : t('停用', 'Disabled')) + ' · ' + p.points + t(' 分/次 · 达成 ', ' pts/hit · Hit ') + p.hits.length +
+                t(' 次 = ', 'x = ') + p.earned + t(' 分', ' pts') + (p.self_created ? t('（另有 ' + p.self_created + ' 次测试记录不计分）', ' (' + p.self_created + ' unscored test records)') : '') +
+                (p.capped ? t('（另有 ' + p.capped + ' 次同模块重复达成不计分）', ' (' + p.capped + ' capped duplicates)') : ''))),
             p.capped
-              ? h('div', { className: 'rt-kv' }, h('b', null, '模块封顶'),
-                  h('span', null, p.service_summary + '；同一模块与服务端点按最高里程碑权重只计一次'))
+              ? h('div', { className: 'rt-kv' }, h('b', null, t('模块封顶', 'Module Cap')),
+                  h('span', null, p.service_summary + t('；同一模块与服务端点按最高里程碑权重只计一次', '; highest milestone counts once per module & endpoint')))
               : null,
             p.hits.length
               ? h('div', null,
                   h(ShotStrip, { eng: eng, shots: p.shots, total: p.shot_total,
-                    title: '验收截图 · ' + (p.shot_total || (p.shots || []).length) + ' 张' }),
+                    title: t('验收截图 · ', 'Verification Screenshots · ') + (p.shot_total || (p.shots || []).length) + t(' 张', '') }),
                   h('div', { className: 'rt-section', style: { padding: '6px 0 0' } },
-                    '达成记录 · ' + p.hits.length + '（详细验证见交付报告）'),
+                    t('达成记录 · ', 'Achieved Records · ') + p.hits.length + t('（详细验证见交付报告）', ' (see Delivery Report for details)')),
                   h('div', { className: 'rt-hits' }, hitNodes))
-              : h('div', { className: 'rt-kv' }, h('b', null, '达成记录'),
+              : h('div', { className: 'rt-kv' }, h('b', null, t('达成记录', 'Records')),
                   h('span', { style: { color: 'var(--dsw-alias-label-secondary)' } },
-                    '还没有 —— 完成里程碑验收后调用 redteam_score_hit 记录目标模块与验证证据')),
+                    t('还没有 —— 完成里程碑验收后调用 lmt_artifact_record 记录目标模块与验证证据', 'None yet — record with lmt_artifact_record after verification'))),
             h('div', { className: 'rt-actions' },
-              h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); startEdit(p) } }, '编辑')))))
+              h('button', { className: 'rt-btn', onClick: (e) => { e.stopPropagation(); startEdit(p) } }, t('编辑', 'Edit'))))))
         }
       }
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '交付里程碑'),
-          h('span', { style: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', marginLeft: 4 } }, '总分'),
+          h('span', { style: { fontWeight: 600 } }, t('交付里程碑', 'Delivery Milestones')),
+          h('span', { style: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)', marginLeft: 4 } }, t('总分', 'Score')),
           h('span', { className: 'rt-total' }, String(summary.achievedPoints)),
-          h('span', { style: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)' } }, '分'),
-          h('span', { className: 'rt-tag' }, summary.pointCount + ' 个里程碑项'),
-          h('span', { className: 'rt-tag' }, '达成 ' + summary.countedHits + ' 次'),
+          h('span', { style: { fontSize: 13, color: 'var(--dsw-alias-label-secondary)' } }, t('分', 'pts')),
+          h('span', { className: 'rt-tag' }, summary.pointCount + t(' 个里程碑项', ' milestones')),
+          h('span', { className: 'rt-tag' }, t('达成 ', 'Achieved ') + summary.countedHits + t(' 次', 'x')),
           summary.selfCreatedHits
             ? h('span', {
                 className: 'rt-tag rt-tag-warn',
-                title: '自建测试记录只作过程留痕（不计分、不占上限）',
-              }, '测试记录不计分 ' + summary.selfCreatedHits)
+                title: t('自建测试记录只作过程留痕（不计分、不占上限）', 'Local test records are trace-only'),
+              }, t('测试记录不计分 ', 'Test-only ') + summary.selfCreatedHits)
             : null,
           summary.serviceCappedHits
             ? h('span', {
                 className: 'rt-tag rt-tag-warn',
-                title: '按「同模块同端口」只计一次：该服务已封顶，重复记录不计分',
-              }, '服务已封顶不计分 ' + summary.serviceCappedHits)
+                title: t('按「同模块同端口」只计一次：该服务已封顶，重复记录不计分', 'Capped once per module & port'),
+              }, t('服务已封顶不计分 ', 'Capped ') + summary.serviceCappedHits)
             : null,
           h('div', { className: 'rt-spacer' }),
           h('div', { style: { display: 'flex', gap: 4, alignItems: 'center' } },
             h('button', {
               className: 'rt-btn' + (scoreView === 'achieved' ? ' rt-btn-primary' : ''),
-              title: '只显示已经达成的里程碑项',
+              title: t('只显示已经达成的里程碑项', 'Show achieved milestones only'),
               onClick: () => setScoreView('achieved'),
-            }, '已达成' + (summary.hitPointCount ? ' ' + summary.hitPointCount : '')),
+            }, t('已达成', 'Achieved') + (summary.hitPointCount ? ' ' + summary.hitPointCount : '')),
             h('button', {
               className: 'rt-btn' + (scoreView === 'gap' ? ' rt-btn-primary' : ''),
-              title: '只显示未达成的核心里程碑缺口（前 8 项）',
+              title: t('只显示未达成的核心里程碑缺口（前 8 项）', 'Show top 8 remaining milestone gaps'),
               onClick: () => setScoreView('gap'),
-            }, '待交付缺口'),
+            }, t('待交付缺口', 'Pending Gaps')),
             h('button', {
               className: 'rt-btn' + (scoreView === 'all' ? ' rt-btn-primary' : ''),
-              title: '显示全部 ' + items.length + ' 个里程碑项',
+              title: t('显示全部 ' + items.length + ' 个里程碑项', 'Show all ' + items.length + ' milestones'),
               onClick: () => setScoreView('all'),
-            }, '全部 ' + items.length)),
-          h('button', { className: 'rt-btn', onClick: startNew }, '+ 新增里程碑'),
-          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? '刷新中…' : '刷新')),
+            }, t('全部 ', 'All ') + items.length)),
+          h('button', { className: 'rt-btn', onClick: startNew }, t('+ 新增里程碑', '+ Add Milestone')),
+          h('button', { className: 'rt-btn', disabled: busy, onClick: load }, busy ? t('刷新中…', 'Refreshing…') : t('刷新', 'Refresh'))),
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
         err ? h('div', { className: 'rt-err' }, err) : null,
         form ? h('div', { className: 'rt-pane', style: { flex: 'none', borderBottom: '1px solid var(--dsw-alias-border-l1)' } },
           form.builtin
             ? h('div', { className: 'rt-hint', style: { marginBottom: 8 } },
-                h('b', null, '内置里程碑项（来自《软件工程 4-Wave 交付质量门禁规范》）'),
+                h('b', null, t('内置里程碑项（来自《软件工程 4-Wave 交付质量门禁规范》）', 'Built-in Milestone (4-Wave Delivery Quality Gate Spec)')),
                 h('div', { style: { marginTop: 3 } },
-                  '权重、上限、验收口径与名称由规范锁定。这里可以改「启用 / 停用」；'
-                  + '要自定义里程碑项时请返回上一屏点「+ 新增里程碑」。'),
+                  t('权重、上限、验收口径与名称由规范锁定。这里可以改「启用 / 停用」；'
+                    + '要自定义里程碑项时请返回上一屏点「+ 新增里程碑」。',
+                    'Weight, cap, criteria, and name are spec-locked. You may toggle Enabled/Disabled or click "+ Add Milestone" for custom items.')),
                 form.src !== null && form.src !== undefined
                   ? h('div', { style: { marginTop: 3, color: 'var(--dsw-alias-label-secondary)' } },
-                      '规范序号 ' + form.src + (form.rule ? '　·　分组 rule=' + form.rule : '')
-                      + (form.cap > 0 ? '　·　上限 ' + form.cap + ' 分' : '　·　不设上限'))
+                      t('规范序号 ', 'Spec #') + form.src + (form.rule ? t('　·　分组 rule=', ' · rule=') + form.rule : '')
+                      + (form.cap > 0 ? t('　·　上限 ', ' · cap ') + form.cap + t(' 分', ' pts') : t('　·　不设上限', ' · Uncapped')))
                   : null)
             : null,
           h('div', { className: 'rt-score-form' },
             h('input', {
-              className: 'rt-input', placeholder: '名称（必填）', value: form.name,
+              className: 'rt-input', placeholder: t('名称（必填）', 'Name (required)'), value: form.name,
               readOnly: form.builtin === true,
-              title: form.builtin ? '内置里程碑项的名称由规范锁定' : '',
+              title: form.builtin ? t('内置里程碑项的名称由规范锁定', 'Built-in name is locked') : '',
               onChange: (e) => setField('name', e.target.value),
             }),
             h('input', {
-              className: 'rt-input', placeholder: '分类，如 架构与核心模块', value: form.category,
+              className: 'rt-input', placeholder: t('分类，如 架构与核心模块', 'Category, e.g. Core Architecture'), value: form.category,
               readOnly: form.builtin === true,
-              title: form.builtin ? '内置里程碑项的分类由规范锁定' : '',
+              title: form.builtin ? t('内置里程碑项的分类由规范锁定', 'Built-in category is locked') : '',
               onChange: (e) => setField('category', e.target.value),
             }),
             h('input', {
-              className: 'rt-input', type: 'number', placeholder: '单次权重',
+              className: 'rt-input', type: 'number', placeholder: t('单次权重', 'Points'),
               readOnly: form.builtin === true,
               title: form.builtin
-                ? '内置里程碑项的分值由规范锁定，不能在这里改'
-                : '这一类的单次权重分值',
+                ? t('内置里程碑项的分值由规范锁定，不能在这里改', 'Built-in points cannot be modified')
+                : t('这一类的单次权重分值', 'Points per hit'),
               value: form.points, onChange: (e) => setField('points', Number(e.target.value)),
             }),
             h('select', { className: 'rt-input', value: form.enabled ? '1' : '0', onChange: (e) => setField('enabled', e.target.value === '1') },
-              h('option', { value: '1' }, '启用'),
-              h('option', { value: '0' }, '停用'))),
+              h('option', { value: '1' }, t('启用', 'Enabled')),
+              h('option', { value: '0' }, t('停用', 'Disabled')))),
           h('input', {
             className: 'rt-input', style: { width: '100%', marginBottom: 6, boxSizing: 'border-box' },
-            placeholder: '验收条件说明', value: form.description,
+            placeholder: t('验收条件说明', 'Acceptance criteria'), value: form.description,
             readOnly: form.builtin === true,
-            title: form.builtin ? '内置里程碑项的条款正文由规范锁定' : '',
+            title: form.builtin ? t('内置里程碑项的条款正文由规范锁定', 'Built-in description is locked') : '',
             onChange: (e) => setField('description', e.target.value),
           }),
           h('div', { className: 'rt-actions' },
-            h('button', { className: 'rt-btn rt-btn-primary', disabled: busy, onClick: save }, '保存'),
+            h('button', { className: 'rt-btn rt-btn-primary', disabled: busy, onClick: save }, t('保存', 'Save')),
             form.id
               ? (form.builtin
                   ? h('button', {
                       className: 'rt-btn', disabled: true,
-                      title: '内置里程碑项不能删除，要让它不参与计分请改用「停用」。',
-                    }, '删除（内置项不可删）')
-                  : h('button', { className: 'rt-btn', disabled: busy, onClick: remove }, '删除'))
+                      title: t('内置里程碑项不能删除，要让它不参与计分请改用「停用」。', 'Built-in items cannot be deleted; disable instead.'),
+                    }, t('删除（内置项不可删）', 'Delete (Built-in Locked)'))
+                  : h('button', { className: 'rt-btn', disabled: busy, onClick: remove }, t('删除', 'Delete')))
               : null,
-            h('button', { className: 'rt-btn', onClick: () => setForm(null) }, '取消'))) : null,
+            h('button', { className: 'rt-btn', onClick: () => setForm(null) }, t('取消', 'Cancel')))) : null,
         h('div', { className: 'rt-foot', style: { padding: '2px 12px 0' } },
           scoreView === 'achieved'
             ? (achievedGroups.length
-                ? '默认只显示已经达成的里程碑项（' + summary.hitPointCount + ' 项）；待交付缺口 / 完整列表可切换。'
-                : '还没有已达成的里程碑项；切到「待交付缺口」查看待推进目标。')
+                ? t('默认只显示已经达成的里程碑项（' + summary.hitPointCount + ' 项）；待交付缺口 / 完整列表可切换。',
+                    'Showing achieved milestones (' + summary.hitPointCount + '); switch to Pending Gaps or All.')
+                : t('还没有已达成的里程碑项；切到「待交付缺口」查看待推进目标。', 'No achieved milestones yet; switch to Pending Gaps to inspect targets.'))
             : scoreView === 'gap'
-              ? '只显示未拿满的前 8 项；完整 ' + items.length + ' 项点「全部」。'
-              : '完整 ' + items.length + ' 个里程碑项。'),
+              ? t('只显示未拿满的前 8 项；完整 ' + items.length + ' 项点「全部」。', 'Showing top 8 open items; click All for all ' + items.length + '.')
+              : t('完整 ' + items.length + ' 个里程碑项。', 'All ' + items.length + ' milestones.')),
         h('div', { className: 'rt-table' },
           h('div', { className: 'rt-score-row head' },
-            h('span', null, ''), h('span', null, '分值'), h('span', null, scoreView === 'achieved' ? '已达成项目' : scoreView === 'gap' ? '待交付缺口' : '全部里程碑项'),
-            h('span', null, '达成 / 规范上限'), h('span', { style: { textAlign: 'right' } }, '已得分')),
+            h('span', null, ''), h('span', null, t('分值', 'Pts')), h('span', null, scoreView === 'achieved' ? t('已达成项目', 'Achieved') : scoreView === 'gap' ? t('待交付缺口', 'Pending Gaps') : t('全部里程碑项', 'All Milestones')),
+            h('span', null, t('达成 / 规范上限', 'Hits / Spec Cap')), h('span', { style: { textAlign: 'right' } }, t('已得分', 'Earned'))),
           rows,
-          !items.length ? h('div', { className: 'rt-empty' }, '暂无里程碑项，点右上角「新增里程碑」') : null,
-          items.length && !rows.length ? h('div', { className: 'rt-empty' }, scoreView === 'achieved' ? '还没有已达成的里程碑项；点「待交付缺口」查看下一步目标。' : '当前视图没有可显示的里程碑项。') : null))
+          !items.length ? h('div', { className: 'rt-empty' }, t('暂无里程碑项，点右上角「新增里程碑」', 'No milestones yet; click "+ Add Milestone"')) : null,
+          items.length && !rows.length ? h('div', { className: 'rt-empty' }, scoreView === 'achieved' ? t('还没有已达成的里程碑项；点「待交付缺口」查看下一步目标。', 'No achieved milestones yet; switch to Pending Gaps.') : t('当前视图没有可显示的里程碑项。', 'No milestones in this view.')) : null))
     }
 
     function TestingTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [data, setData] = React.useState(null)
@@ -11255,7 +11720,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         const my = ++seq.current
         api({ op: 'activeTests', engagement: eng, limit: 20 }).then((r) => {
           if (my !== seq.current) return
-          if (!r || r.ok === false) { setErr((r && r.error) || '读取失败'); return }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('读取失败', 'Read failed')); return }
           setErr(null); setData(r); setAt(new Date())
         }, (e) => { if (my === seq.current) setErr(String((e && e.message) || e)) })
           .finally(() => { if (my === seq.current) inflight.current = false })
@@ -11275,14 +11740,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const card = (a, past) => {
         const chips = []
         chips.push(h('span', { key: 'sc', className: 'rt-scope rt-scope-' + (a.scope === 'internal' ? 'internal' : 'external') },
-          a.scope === 'internal' ? '核心模块' : '外部接口'))
+          a.scope === 'internal' ? t('核心模块', 'Core Module') : t('外部接口', 'External API')))
         if (a.segment_cidr) chips.push(h('span', { key: 'seg', className: 'rt-tag' }, a.segment_cidr))
-        if (a.open_ports) chips.push(h('span', { key: 'p', className: 'rt-tag rt-tag-active' }, '开放 ' + a.open_ports + ' 端口'))
-        if (a.vulns) chips.push(h('span', { key: 'v', className: 'rt-tag rt-tag-live' }, '已确认问题 ' + a.vulns))
-        if (a.webshells) chips.push(h('span', { key: 'w', className: 'rt-tag rt-tag-passive' }, '服务端点 ' + a.webshells))
-        if (a.tunnels) chips.push(h('span', { key: 't', className: 'rt-tag rt-tag-passive' }, '联调通道 ' + a.tunnels))
-        if (a.priority) chips.push(h('span', { key: 'pr', className: 'rt-tag' }, '优先级 ' + a.priority))
-        if (a.blocked_count) chips.push(h('span', { key: 'b', className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455' } }, '阻塞 ' + a.blocked_count + ' 次'))
+        if (a.open_ports) chips.push(h('span', { key: 'p', className: 'rt-tag rt-tag-active' }, t('开放 ', 'Open ') + a.open_ports + t(' 端口', ' ports')))
+        if (a.vulns) chips.push(h('span', { key: 'v', className: 'rt-tag rt-tag-live' }, t('已确认问题 ', 'Confirmed ') + a.vulns))
+        if (a.webshells) chips.push(h('span', { key: 'w', className: 'rt-tag rt-tag-passive' }, t('服务端点 ', 'Endpoints ') + a.webshells))
+        if (a.tunnels) chips.push(h('span', { key: 't', className: 'rt-tag rt-tag-passive' }, t('联调通道 ', 'Channels ') + a.tunnels))
+        if (a.priority) chips.push(h('span', { key: 'pr', className: 'rt-tag' }, t('优先级 ', 'Priority ') + priLabel(a.priority)))
+        if (a.blocked_count) chips.push(h('span', { key: 'b', className: 'rt-tag', style: { color: '#ef4444', borderColor: '#ef444455' } }, t('阻塞 ', 'Blocked ') + a.blocked_count + t(' 次', 'x')))
         const noteLines = a.test_notes
           ? String(a.test_notes).split('\n').slice(-3).map((l) => (l.length > 240 ? l.slice(0, 240) + ' …' : l))
           : []
@@ -11290,78 +11755,79 @@ body[data-ds-dark-theme] .rt-anim-complete{
           h('div', { className: 'rt-atest-head' },
             past ? null : h('span', { className: 'rt-live-dot' }),
             h('span', { className: 'rt-atest-ip' }, a.ip),
-            h('span', { className: 'rt-tag ' + (a.test_status === 'testing' ? 'rt-tag-live' : '') }, TEST_LABEL[a.test_status] || a.test_status),
+            h('span', { className: 'rt-tag ' + (a.test_status === 'testing' ? 'rt-tag-live' : '') }, testLabel(a.test_status)),
             h('div', { className: 'rt-spacer' }),
             h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
               fmt(a.test_updated_at) + (a.test_updated_by ? ' · ' + a.test_updated_by : ''))),
           chips.length ? h('div', null, chips) : null,
-          a.test_surface ? h('div', { className: 'rt-atest-meta' }, '验证接口面：' + a.test_surface) : null,
-          a.potential ? h('div', { className: 'rt-atest-meta' }, '预期产出：' + a.potential) : null,
-          noteLines.length ? h(Clip, { label: '验证记录', text: noteLines.join('\n') }) : null)
+          a.test_surface ? h('div', { className: 'rt-atest-meta' }, t('验证接口面：', 'Surface: ') + a.test_surface) : null,
+          a.potential ? h('div', { className: 'rt-atest-meta' }, t('预期产出：', 'Expected: ') + a.potential) : null,
+          noteLines.length ? h(Clip, { label: t('验证记录', 'Verification Notes'), text: noteLines.join('\n') }) : null)
       }
 
       const conclusion = h('div', { className: 'rt-concl' },
-        ConclItem('testing', '验证中', stats.testing),
-        ConclItem('untested', '待验证', stats.untested),
-        ConclItem('tested', '已验证', stats.tested),
-        ConclItem('blocked', '受阻/跳过', (stats.abandoned || 0) + (stats.blocked || 0)),
-        ConclItem('no_surface', '无需验证', stats.no_surface),
+        ConclItem('testing', t('验证中', 'Testing'), stats.testing),
+        ConclItem('untested', t('待验证', 'Pending'), stats.untested),
+        ConclItem('tested', t('已验证', 'Verified'), stats.tested),
+        ConclItem('blocked', t('受阻/跳过', 'Blocked/Skipped'), (stats.abandoned || 0) + (stats.blocked || 0)),
+        ConclItem('no_surface', t('无需验证', 'No Surface'), stats.no_surface),
         h('div', { className: 'rt-spacer' }),
         at ? h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } },
-          '更新于 ' + at.toLocaleTimeString('zh-CN', { hour12: false })) : null,
+          t('更新于 ', 'Updated ') + at.toLocaleTimeString(getLocale() === 'en-US' ? 'en-US' : 'zh-CN', { hour12: false })) : null,
         h('button', {
-          className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, title: '展开最近验证与待验证队列',
+          className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, title: t('展开最近验证与待验证队列', 'Expand recent & queue'),
           onClick: () => collapse.setAll(['testing:' + eng, 'recent:' + eng, 'queue:' + eng], true),
-        }, '全部展开'),
+        }, t('全部展开', 'Expand All')),
         h('button', {
-          className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, title: '只留正在验证',
+          className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, title: t('只留正在验证', 'Keep active only'),
           onClick: () => collapse.setAll(['testing:' + eng, 'recent:' + eng, 'queue:' + eng], false),
-        }, '全部收起'),
+        }, t('全部收起', 'Collapse All')),
         h('button', {
           className: 'rt-btn' + (auto ? ' rt-btn-primary' : ''), style: { padding: '0 7px', fontSize: 11 },
-          title: '每 5 秒自动刷新', onClick: () => setAuto((x) => !x),
-        }, auto ? '实时 · 5s' : '已暂停'),
-        h('button', { className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, onClick: load }, '刷新'))
+          title: t('每 5 秒自动刷新', 'Auto-refresh every 5s'), onClick: () => setAuto((x) => !x),
+        }, auto ? t('实时 · 5s', 'Live · 5s') : t('已暂停', 'Paused')),
+        h('button', { className: 'rt-btn', style: { padding: '0 7px', fontSize: 11 }, onClick: load }, t('刷新', 'Refresh')))
 
       const body = []
       body.push(h(Section, {
-        key: 'testing', tone: 'test', title: '正在验证',
-        count: testing.length + ' 个',
-        sub: testing.length ? '智能体正在验证这些模块与服务' : '智能体开始验证某个模块后会实时出现在这里',
+        key: 'testing', tone: 'test', title: t('正在验证', 'Currently Testing'),
+        count: testing.length + t(' 个', ''),
+        sub: testing.length ? t('智能体正在验证这些模块与服务', 'Agents actively verifying these modules') : t('智能体开始验证某个模块后会实时出现在这里', 'Appears live once an agent begins testing'),
         open: collapse.isOpen('testing:' + eng, true),
         onToggle: collapse.toggle('testing:' + eng, true),
       }, testing.length
         ? testing.map((a) => card(a, false))
-        : h('div', { className: 'rt-atest-meta', style: { paddingBottom: 4 } }, '当前没有模块处于「验证中」')))
+        : h('div', { className: 'rt-atest-meta', style: { paddingBottom: 4 } }, t('当前没有模块处于「验证中」', 'No modules currently testing'))))
 
       body.push(h(Section, {
-        key: 'recent', tone: 'past', title: '最近验证', count: recent.length + ' 个',
-        sub: '已完成验证的模块',
+        key: 'recent', tone: 'past', title: t('最近验证', 'Recently Verified'), count: recent.length + t(' 个', ''),
+        sub: t('已完成验证的模块', 'Completed verification modules'),
         open: collapse.isOpen('recent:' + eng, false),
         onToggle: collapse.toggle('recent:' + eng, false),
-      }, recent.length ? recent.map((a) => card(a, true)) : h('div', { className: 'rt-atest-meta' }, '暂无')))
+      }, recent.length ? recent.map((a) => card(a, true)) : h('div', { className: 'rt-atest-meta' }, t('暂无', 'None'))))
 
       body.push(h(Section, {
-        key: 'queue', tone: 'queue', title: '待验证队列',
-        count: (data ? (data.untested || 0) : 0) + ' 个',
-        sub: '按模块优先级与开放服务数排序',
+        key: 'queue', tone: 'queue', title: t('待验证队列', 'Verification Queue'),
+        count: (data ? (data.untested || 0) : 0) + t(' 个', ''),
+        sub: t('按模块优先级与开放服务数排序', 'Sorted by module priority and open services'),
         open: collapse.isOpen('queue:' + eng, false),
         onToggle: collapse.toggle('queue:' + eng, false),
       }, queue.length
         ? queue.map((a) => card(a, true)).concat([
             h('div', { key: 'queueHint', className: 'rt-atest-meta', style: { paddingTop: 4 } },
-              '完整清单（含筛选与排序）见「模块与服务」页')])
-        : h('div', { className: 'rt-atest-meta' }, '没有待验证模块')))
+              t('完整清单（含筛选与排序）见「模块与服务」页', 'See "Modules & Services" for the full filtered list'))])
+        : h('div', { className: 'rt-atest-meta' }, t('没有待验证模块', 'No pending modules'))))
 
       return h('div', { className: 'rt-main' },
         conclusion,
         err ? h('div', { className: 'rt-err' }, err) : null,
-        data === null && !err ? h('div', { className: 'rt-empty' }, '加载中…') : null,
+        data === null && !err ? h('div', { className: 'rt-empty' }, t('加载中…', 'Loading…')) : null,
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           h('div', { style: { padding: '6px 12px 14px' } }, body)))
     }
 
     function SessionTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [data, setData] = React.useState(null)
@@ -11373,7 +11839,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const load = () => {
         if (!eng) return
         api({ op: 'sessions', engagement: eng }).then((r) => {
-          if (!r || r.ok === false) { setErr((r && r.error) || '读取失败'); return }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('读取失败', 'Read failed')); return }
           setErr(null)
           setData(r)
         }, (e) => setErr(String((e && e.message) || e)))
@@ -11384,10 +11850,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setBusy(true); setMsg(null)
         api({ op: 'probeSessions', engagement: eng, timeoutMs: 6000 }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '检测失败' }); load(); return }
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('检测失败', 'Probe failed') }); load(); return }
           const on = (r.webshells || []).filter((x) => x.status === 'online').length
           const act = (r.tunnels || []).filter((x) => x.status === 'active').length
-          setMsg({ ok: '检测完成：服务端点在线 ' + on + '/' + (r.webshells || []).length + '，联调通道可用 ' + act + '/' + (r.tunnels || []).length })
+          setMsg({ ok: t('检测完成：服务端点在线 ' + on + '/' + (r.webshells || []).length + '，联调通道可用 ' + act + '/' + (r.tunnels || []).length,
+            'Probe complete: Endpoints online ' + on + '/' + (r.webshells || []).length + ', Bridge channels active ' + act + '/' + (r.tunnels || []).length) })
           load()
         }, (e) => { setBusy(false); setMsg({ err: String((e && e.message) || e) }) })
       }
@@ -11398,14 +11865,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setTimeout(() => setCopied((c) => (c === key ? null : c)), 1500)
       })
 
-      const markTunnel = (t, status) => {
+      const markTunnel = (tn, status) => {
         setMsg(null)
-        api({ op: 'updateTunnel', engagement: eng, id: t.id, patch: { status: status, check_note: '界面手动标记' } })
+        api({ op: 'updateTunnel', engagement: eng, id: tn.id, patch: { status: status, check_note: t('界面手动标记', 'Marked manually in UI') } })
           .then(() => load(), (e) => setMsg({ err: String((e && e.message) || e) }))
       }
       const markShell = (w, status) => {
         setMsg(null)
-        api({ op: 'updateWebshell', engagement: eng, id: w.id, patch: { status: status, check_note: '界面手动标记' } })
+        api({ op: 'updateWebshell', engagement: eng, id: w.id, patch: { status: status, check_note: t('界面手动标记', 'Marked manually in UI') } })
           .then(() => load(), (e) => setMsg({ err: String((e && e.message) || e) }))
       }
 
@@ -11416,19 +11883,19 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const statusDot = (s) => h('span', { className: s === 'online' || s === 'active' ? 'rt-dot-on' : (s === 'unknown' || !s ? 'rt-dot-unk' : 'rt-dot-off') })
       const fact = (label, value) => h('div', { className: 'rt-sess-fact' }, h('b', null, label), h('span', null, value))
       const clip = (v, max) => {
-        const t = String(v === undefined || v === null ? '' : v)
+        const str = String(v === undefined || v === null ? '' : v)
         const n = max || 90
-        return t.length > n ? t.slice(0, n) + '…' : t
+        return str.length > n ? str.slice(0, n) + '…' : str
       }
       const factClip = (label, value, max) => fact(label, h('span', { title: String(value || '') }, clip(value, max)))
       const noteFold = (label, text) => {
-        const t = String(text || '')
-        if (t.trim() === '') return null
+        const str = String(text || '')
+        if (str.trim() === '') return null
         return h('details', { className: 'rt-sess-fold' },
-          h('summary', null, label + '（' + t.length + ' 字，点击展开）'),
-          h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', padding: '4px 0', fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } }, t))
+          h('summary', null, label + ' (' + str.length + t(' 字，点击展开)', ' chars, click to expand)')),
+          h('div', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', padding: '4px 0', fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } }, str))
       }
-      const isSecureEndpoint = (t) => /tls|https|ssh|grpc|ws|加密/i.test(String(t || ''))
+      const isSecureEndpoint = (st) => /tls|https|ssh|grpc|ws|加密/i.test(String(st || ''))
 
       const shellCards = shells.map((w) => h('div', { key: 'w' + w.id, className: 'rt-sess' },
         h('div', { className: 'rt-sess-head' },
@@ -11438,91 +11905,91 @@ body[data-ds-dark-theme] .rt-anim-complete{
           w.privilege ? h('span', { className: 'rt-tag' }, w.privilege) : null,
           h('div', { className: 'rt-spacer' }),
           copied === 'cmd' + w.id
-            ? h('span', { className: 'rt-tag', style: { color: '#4d6bfe' } }, '已复制')
+            ? h('span', { className: 'rt-tag', style: { color: '#4d6bfe' } }, t('已复制', 'Copied'))
             : h('button', {
                 className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
                 onClick: () => copy('cmd' + w.id, 'curl -s "' + w.url + '"'),
-              }, '复制 URL'),
+              }, t('复制 URL', 'Copy URL')),
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
             onClick: () => markShell(w, 'offline'),
-          }, '标记离线')),
+          }, t('标记离线', 'Mark Offline'))),
         h('div', { className: 'rt-sess-facts' },
-          fact('端点类型', isSecureEndpoint(w.shell_type) ? '标准安全端点（可直连调试）' : '本地预览 / 调试端点'),
-          w.pass_key ? fact('访问凭据', h(SecretText, { value: w.pass_key })) : null,
-          w.asset_ip ? fact('所属节点', w.asset_ip) : null,
-          w.privilege ? fact('运行角色', w.privilege) : null,
-          w.secret_ref ? fact('凭据引用', h('span', { className: 'rt-mono' }, w.secret_ref)) : null,
-          fact('最后检测', (w.last_check ? fmt(w.last_check) : '未检测')
-            + (w.latency_ms !== null && w.latency_ms !== undefined ? '（' + w.latency_ms + 'ms）' : '')),
-          noteFold('检测说明', w.check_note),
-          noteFold('备注', w.note))))
+          fact(t('端点类型', 'Endpoint Type'), isSecureEndpoint(w.shell_type) ? t('标准安全端点（可直连调试）', 'Secure endpoint (direct debuggable)') : t('本地预览 / 调试端点', 'Local preview / debug endpoint')),
+          w.pass_key ? fact(t('访问凭据', 'Access Secret'), h(SecretText, { value: w.pass_key })) : null,
+          w.asset_ip ? fact(t('所属节点', 'Host'), w.asset_ip) : null,
+          w.privilege ? fact(t('运行角色', 'Role'), w.privilege) : null,
+          w.secret_ref ? fact(t('凭据引用', 'Secret Ref'), h('span', { className: 'rt-mono' }, w.secret_ref)) : null,
+          fact(t('最后检测', 'Last Check'), (w.last_check ? fmt(w.last_check) : t('未检测', 'Unchecked'))
+            + (w.latency_ms !== null && w.latency_ms !== undefined ? ' (' + w.latency_ms + 'ms)' : '')),
+          noteFold(t('检测说明', 'Check Notes'), w.check_note),
+          noteFold(t('备注', 'Notes'), w.note))))
 
-      const tunnelCards = tunnels.map((t) => h('div', { key: 't' + t.id, className: 'rt-sess' },
+      const tunnelCards = tunnels.map((tn) => h('div', { key: 't' + tn.id, className: 'rt-sess' },
         h('div', { className: 'rt-sess-head' },
-          statusDot(t.status),
-          h('span', { className: 'rt-sess-title' }, t.listen || '(未填监听地址)'),
-          h('span', { className: 'rt-tag rt-tag-passive' }, t.kind || 'proxy'),
-          t.legit === true
-            ? h('span', { className: 'rt-tag rt-tag-live', title: t.entry_kind_label || '' }, '目标环境通道')
-            : h('span', { className: 'rt-tag', title: '本地代理或待确认通道' }, '本地/待确认'),
-          t.reach ? h('span', { className: 'rt-tag' }, '可达 ' + t.reach) : null,
+          statusDot(tn.status),
+          h('span', { className: 'rt-sess-title' }, tn.listen || t('(未填监听地址)', '(No listen addr)')),
+          h('span', { className: 'rt-tag rt-tag-passive' }, tn.kind || 'proxy'),
+          tn.legit === true
+            ? h('span', { className: 'rt-tag rt-tag-live', title: tn.entry_kind_label || '' }, t('目标环境通道', 'Target Env Channel'))
+            : h('span', { className: 'rt-tag', title: t('本地代理或待确认通道', 'Local proxy or pending channel') }, t('本地/待确认', 'Local / Pending')),
+          tn.reach ? h('span', { className: 'rt-tag' }, t('可达 ', 'Reach ') + tn.reach) : null,
           h('div', { className: 'rt-spacer' }),
           h('button', {
             className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 },
-            onClick: () => copy('sock' + t.id, t.listen || ''),
-          }, copied === 'sock' + t.id ? '已复制' : '复制地址'),
-          t.status === 'active'
-            ? h('button', { className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 }, onClick: () => markTunnel(t, 'down') }, '标记离线')
-            : h('button', { className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 }, onClick: () => markTunnel(t, 'active') }, '标记可用')),
+            onClick: () => copy('sock' + tn.id, tn.listen || ''),
+          }, copied === 'sock' + tn.id ? t('已复制', 'Copied') : t('复制地址', 'Copy Addr')),
+          tn.status === 'active'
+            ? h('button', { className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 }, onClick: () => markTunnel(tn, 'down') }, t('标记离线', 'Mark Down'))
+            : h('button', { className: 'rt-btn', style: { padding: '0 6px', fontSize: 11 }, onClick: () => markTunnel(tn, 'active') }, t('标记可用', 'Mark Active'))),
         h('div', { className: 'rt-sess-facts' },
-          factClip('上游入口', t.entry || '未登记', 110),
-          t.reach ? factClip('可达子网/服务', t.reach, 110) : null,
-          t.asset_ip ? fact('所属节点', t.asset_ip) : null,
-          fact('最后检测', (t.last_check ? fmt(t.last_check) : '未检测')
-            + (t.latency_ms !== null && t.latency_ms !== undefined ? '（' + t.latency_ms + 'ms）' : '')),
-          noteFold('检测说明', t.check_note),
-          noteFold('备注', t.note)),
-        t.command ? h('details', { className: 'rt-sess-fold' },
-          h('summary', null, '启动命令（点击展开 / 复制）'),
-          h('div', Object.assign({ className: 'rt-code', title: '点击复制' }, clickable(() => copy('c' + t.id, t.command), { label: '复制命令' })),
-            copied === 'c' + t.id ? '已复制' : t.command)) : null))
+          factClip(t('上游入口', 'Upstream Entry'), tn.entry || t('未登记', 'Unregistered'), 110),
+          tn.reach ? factClip(t('可达子网/服务', 'Reachable Targets'), tn.reach, 110) : null,
+          tn.asset_ip ? fact(t('所属节点', 'Host'), tn.asset_ip) : null,
+          fact(t('最后检测', 'Last Check'), (tn.last_check ? fmt(tn.last_check) : t('未检测', 'Unchecked'))
+            + (tn.latency_ms !== null && tn.latency_ms !== undefined ? ' (' + tn.latency_ms + 'ms)' : '')),
+          noteFold(t('检测说明', 'Check Notes'), tn.check_note),
+          noteFold(t('备注', 'Notes'), tn.note)),
+        tn.command ? h('details', { className: 'rt-sess-fold' },
+          h('summary', null, t('启动命令（点击展开 / 复制）', 'Launch Command (expand / copy)')),
+          h('div', Object.assign({ className: 'rt-code', title: t('点击复制', 'Click to copy') }, clickable(() => copy('c' + tn.id, tn.command), { label: t('复制命令', 'Copy command') })),
+            copied === 'c' + tn.id ? t('已复制', 'Copied') : tn.command)) : null))
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '运行环境与服务端点'),
-          h('span', { className: 'rt-tag' }, '服务端点 ' + (totals.webshellsOnline || 0) + '/' + (totals.webshells || 0) + ' 在线'),
-          h('span', { className: 'rt-tag' }, '联调通道 ' + (totals.tunnelsActive || 0) + '/' + (totals.tunnels || 0) + ' 可用'),
-          h('span', { className: 'rt-tag' }, '配置凭据 ' + (totals.credentials || 0)),
-          h('span', { className: 'rt-tag' }, '连接会话 ' + (totals.access || 0)),
+          h('span', { style: { fontWeight: 600 } }, t('运行环境与服务端点', 'Runtime & Endpoints')),
+          h('span', { className: 'rt-tag' }, t('服务端点 ', 'Endpoints ') + (totals.webshellsOnline || 0) + '/' + (totals.webshells || 0) + t(' 在线', ' online')),
+          h('span', { className: 'rt-tag' }, t('联调通道 ', 'Channels ') + (totals.tunnelsActive || 0) + '/' + (totals.tunnels || 0) + t(' 可用', ' active')),
+          h('span', { className: 'rt-tag' }, t('配置凭据 ', 'Creds ') + (totals.credentials || 0)),
+          h('span', { className: 'rt-tag' }, t('连接会话 ', 'Access ') + (totals.access || 0)),
           h('div', { className: 'rt-spacer' }),
-          h('button', { className: 'rt-btn rt-btn-primary', disabled: busy, onClick: probe }, busy ? '检测中…' : '检测连通性'),
-          h('button', { className: 'rt-btn', onClick: load }, '刷新')),
+          h('button', { className: 'rt-btn rt-btn-primary', disabled: busy, onClick: probe }, busy ? t('检测中…', 'Probing…') : t('检测连通性', 'Probe Connectivity')),
+          h('button', { className: 'rt-btn', onClick: load }, t('刷新', 'Refresh'))),
         msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
         err ? h('div', { className: 'rt-err' }, err) : null,
         h('div', { className: 'rt-body', style: { overflow: 'auto' } },
           !shells.length && !tunnels.length
             ? h('div', { className: 'rt-empty' },
-                h('div', null, '当前工作区暂无运行环境端点或联调通道。'),
+                h('div', null, t('当前工作区暂无运行环境端点或联调通道。', 'No runtime endpoints or bridge channels in this workspace.')),
                 h('div', { style: { marginTop: 6, fontSize: 12 } },
-                  '子智能体启动服务或转发通道后将同步于此，可点「检测连通性」核验。'))
+                  t('子智能体启动服务或转发通道后将同步于此，可点「检测连通性」核验。', 'Subagent services and tunnels appear here; click "Probe Connectivity" to verify.')))
             : null,
           h(Section, {
-            key: 'webshells', tone: 'queue', title: '服务端点',
-            count: (totals.webshellsOnline || 0) + '/' + (totals.webshells || 0) + ' 在线',
-            sub: '已部署的本地预览与服务端点',
+            key: 'webshells', tone: 'queue', title: t('服务端点', 'Service Endpoints'),
+            count: (totals.webshellsOnline || 0) + '/' + (totals.webshells || 0) + t(' 在线', ' online'),
+            sub: t('已部署的本地预览与服务端点', 'Deployed local preview & service endpoints'),
             open: sessCollapse.isOpen('shells', true), onToggle: sessCollapse.toggle('shells', true),
           }, shells.length
             ? h('div', { className: 'rt-sess-grid', style: { padding: 0 } }, shellCards)
-            : h('div', { className: 'rt-atest-meta' }, '暂无服务端点')),
+            : h('div', { className: 'rt-atest-meta' }, t('暂无服务端点', 'No service endpoints'))),
           h(Section, {
-            key: 'tunnels', tone: 'test', title: '联调通道',
-            count: (totals.tunnelsActive || 0) + '/' + (totals.tunnels || 0) + ' 可用',
-            sub: '端口转发与联调代理通道',
+            key: 'tunnels', tone: 'test', title: t('联调通道', 'Bridge Channels'),
+            count: (totals.tunnelsActive || 0) + '/' + (totals.tunnels || 0) + t(' 可用', ' active'),
+            sub: t('端口转发与联调代理通道', 'Port forwarding & proxy bridge channels'),
             open: sessCollapse.isOpen('tunnels', true), onToggle: sessCollapse.toggle('tunnels', true),
           }, tunnels.length
             ? h('div', { className: 'rt-sess-grid', style: { padding: 0 } }, tunnelCards)
-            : h('div', { className: 'rt-atest-meta' }, '暂无联调通道'))))
+            : h('div', { className: 'rt-atest-meta' }, t('暂无联调通道', 'No bridge channels')))))
     }
 
     class RtBoundary extends React.Component {
@@ -11540,11 +12007,11 @@ body[data-ds-dark-theme] .rt-anim-complete{
         if (this.state.error) {
           const msg = this.state.error && this.state.error.message ? this.state.error.message : String(this.state.error)
           return h('div', { className: 'rt-pane' },
-            h('div', { className: 'rt-err' }, '该页面渲染出错：' + msg),
+            h('div', { className: 'rt-err' }, t('该页面渲染出错：', 'Render error: ') + msg),
             h('button', {
               className: 'rt-btn',
               onClick: () => { this.setState({ error: null }); setUI({ tab: 'overview' }) },
-            }, '回到项目总览'))
+            }, t('回到项目总览', 'Back to Overview')))
         }
         return this.props.children
       }
@@ -11599,6 +12066,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function SettingsHubTab(props) {
+      useLocale()
       const eng = props.engagement || null
       const engagements = Array.isArray(props.engagements) ? props.engagements : []
       const activeSid = props.sessionId || null
@@ -11633,6 +12101,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const [subagentProvider, setSubagentProvider] = React.useState('spawn')
       const [autoWakeOnApprove, setAutoWakeOnApprove] = React.useState(true)
       const [autoAdvanceWave, setAutoAdvanceWave] = React.useState(false)
+      const [maxTokensPerWorkspace, setMaxTokensPerWorkspace] = React.useState(0)
+      const [maxCostPerWorkspace, setMaxCostPerWorkspace] = React.useState(0)
+      const [maxAutoRetries, setMaxAutoRetries] = React.useState(0)
+      const [speculativeWaveDispatch, setSpeculativeWaveDispatch] = React.useState(false)
 
       const [dbEngine, setDbEngine] = React.useState(null)
       const [pgUrlMasked, setPgUrlMasked] = React.useState('')
@@ -11655,73 +12127,101 @@ body[data-ds-dark-theme] .rt-anim-complete{
           return (typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('rt-tree-direction')) || 'horizontal'
         } catch { return 'horizontal' }
       })
+      const [uiLocalePref, setUiLocalePref] = React.useState(() => {
+        const stored = readStoredLocale()
+        return stored || (_syncedUiLocale === 'zh-CN' || _syncedUiLocale === 'en-US' ? _syncedUiLocale : 'auto')
+      })
       const [verNote, setVerNote] = React.useState(null)
 
       const loadSeq = React.useRef(0)
 
-      const applySettingsPayload = React.useCallback((res) => {
+      const applySettingsPayload = React.useCallback((res, isInitialLoad) => {
         if (!res || typeof res !== 'object') return
         const cfg = (res.settings && typeof res.settings === 'object') ? res.settings : res
         const ai = cfg.aiPlanner || cfg.ai_planner || res.aiPlanner || res.ai_planner || {}
-        const dp = cfg.dispatchPolicy || cfg.dispatch_policy || res.dispatchPolicy || res.dispatch_policy || {}
-        const uip = cfg.uiPreferences || cfg.ui_preferences || res.uiPreferences || res.ui_preferences || {}
+        const rawDp = cfg.dispatchPolicy || cfg.dispatch_policy || res.dispatchPolicy || res.dispatch_policy || null
+        const dp = rawDp || {}
+        const rawUip = cfg.uiPreferences || cfg.ui_preferences || res.uiPreferences || res.ui_preferences || null
+        const uip = rawUip || {}
 
         const catalog = normalizeModelCatalog(res.model_catalog || res.modelCatalog || cfg.model_catalog)
-        setModelCatalog(catalog)
-        setSessionRoute(res.active_session_route || res.activeSessionRoute || null)
-
-        const rawMode = String(ai.modelMode ?? ai.model_mode ?? 'follow_session').trim().toLowerCase()
-        setModelMode(rawMode === 'custom' ? 'custom' : 'follow_session')
-        const nextProv = String(ai.provider || '').trim()
-        const nextMod = String(ai.model || '').trim()
-        if (nextProv) {
-          setProvider(nextProv)
-        } else if (catalog.length > 0) {
-          setProvider(catalog[0].id)
-        } else {
-          setProvider('')
-        }
-        if (nextMod) {
-          setModel(nextMod)
-        } else if (catalog.length > 0 && catalog[0].models.length > 0) {
-          setModel(catalog[0].models[0].id)
-        } else {
-          setModel('')
+        if (isInitialLoad || catalog.length > 0) setModelCatalog(catalog)
+        if (isInitialLoad || res.active_session_route !== undefined || res.activeSessionRoute !== undefined) {
+          setSessionRoute(res.active_session_route || res.activeSessionRoute || null)
         }
 
-        const rawRe = String(ai.reasoningEffort ?? ai.reasoning_effort ?? 'low').trim().toLowerCase()
-        setReasoningEffort(['none', 'low', 'medium', 'high'].includes(rawRe) ? rawRe : 'low')
-        const tMs = Number(ai.timeoutMs ?? ai.timeout_ms)
-        setTimeoutSec(Number.isFinite(tMs) && tMs > 0 ? Math.max(15, Math.min(180, Math.round(tMs / 1000))) : 60)
-        setScanRepoContext((ai.scanRepoContext ?? ai.scan_repo_context) !== false)
-        setCustomConstraints(String(ai.customConstraints ?? ai.custom_constraints ?? ''))
+        if (isInitialLoad || cfg.aiPlanner || cfg.ai_planner || res.aiPlanner || res.ai_planner) {
+          const rawMode = String(ai.modelMode ?? ai.model_mode ?? 'follow_session').trim().toLowerCase()
+          setModelMode(rawMode === 'custom' ? 'custom' : 'follow_session')
+          const nextProv = String(ai.provider || '').trim()
+          const nextMod = String(ai.model || '').trim()
+          if (nextProv) {
+            setProvider(nextProv)
+          } else if (catalog.length > 0) {
+            setProvider(catalog[0].id)
+          } else {
+            setProvider('')
+          }
+          if (nextMod) {
+            setModel(nextMod)
+          } else if (catalog.length > 0 && catalog[0].models.length > 0) {
+            setModel(catalog[0].models[0].id)
+          } else {
+            setModel('')
+          }
+
+          const rawRe = String(ai.reasoningEffort ?? ai.reasoning_effort ?? 'low').trim().toLowerCase()
+          setReasoningEffort(['none', 'low', 'medium', 'high'].includes(rawRe) ? rawRe : 'low')
+          const tMs = Number(ai.timeoutMs ?? ai.timeout_ms)
+          setTimeoutSec(Number.isFinite(tMs) && tMs > 0 ? Math.max(15, Math.min(180, Math.round(tMs / 1000))) : 60)
+          setScanRepoContext((ai.scanRepoContext ?? ai.scan_repo_context) !== false)
+          setCustomConstraints(String(ai.customConstraints ?? ai.custom_constraints ?? ''))
+        }
 
         const rawMax = Number(cfg.maxAgents ?? cfg.max_agents ?? cfg.max ?? res.maxAgents ?? res.max)
         if (Number.isFinite(rawMax) && rawMax >= 1) setMaxAgents(Math.max(1, Math.min(12, Math.floor(rawMax))))
         const rawLim = Number(cfg.limit ?? res.limit)
         if (Number.isFinite(rawLim) && rawLim >= 1) setMaxLimit(rawLim)
-        const rawThink = String(cfg.thinkingEffort ?? cfg.thinking_effort ?? cfg.thinking ?? res.thinkingEffort ?? 'low').trim().toLowerCase()
-        setThinkingEffort(['low', 'medium', 'high'].includes(rawThink) ? rawThink : 'low')
+        const rawThink = String(cfg.thinkingEffort ?? cfg.thinking_effort ?? cfg.thinking ?? res.thinkingEffort ?? '').trim().toLowerCase()
+        if (['low', 'medium', 'high'].includes(rawThink)) {
+          setThinkingEffort(rawThink)
+        } else if (isInitialLoad) {
+          setThinkingEffort('low')
+        }
         const rawDepth = Number(cfg.maxDepth ?? cfg.max_depth ?? res.maxDepth)
         if (Number.isFinite(rawDepth) && rawDepth >= 1) setMaxDepth(Math.max(1, Math.min(5, Math.floor(rawDepth))))
 
-        const rawDm = String(dp.dispatchMode ?? dp.dispatch_mode ?? 'hybrid_auto').trim().toLowerCase()
-        setDispatchMode(rawDm === 'captain_only' ? 'captain_only' : 'hybrid_auto')
-        const rawSubProv = String(dp.subagentProvider ?? dp.subagent_provider ?? 'spawn').trim().toLowerCase()
-        setSubagentProvider(rawSubProv === 'fork' ? 'fork' : 'spawn')
-        setAutoWakeOnApprove((dp.autoWakeOnApprove ?? dp.auto_wake_on_approve) !== false)
-        setAutoAdvanceWave(Boolean(dp.autoAdvanceWave ?? dp.auto_advance_wave))
+        if (rawDp || isInitialLoad) {
+          const rawDm = String(dp.dispatchMode ?? dp.dispatch_mode ?? 'hybrid_auto').trim().toLowerCase()
+          setDispatchMode(rawDm === 'captain_only' ? 'captain_only' : 'hybrid_auto')
+          const rawSubProv = String(dp.subagentProvider ?? dp.subagent_provider ?? 'spawn').trim().toLowerCase()
+          setSubagentProvider(rawSubProv === 'fork' ? 'fork' : 'spawn')
+          setAutoWakeOnApprove((dp.autoWakeOnApprove ?? dp.auto_wake_on_approve) !== false)
+          setAutoAdvanceWave(Boolean(dp.autoAdvanceWave ?? dp.auto_advance_wave))
+          const rawTokCap = Number(dp.maxTokensPerWorkspace ?? dp.max_tokens_per_workspace)
+          if (Number.isFinite(rawTokCap) && rawTokCap >= 0) setMaxTokensPerWorkspace(Math.floor(rawTokCap))
+          else if (isInitialLoad) setMaxTokensPerWorkspace(0)
+          const rawCostCap = Number(dp.maxCostPerWorkspace ?? dp.max_cost_per_workspace)
+          if (Number.isFinite(rawCostCap) && rawCostCap >= 0) setMaxCostPerWorkspace(rawCostCap)
+          else if (isInitialLoad) setMaxCostPerWorkspace(0)
+          const rawRetries = Number(dp.maxAutoRetries ?? dp.max_auto_retries)
+          if (Number.isFinite(rawRetries) && rawRetries >= 0) setMaxAutoRetries(Math.max(0, Math.min(3, Math.floor(rawRetries))))
+          else if (isInitialLoad) setMaxAutoRetries(0)
+          setSpeculativeWaveDispatch(Boolean(dp.speculativeWaveDispatch ?? dp.speculative_wave_dispatch))
+        }
 
-        const engInfo = res.db_engine || res.dbEngine || cfg.db_engine || null
-        setDbEngine(engInfo)
-        const masked = String(cfg.pgUrlMasked ?? res.pgUrlMasked ?? (engInfo && (engInfo.urlMasked || engInfo.maskedUrl)) ?? '')
-        const configured = Boolean(
-          cfg.pgUrlConfigured
-          ?? res.pgUrlConfigured
-          ?? (engInfo && (engInfo.configured || engInfo.mode === 'postgresql' || engInfo.engine === 'postgresql')),
-        )
-        setPgUrlMasked(masked)
-        setPgUrlConfigured(configured)
+        if (isInitialLoad || res.db_engine || res.dbEngine || cfg.db_engine || res.pgUrlConfigured !== undefined || cfg.pgUrlConfigured !== undefined) {
+          const engInfo = res.db_engine || res.dbEngine || cfg.db_engine || null
+          setDbEngine(engInfo)
+          const masked = String(cfg.pgUrlMasked ?? res.pgUrlMasked ?? (engInfo && (engInfo.urlMasked || engInfo.maskedUrl)) ?? '')
+          const configured = Boolean(
+            cfg.pgUrlConfigured
+            ?? res.pgUrlConfigured
+            ?? (engInfo && (engInfo.configured || engInfo.mode === 'postgresql' || engInfo.engine === 'postgresql')),
+          )
+          setPgUrlMasked(masked)
+          setPgUrlConfigured(configured)
+        }
 
         const fCfg = res.feishu_config || res.feishuConfig || res.feishu || cfg.feishu_config || null
         if (fCfg && typeof fCfg === 'object') {
@@ -11738,10 +12238,18 @@ body[data-ds-dark-theme] .rt-anim-complete{
           }
         }
 
-        const rawVm = String(uip.defaultViewMode ?? uip.default_view_mode ?? uiState.uiMode ?? 'novice').trim().toLowerCase()
-        setDefaultViewMode(rawVm === 'expert' ? 'expert' : 'novice')
-        const rawTd = String(uip.defaultTreeDirection ?? uip.default_tree_direction ?? 'horizontal').trim().toLowerCase()
-        setDefaultTreeDirection(rawTd === 'vertical' ? 'vertical' : 'horizontal')
+        if (rawUip || isInitialLoad) {
+          const rawVm = String(uip.defaultViewMode ?? uip.default_view_mode ?? uiState.uiMode ?? 'novice').trim().toLowerCase()
+          setDefaultViewMode(rawVm === 'expert' ? 'expert' : 'novice')
+          const rawTd = String(uip.defaultTreeDirection ?? uip.default_tree_direction ?? 'horizontal').trim().toLowerCase()
+          setDefaultTreeDirection(rawTd === 'vertical' ? 'vertical' : 'horizontal')
+          if (uip.locale !== undefined || uip.uiLocale !== undefined || uip.ui_locale !== undefined) {
+            const rawLoc = String(uip.locale ?? uip.uiLocale ?? uip.ui_locale ?? 'auto').trim()
+            const normLoc = normalizeLocalePref(rawLoc)
+            setUiLocalePref(readStoredLocale() || normLoc)
+            syncLocaleFromSettings(normLoc)
+          }
+        }
       }, [uiState.uiMode])
 
       const loadSettings = React.useCallback(() => {
@@ -11756,10 +12264,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
           if (my !== loadSeq.current) return
           setLoading(false)
           if (!r || r.ok === false) {
-            setErr((r && r.error) || '读取设置失败')
+            setErr((r && r.error) || t('读取设置失败', 'Failed to load settings'))
             return
           }
-          applySettingsPayload(r)
+          applySettingsPayload(r, true)
         }, (e) => {
           if (my !== loadSeq.current) return
           setLoading(false)
@@ -11799,6 +12307,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setSaveMsg(null)
         setErr(null)
         const sec = Math.max(15, Math.min(180, Math.round(Number(timeoutSec) || 60)))
+        const cleanTokCap = Math.max(0, Math.floor(Number(maxTokensPerWorkspace) || 0))
+        const cleanCostCap = Math.max(0, Number(maxCostPerWorkspace) || 0)
+        const cleanRetries = Math.max(0, Math.min(3, Math.floor(Number(maxAutoRetries) || 0)))
+        const cleanLocale = normalizeLocalePref(uiLocalePref)
         api({
           op: 'saveSettings',
           engagement: eng || undefined,
@@ -11820,25 +12332,32 @@ body[data-ds-dark-theme] .rt-anim-complete{
             subagentProvider: subagentProvider === 'fork' ? 'fork' : 'spawn',
             autoWakeOnApprove: Boolean(autoWakeOnApprove),
             autoAdvanceWave: Boolean(autoAdvanceWave),
+            maxTokensPerWorkspace: cleanTokCap,
+            maxCostPerWorkspace: cleanCostCap,
+            maxAutoRetries: cleanRetries,
+            speculativeWaveDispatch: Boolean(speculativeWaveDispatch),
           },
           uiPreferences: {
             defaultViewMode: defaultViewMode === 'expert' ? 'expert' : 'novice',
             defaultTreeDirection: defaultTreeDirection === 'vertical' ? 'vertical' : 'horizontal',
+            locale: cleanLocale,
           },
         }).then((r) => {
           setSaving(false)
           if (!r || r.ok === false) {
-            setSaveMsg({ err: (r && r.error) || '保存设置失败' })
+            setSaveMsg({ err: (r && r.error) || t('保存设置失败', 'Failed to save settings') })
             return
           }
-          applySettingsPayload(r)
+          applySettingsPayload(r, false)
           setUiMode(defaultViewMode === 'expert' ? 'expert' : 'novice')
+          syncLocaleFromSettings(cleanLocale)
+          setLocale(cleanLocale)
           try {
             if (typeof window !== 'undefined' && window.localStorage) {
               window.localStorage.setItem('rt-tree-direction', defaultTreeDirection === 'vertical' ? 'vertical' : 'horizontal')
             }
           } catch { /* ignore */ }
-          setSaveMsg({ ok: (r && r.note) || '设置已保存并立即生效' })
+          setSaveMsg({ ok: (r && r.note) || t('设置已保存并立即生效', 'Settings saved and applied') })
           onRefresh()
         }, (e) => {
           setSaving(false)
@@ -11853,10 +12372,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
           setPgBusy(false)
           if (r && r.db_engine) setDbEngine(r.db_engine)
           if (!r || r.ok === false) {
-            setPgMsg({ err: (r && (r.error || r.message || r.note)) || 'PostgreSQL 连接探测失败' })
+            setPgMsg({ err: (r && (r.error || r.message || r.note)) || t('PostgreSQL 连接探测失败', 'PostgreSQL connection probe failed') })
             return
           }
-          setPgMsg({ ok: (r && (r.note || r.message)) || 'PostgreSQL 连接探测成功' })
+          setPgMsg({ ok: (r && (r.note || r.message)) || t('PostgreSQL 连接探测成功', 'PostgreSQL connection probe succeeded') })
         }, (e) => {
           setPgBusy(false)
           setPgMsg({ err: String((e && e.message) || e) })
@@ -11870,7 +12389,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         api({ op: 'setPgUrl', url: clean }).then((r) => {
           setPgBusy(false)
           if (!r || r.ok === false) {
-            setPgMsg({ err: (r && r.error) || '更新 PostgreSQL 连接失败' })
+            setPgMsg({ err: (r && r.error) || t('更新 PostgreSQL 连接失败', 'Failed to update PostgreSQL connection') })
             return
           }
           if (r.db_engine) setDbEngine(r.db_engine)
@@ -11879,7 +12398,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             setPgUrlDraft('')
             setPgUrlMasked('')
           }
-          setPgMsg({ ok: (r && r.note) || (clean ? 'PostgreSQL 连接已保存' : '已切换回本地引擎') })
+          setPgMsg({ ok: (r && r.note) || (clean ? t('PostgreSQL 连接已保存', 'PostgreSQL connection saved') : t('已切换回本地引擎', 'Switched back to local SQLite engine')) })
           onRefresh()
         }, (e) => {
           setPgBusy(false)
@@ -11910,10 +12429,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((r) => {
           setFeishuBusy(false)
           if (!r || r.ok === false) {
-            setFeishuMsg({ err: (r && r.error) || '保存飞书配置失败' })
+            setFeishuMsg({ err: (r && r.error) || t('保存飞书配置失败', 'Failed to save Feishu config') })
             return
           }
-          setFeishuMsg({ ok: (r && r.note) || '飞书配置已保存' })
+          setFeishuMsg({ ok: (r && r.note) || t('飞书配置已保存', 'Feishu config saved') })
         }, (e) => {
           setFeishuBusy(false)
           setFeishuMsg({ err: String((e && e.message) || e) })
@@ -11928,15 +12447,15 @@ body[data-ds-dark-theme] .rt-anim-complete{
           engagement: targetFeishuEng,
           engagement_id: targetFeishuEng,
           webhook_url: String(feishuWebhook || '').trim() || undefined,
-          title: 'LMTAgent 飞书连接测试',
-          text: '来自工作区「' + targetFeishuEng + '」的连通性测试推送',
+          title: t('LMTAgent 飞书连接测试', 'LMTAgent Feishu Connection Test'),
+          text: t('来自工作区「' + targetFeishuEng + '」的连通性测试推送', 'Connectivity test push from workspace "' + targetFeishuEng + '"'),
         }).then((r) => {
           setFeishuBusy(false)
           if (!r || r.ok === false) {
-            setFeishuMsg({ err: (r && r.error) || '测试推送失败' })
+            setFeishuMsg({ err: (r && r.error) || t('测试推送失败', 'Test push failed') })
             return
           }
-          setFeishuMsg({ ok: (r && r.note) || '测试推送已发送' })
+          setFeishuMsg({ ok: (r && r.note) || t('测试推送已发送', 'Test push sent') })
         }, (e) => {
           setFeishuBusy(false)
           setFeishuMsg({ err: String((e && e.message) || e) })
@@ -11944,26 +12463,26 @@ body[data-ds-dark-theme] .rt-anim-complete{
       }
 
       const checkVersionQuick = () => {
-        setVerNote('正在检查版本…')
+        setVerNote(t('正在检查版本…', 'Checking version…'))
         api({ op: 'updateCheck' }).then((r) => {
           if (r && r.ok !== false) {
-            setVerNote('当前 v' + (r.current || '?') + (r.updateAvailable && r.latest ? (' · 可升级至 v' + r.latest) : ' · 已是最新'))
+            setVerNote(t('当前 v', 'Current v') + (r.current || '?') + (r.updateAvailable && r.latest ? (t(' · 可升级至 v', ' · Update available v') + r.latest) : t(' · 已是最新', ' · Up to date')))
             return
           }
           api({ op: 'version' }).then((v) => {
             const cur = v && v.plugin ? v.plugin.version : (v && v.current)
-            setVerNote('当前版本 v' + (cur || '?'))
-          }, () => setVerNote('版本检查暂不可用'))
-        }, () => setVerNote('版本检查暂不可用'))
+            setVerNote(t('当前版本 v', 'Current v') + (cur || '?'))
+          }, () => setVerNote(t('版本检查暂不可用', 'Version check unavailable')))
+        }, () => setVerNote(t('版本检查暂不可用', 'Version check unavailable')))
       }
 
       const routeLabel = (() => {
-        if (!sessionRoute) return '跟随当前会话默认模型'
+        if (!sessionRoute) return t('跟随当前会话默认模型', 'Follow Active Session Model')
         if (typeof sessionRoute === 'string') return sessionRoute
         const p = sessionRoute.provider ? String(sessionRoute.provider) : ''
         const m = sessionRoute.model ? String(sessionRoute.model) : ''
         if (p && m) return p + ' / ' + m
-        return String(sessionRoute.label || m || p || '跟随当前会话默认模型')
+        return String(sessionRoute.label || m || p || t('跟随当前会话默认模型', 'Follow Active Session Model'))
       })()
 
       const isPgActive = Boolean(
@@ -11971,11 +12490,14 @@ body[data-ds-dark-theme] .rt-anim-complete{
         || (dbEngine && (dbEngine.mode === 'postgresql' || dbEngine.engine === 'postgresql' || dbEngine.type === 'postgresql')),
       )
       const dbStatusLabel = (() => {
-        if (dbEngine && typeof dbEngine === 'string') return dbEngine
-        if (dbEngine && (dbEngine.label || dbEngine.mode || dbEngine.engine)) {
-          return String(dbEngine.label || (isPgActive ? 'PostgreSQL' : 'SQLite WAL 本地引擎'))
+        if (dbEngine && typeof dbEngine === 'string') {
+          return dbEngine === 'SQLite WAL 本地引擎' ? t('SQLite WAL 本地引擎', 'SQLite WAL Local Engine') : dbEngine
         }
-        return isPgActive ? 'PostgreSQL 已配置' : 'SQLite WAL 本地引擎'
+        if (dbEngine && (dbEngine.label || dbEngine.mode || dbEngine.engine)) {
+          if (dbEngine.label === 'SQLite WAL 本地引擎') return t('SQLite WAL 本地引擎', 'SQLite WAL Local Engine')
+          return String(dbEngine.label || (isPgActive ? 'PostgreSQL' : t('SQLite WAL 本地引擎', 'SQLite WAL Local Engine')))
+        }
+        return isPgActive ? t('PostgreSQL 已配置', 'PostgreSQL Configured') : t('SQLite WAL 本地引擎', 'SQLite WAL Local Engine')
       })()
 
       const slotPresets = [3, 6, 8, 12]
@@ -11986,29 +12508,29 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
         h('section', { className: 'rt-settings-section' },
           h('div', { className: 'rt-settings-section-head' },
-            h('h4', { className: 'rt-settings-section-title' }, 'AI 需求拆解与模型设置'),
+            h('h4', { className: 'rt-settings-section-title' }, t('AI 需求拆解与模型设置', 'AI Decomposition & Model Settings')),
             h('span', { className: 'rt-settings-badge' }, routeLabel)),
           h('div', { className: 'rt-settings-grid' },
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '模型选择策略'),
+              h('label', null, t('模型选择策略', 'Model Selection Strategy')),
               h('select', {
                 className: 'rt-select',
                 value: modelMode,
                 onChange: (e) => setModelMode(e.target.value),
               },
-                h('option', { value: 'follow_session' }, '跟随当前会话 / 默认模型'),
-                h('option', { value: 'custom' }, '自定义指定模型'))),
+                h('option', { value: 'follow_session' }, t('跟随当前会话 / 默认模型', 'Follow Current Session / Default')),
+                h('option', { value: 'custom' }, t('自定义指定模型', 'Custom Model')))),
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '规划推理深度'),
+              h('label', null, t('规划推理深度', 'Planning Reasoning Depth')),
               h('select', {
                 className: 'rt-select',
                 value: reasoningEffort,
                 onChange: (e) => setReasoningEffort(e.target.value),
               },
-                h('option', { value: 'none' }, 'none（关闭推理）'),
-                h('option', { value: 'low' }, 'low（快速）'),
-                h('option', { value: 'medium' }, 'medium（均衡）'),
-                h('option', { value: 'high' }, 'high（深度）'))),
+                h('option', { value: 'none' }, t('none（关闭推理）', 'none (Off)')),
+                h('option', { value: 'low' }, t('low（快速）', 'low (Fast)')),
+                h('option', { value: 'medium' }, t('medium（均衡）', 'medium (Balanced)')),
+                h('option', { value: 'high' }, t('high（深度）', 'high (Deep)')))),
             modelMode === 'custom'
               ? h('div', { className: 'rt-settings-field' },
                   h('label', null, 'Provider'),
@@ -12025,7 +12547,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     : h('input', {
                         className: 'rt-input',
                         value: provider,
-                        placeholder: '如 deepseek / openai',
+                        placeholder: t('如 deepseek / openai', 'e.g. deepseek / openai'),
                         onChange: (e) => setProvider(e.target.value),
                       }))
               : null,
@@ -12041,12 +12563,12 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     : h('input', {
                         className: 'rt-input',
                         value: model,
-                        placeholder: '如 deepseek-chat',
+                        placeholder: t('如 deepseek-chat', 'e.g. deepseek-chat'),
                         onChange: (e) => setModel(e.target.value),
                       }))
               : null,
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '拆解超时（秒）'),
+              h('label', null, t('拆解超时（秒）', 'Refine Timeout (sec)')),
               h('input', {
                 type: 'number',
                 min: 15,
@@ -12056,38 +12578,38 @@ body[data-ds-dark-theme] .rt-anim-complete{
                 onChange: (e) => setTimeoutSec(Number(e.target.value) || 60),
               })),
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '工作区上下文'),
+              h('label', null, t('工作区上下文', 'Workspace Context')),
               h('label', { className: 'rt-kb-check', style: { marginTop: 4 } },
                 h('input', {
                   type: 'checkbox',
                   checked: scanRepoContext,
                   onChange: (e) => setScanRepoContext(e.target.checked),
                 }),
-                '拆解前自动扫描项目目录结构')),
+                t('拆解前自动扫描项目目录结构', 'Auto-scan repository layout before decomposition'))),
             h('div', { className: 'rt-settings-field is-full' },
-              h('label', null, '全局拆解工程约束'),
+              h('label', null, t('全局拆解工程约束', 'Global Engineering Constraints')),
               h('textarea', {
                 className: 'rt-textarea',
                 rows: 3,
                 value: customConstraints,
-                placeholder: '填写全局代码规范、技术栈限制或路径禁改规则…',
+                placeholder: t('填写全局代码规范、技术栈限制或路径禁改规则…', 'Global coding standards, stack limits, or protected path rules…'),
                 onChange: (e) => setCustomConstraints(e.target.value),
               })))),
 
         h('section', { className: 'rt-settings-section' },
           h('div', { className: 'rt-settings-section-head' },
-            h('h4', { className: 'rt-settings-section-title' }, '集群并发与任务派发策略'),
-            h('span', { className: 'rt-settings-badge' }, maxAgents + ' 槽 · depth ' + maxDepth + ' · ' + thinkingEffort)),
+            h('h4', { className: 'rt-settings-section-title' }, t('集群并发与任务派发策略', 'Cluster Concurrency & Dispatch Policy')),
+            h('span', { className: 'rt-settings-badge' }, maxAgents + t(' 槽', ' slots') + ' · depth ' + maxDepth + ' · ' + thinkingEffort)),
           h('div', { className: 'rt-settings-grid' },
             h('div', { className: 'rt-settings-field is-full' },
-              h('label', null, '并发槽位上限（1–' + maxLimit + '）'),
+              h('label', null, t('并发槽位上限（1–' + maxLimit + '）', 'Max Concurrency Slots (1-' + maxLimit + ')')),
               h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
                 h('div', { className: 'rt-p3-stepper' },
                   h('button', {
                     type: 'button', className: 'rt-p3-step-btn', disabled: maxAgents <= 1,
                     onClick: () => setMaxAgents((v) => Math.max(1, v - 1)),
                   }, '-'),
-                  h('span', { className: 'rt-p3-step-val' }, maxAgents + ' 槽'),
+                  h('span', { className: 'rt-p3-step-val' }, maxAgents + t(' 槽', ' slots')),
                   h('button', {
                     type: 'button', className: 'rt-p3-step-btn', disabled: maxAgents >= maxLimit,
                     onClick: () => setMaxAgents((v) => Math.min(maxLimit, v + 1)),
@@ -12098,42 +12620,79 @@ body[data-ds-dark-theme] .rt-anim-complete{
                     type: 'button',
                     className: 'rt-p3-pill' + (maxAgents === n ? ' on' : ''),
                     onClick: () => setMaxAgents(n),
-                  }, n + ' 槽'))))),
+                  }, n + t(' 槽', ' slots')))))),
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '子代理思考强度'),
+              h('label', null, t('子代理思考强度', 'Subagent Thinking Effort')),
               h('select', {
                 className: 'rt-select',
                 value: thinkingEffort,
                 onChange: (e) => setThinkingEffort(e.target.value),
               },
-                h('option', { value: 'low' }, 'low（快速响应）'),
-                h('option', { value: 'medium' }, 'medium（均衡）'),
-                h('option', { value: 'high' }, 'high（深度思考）'))),
+                h('option', { value: 'low' }, t('low（快速响应）', 'low (Fast)')),
+                h('option', { value: 'medium' }, t('medium（均衡）', 'medium (Balanced)')),
+                h('option', { value: 'high' }, t('high（深度思考）', 'high (Deep)')))),
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '递归深度上限'),
+              h('label', null, t('递归深度上限', 'Max Spawn Depth')),
               h('select', {
                 className: 'rt-select',
                 value: String(maxDepth),
                 onChange: (e) => setMaxDepth(Number(e.target.value) || 3),
               }, [1, 2, 3, 4, 5].map((d) => h('option', { key: 'md-' + d, value: String(d) }, 'maxDepth = ' + d)))),
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '立项默认派发方式'),
+              h('label', null, t('立项默认派发方式', 'Default Dispatch Mode')),
               h('select', {
                 className: 'rt-select',
                 value: dispatchMode,
                 onChange: (e) => setDispatchMode(e.target.value),
               },
-                h('option', { value: 'hybrid_auto' }, '方案 A 混合编排（hybrid_auto）'),
-                h('option', { value: 'captain_only' }, '纯主代理接管（captain_only）'))),
+                h('option', { value: 'hybrid_auto' }, t('方案 A 混合编排（hybrid_auto）', 'Hybrid Orchestration (hybrid_auto)')),
+                h('option', { value: 'captain_only' }, t('纯主代理接管（captain_only）', 'Captain Only (captain_only)')))),
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '子代理载体'),
+              h('label', null, t('子代理载体', 'Subagent Provider')),
               h('select', {
                 className: 'rt-select',
                 value: subagentProvider,
                 onChange: (e) => setSubagentProvider(e.target.value),
               },
-                h('option', { value: 'spawn' }, 'spawn（独立子代理）'),
-                h('option', { value: 'fork' }, 'fork（分叉上下文）'))),
+                h('option', { value: 'spawn' }, t('spawn（独立子代理）', 'spawn (Isolated Subagent)')),
+                h('option', { value: 'fork' }, t('fork（分叉上下文）', 'fork (Forked Context)')))),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, t('单工作区 Token 上限 (0=不限)', 'Workspace Token Cap (0=Unlimited)')),
+              h('input', {
+                type: 'number',
+                min: 0,
+                step: 10000,
+                className: 'rt-input',
+                value: String(maxTokensPerWorkspace),
+                onChange: (e) => {
+                  const v = Number(e.target.value)
+                  setMaxTokensPerWorkspace(Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0)
+                },
+              })),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, t('单工作区费用上限 (0=不限)', 'Workspace Cost Cap (0=Unlimited)')),
+              h('input', {
+                type: 'number',
+                min: 0,
+                step: 0.5,
+                className: 'rt-input',
+                value: String(maxCostPerWorkspace),
+                onChange: (e) => {
+                  const v = Number(e.target.value)
+                  setMaxCostPerWorkspace(Number.isFinite(v) && v >= 0 ? v : 0)
+                },
+              })),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, t('失败自动重试次数 (0-3)', 'Auto-Retry on Failure (0-3)')),
+              h('select', {
+                className: 'rt-select',
+                value: String(maxAutoRetries),
+                onChange: (e) => {
+                  const v = Number(e.target.value)
+                  setMaxAutoRetries(Number.isFinite(v) ? Math.max(0, Math.min(3, Math.floor(v))) : 0)
+                },
+              },
+                [0, 1, 2, 3].map((r) => h('option', { key: 'ar-' + r, value: String(r) }, r === 0 ? t('0（不自动重试）', '0 (Disabled)') : String(r))))),
             h('div', { className: 'rt-settings-field is-full' },
               h('label', { className: 'rt-kb-check' },
                 h('input', {
@@ -12141,7 +12700,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   checked: autoWakeOnApprove,
                   onChange: (e) => setAutoWakeOnApprove(e.target.checked),
                 }),
-                '门禁审批通过后自动唤醒目标子会话继续执行')),
+                t('门禁审批通过后自动唤醒目标子会话继续执行', 'Auto-wake target sub-session after gate approval'))),
             h('div', { className: 'rt-settings-field is-full' },
               h('label', { className: 'rt-kb-check' },
                 h('input', {
@@ -12149,15 +12708,23 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   checked: autoAdvanceWave,
                   onChange: (e) => setAutoAdvanceWave(e.target.checked),
                 }),
-                'Wave 间自动接力推进（当前 Wave 全部审批后自动拉起下一波次）')))),
+                t('Wave 间自动接力推进（当前 Wave 全部审批后自动拉起下一波次）', 'Auto-advance across waves when all gates in current wave are approved'))),
+            h('div', { className: 'rt-settings-field is-full' },
+              h('label', { className: 'rt-kb-check' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: speculativeWaveDispatch,
+                  onChange: (e) => setSpeculativeWaveDispatch(e.target.checked),
+                }),
+                t('实验性：DAG 投机式波次流水线', 'Experimental: Speculative DAG Pipelining'))))),
 
         h('section', { className: 'rt-settings-section' },
           h('div', { className: 'rt-settings-section-head' },
-            h('h4', { className: 'rt-settings-section-title' }, '存储与 PostgreSQL 连接'),
+            h('h4', { className: 'rt-settings-section-title' }, t('存储与 PostgreSQL 连接', 'Storage & PostgreSQL Connection')),
             h('span', { className: 'rt-settings-badge ' + (isPgActive ? 'is-ok' : '') },
               dbStatusLabel + (pgUrlMasked ? ' · ' + pgUrlMasked : ''))),
           h('div', { className: 'rt-settings-field is-full' },
-            h('label', null, 'PostgreSQL 连接串（留空则使用本地 SQLite WAL 引擎）'),
+            h('label', null, t('PostgreSQL 连接串（留空则使用本地 SQLite WAL 引擎）', 'PostgreSQL Connection String (leave blank for local SQLite WAL)')),
             h('input', {
               className: 'rt-input rt-mono',
               value: pgUrlDraft,
@@ -12166,26 +12733,26 @@ body[data-ds-dark-theme] .rt-anim-complete{
             })),
           pgMsg ? h('div', { className: pgMsg.err ? 'rt-err' : 'rt-note', style: { margin: 0 } }, pgMsg.err || pgMsg.ok) : null,
           h('div', { className: 'rt-settings-actions' },
-            h('button', { type: 'button', className: 'rt-btn', disabled: pgBusy, onClick: handleProbePg }, pgBusy ? '探测中…' : '测试连通'),
+            h('button', { type: 'button', className: 'rt-btn', disabled: pgBusy, onClick: handleProbePg }, pgBusy ? t('探测中…', 'Probing…') : t('测试连通', 'Probe')),
             h('button', {
               type: 'button',
               className: 'rt-btn rt-btn-primary',
               disabled: pgBusy || !pgUrlDraft.trim(),
               onClick: () => handleSavePgUrl(pgUrlDraft),
-            }, '保存连接'),
+            }, t('保存连接', 'Save Connection')),
             h('button', {
               type: 'button',
               className: 'rt-btn',
               disabled: pgBusy,
               onClick: () => handleSavePgUrl(''),
-            }, '清除回本地引擎'))),
+            }, t('清除回本地引擎', 'Reset to SQLite')))),
 
         h('section', { className: 'rt-settings-section' },
           h('div', { className: 'rt-settings-section-head' },
-            h('h4', { className: 'rt-settings-section-title' }, '通知集成（飞书机器人）'),
-            h('span', { className: 'rt-settings-badge' }, '工作区：' + targetFeishuEng)),
+            h('h4', { className: 'rt-settings-section-title' }, t('通知集成（飞书机器人）', 'Notifications (Feishu Webhook)')),
+            h('span', { className: 'rt-settings-badge' }, t('工作区：', 'Workspace: ') + targetFeishuEng)),
           h('div', { className: 'rt-settings-field is-full' },
-            h('label', null, '飞书 Webhook 地址'),
+            h('label', null, t('飞书 Webhook 地址', 'Feishu Webhook URL')),
             h('input', {
               className: 'rt-input rt-mono',
               value: feishuWebhook,
@@ -12196,54 +12763,68 @@ body[data-ds-dark-theme] .rt-anim-complete{
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' } },
               h('label', { className: 'rt-kb-check' },
                 h('input', { type: 'checkbox', checked: feishuOnNode, onChange: (e) => setFeishuOnNode(e.target.checked) }),
-                '节点完成'),
+                t('节点完成', 'Node Done')),
               h('label', { className: 'rt-kb-check' },
                 h('input', { type: 'checkbox', checked: feishuOnGate, onChange: (e) => setFeishuOnGate(e.target.checked) }),
-                '门禁审批'),
+                t('门禁审批', 'Gate Approval')),
               h('label', { className: 'rt-kb-check' },
                 h('input', { type: 'checkbox', checked: feishuOnShip, onChange: (e) => setFeishuOnShip(e.target.checked) }),
-                '交付归档')),
+                t('交付归档', 'Ship / Delivery'))),
             h('div', { className: 'rt-settings-actions' },
-              h('button', { type: 'button', className: 'rt-btn', disabled: feishuBusy, onClick: handleSaveFeishu }, '保存通知'),
-              h('button', { type: 'button', className: 'rt-btn rt-btn-primary', disabled: feishuBusy, onClick: handleTestFeishu }, '发送测试推送'))),
+              h('button', { type: 'button', className: 'rt-btn', disabled: feishuBusy, onClick: handleSaveFeishu }, t('保存通知', 'Save Notifications')),
+              h('button', { type: 'button', className: 'rt-btn rt-btn-primary', disabled: feishuBusy, onClick: handleTestFeishu }, t('发送测试推送', 'Send Test Push')))),
           feishuMsg ? h('div', { className: feishuMsg.err ? 'rt-err' : 'rt-note', style: { margin: 0 } }, feishuMsg.err || feishuMsg.ok) : null),
 
         h('section', { className: 'rt-settings-section' },
           h('div', { className: 'rt-settings-section-head' },
-            h('h4', { className: 'rt-settings-section-title' }, '界面偏好与角色预设管理'),
+            h('h4', { className: 'rt-settings-section-title' }, t('界面偏好与角色预设管理', 'UI Preferences & Role Presets')),
             verNote ? h('span', { className: 'rt-settings-badge' }, verNote) : null),
           h('div', { className: 'rt-settings-grid' },
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '默认视图模式'),
+              h('label', null, t('默认视图模式', 'Default View Mode')),
               h('select', {
                 className: 'rt-select',
                 value: defaultViewMode,
                 onChange: (e) => setDefaultViewMode(e.target.value),
               },
-                h('option', { value: 'novice' }, '协同模式（简洁）'),
-                h('option', { value: 'expert' }, '工程模式（专家）'))),
+                h('option', { value: 'novice' }, t('协同模式（简洁）', 'Collaborative (Simple)')),
+                h('option', { value: 'expert' }, t('工程模式（专家）', 'Engineering (Expert)')))),
             h('div', { className: 'rt-settings-field' },
-              h('label', null, '派生树默认排版方向'),
+              h('label', null, t('派生树默认排版方向', 'Spawn Tree Direction')),
               h('select', {
                 className: 'rt-select',
                 value: defaultTreeDirection,
                 onChange: (e) => setDefaultTreeDirection(e.target.value),
               },
-                h('option', { value: 'horizontal' }, '横向向右派生'),
-                h('option', { value: 'vertical' }, '纵向向下派生')))),
+                h('option', { value: 'horizontal' }, t('横向向右派生', 'Horizontal (Left to Right)')),
+                h('option', { value: 'vertical' }, t('纵向向下派生', 'Vertical (Top to Bottom)')))),
+            h('div', { className: 'rt-settings-field' },
+              h('label', null, t('界面语言', 'Interface Language')),
+              h('select', {
+                className: 'rt-select',
+                value: uiLocalePref,
+                onChange: (e) => {
+                  const next = normalizeLocalePref(e.target.value)
+                  setUiLocalePref(next)
+                  setLocale(next)
+                },
+              },
+                h('option', { value: 'auto' }, t('跟随浏览器（自动）', 'Auto (Browser)')),
+                h('option', { value: 'zh-CN' }, '简体中文 (zh-CN)'),
+                h('option', { value: 'en-US' }, 'English (en-US)')))),
           h('div', { className: 'rt-settings-row' },
-            h('p', { className: 'rt-settings-hint' }, '管理 8 位 gstack 研发角色的提示词模板或检查控制台版本。'),
+            h('p', { className: 'rt-settings-hint' }, t('管理 8 位 gstack 研发角色的提示词模板或检查控制台版本。', 'Manage the 8 gstack engineering role prompt templates or check console version.')),
             h('div', { className: 'rt-settings-actions' },
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 onClick: () => onGo('prompts'),
-              }, '前往「角色与提示词」'),
+              }, t('前往「角色与提示词」', 'Open Roles & Prompts')),
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 onClick: checkVersionQuick,
-              }, '检查版本')))),
+              }, t('检查版本', 'Check Version'))))),
 
         h('div', { className: 'rt-settings-actions' },
           h('button', {
@@ -12251,23 +12832,23 @@ body[data-ds-dark-theme] .rt-anim-complete{
             className: 'rt-btn',
             disabled: loading || saving,
             onClick: loadSettings,
-          }, loading ? '加载中…' : '重新读取'),
+          }, loading ? t('加载中…', 'Loading…') : t('重新读取', 'Reload')),
           h('button', {
             type: 'button',
             className: 'rt-btn rt-btn-primary',
             disabled: saving,
             onClick: handleSaveAll,
-          }, saving ? '保存中…' : '保存设置')))
+          }, saving ? t('保存中…', 'Saving…') : t('保存设置', 'Save Settings'))))
 
       if (compact) return shellBody
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '统一设置中心'),
-          h('span', { className: 'rt-tag rt-tag-passive' }, eng ? ('工作区：' + eng) : '全局设置'),
+          h('span', { style: { fontWeight: 600 } }, t('统一设置中心', 'Unified Settings')),
+          h('span', { className: 'rt-tag rt-tag-passive' }, eng ? (t('工作区：', 'Workspace: ') + eng) : t('全局设置', 'Global Settings')),
           h('div', { className: 'rt-spacer' }),
-          h('button', { type: 'button', className: 'rt-btn', disabled: loading, onClick: loadSettings }, loading ? '读取中…' : '刷新'),
-          h('button', { type: 'button', className: 'rt-btn rt-btn-primary', disabled: saving, onClick: handleSaveAll }, saving ? '保存中…' : '保存设置')),
+          h('button', { type: 'button', className: 'rt-btn', disabled: loading, onClick: loadSettings }, loading ? t('读取中…', 'Loading…') : t('刷新', 'Refresh')),
+          h('button', { type: 'button', className: 'rt-btn rt-btn-primary', disabled: saving, onClick: handleSaveAll }, saving ? t('保存中…', 'Saving…') : t('保存设置', 'Save Settings'))),
         h('div', { className: 'rt-pane', style: { overflow: 'auto' } }, shellBody))
     }
 
@@ -12278,65 +12859,89 @@ body[data-ds-dark-theme] .rt-anim-complete{
         role: 'plan',
         badge: '⓪ plan Captain',
         title: '主控指挥（主会话调度）',
+        titleEn: 'Lead Orchestrator (Main Session)',
         wave: 'Wave 0–4 全程中枢',
+        waveEn: 'Wave 0-4 Hub',
         skills: ['/dag-orchestrate', '/slot-gate', '/pg-sync'],
         desc: '拆解用户意图、按 4-Wave DAG 调度 6 并发槽、核对事实库并汇总汇报，不直接改业务文件。',
+        descEn: 'Decomposes user intent, schedules 6 parallel slots over 4-Wave DAG, verifies state DB and summarizes progress without direct code edits.',
       },
       {
         role: 'recon',
         badge: '① recon CEO',
         title: '产品与需求规划（信息收集）',
+        titleEn: 'Product & Scope Planning (Discovery)',
         wave: 'Wave 1 · Slot #1',
+        waveEn: 'Wave 1 · Slot #1',
         skills: ['/office-hours', '/plan-ceo-review'],
         desc: '全量业务模块与资产拓扑测绘，标注 P0/P1 优先级线索与产品验收口径。',
+        descEn: 'Maps full module & asset topology, tags P0/P1 clues and defines product acceptance criteria.',
       },
       {
         role: 'designer',
         badge: '② designer Designer',
         title: '交互与视觉设计',
+        titleEn: 'Interaction & Visual Design',
         wave: 'Wave 1 · Slot #2',
+        waveEn: 'Wave 1 · Slot #2',
         skills: ['/plan-design-review', '/design-shotgun'],
         desc: 'DSH Desktop 模块化 Bento 组件树、设计令牌（#4D6BFE）与有数据/空态/报错三态交互规范。',
+        descEn: 'DSH Desktop Bento component tree, design tokens (#4D6BFE), and data/empty/error UI state specifications.',
       },
       {
         role: 'assess',
         badge: '③ assess Eng Manager',
         title: '系统架构与排期',
+        titleEn: 'Architecture & Scheduling',
         wave: 'Wave 2 · 1 槽契约锁',
+        waveEn: 'Wave 2 · 1-Slot Contract Lock',
         skills: ['/plan-eng-review', '/file-disjoint-shard'],
         desc: '冻结模块接口契约、依赖拓扑与 6 并发无冲突文件分片（File-Disjoint Sharding）。',
+        descEn: 'Freezes interface contracts, dependency topology, and conflict-free File-Disjoint Sharding for 6 parallel workers.',
       },
       {
         role: 'vuln-scan',
         badge: '④ vuln-scan Reviewer & CSO',
         title: '代码审查与安全门禁',
+        titleEn: 'Code Review & Security Gate',
         wave: 'Wave 4 · Gate #1',
+        waveEn: 'Wave 4 · Gate #1',
         skills: ['/review', '/cso'],
         desc: '静态代码缺陷审查、OWASP/STRIDE 安全门禁与凭据零明文泄露审计。',
+        descEn: 'Static defect review, OWASP/STRIDE security gates, and zero-plaintext secret audit.',
       },
       {
         role: 'exploit',
         badge: '⑤ exploit 6× Builder',
         title: '全栈研发与分片构建',
+        titleEn: 'Full-Stack Sharded Build',
         wave: 'Wave 3 · 6 槽满载',
+        waveEn: 'Wave 3 · 6 Parallel Slots',
         skills: ['/parallel-build', '/subagent-spawn'],
         desc: 'Wave 3 主力 6 槽并发编码实现、单测自检与深度验证；遇微问题可递归派生子代理。',
+        descEn: 'Wave 3 full 6-slot parallel implementation, unit testing, and verification; spawns child helpers as needed.',
       },
       {
         role: 'qa',
         badge: '⑥ qa QA Lead',
         title: '质量保障与自动化回归',
+        titleEn: 'QA & Automated Regression',
         wave: 'Wave 4 · Gate #2',
+        waveEn: 'Wave 4 · Gate #2',
         skills: ['/qa', '/benchmark'],
         desc: '全量测试套件、浏览器端到端回归、性能基线测试与高分成果独立复核。',
+        descEn: 'Full test suite, E2E browser regression, performance benchmarks, and independent high-value milestone verification.',
       },
       {
         role: 'internal',
         badge: '⑦ internal Doc & Release',
         title: '文档工程与归档发布',
+        titleEn: 'Docs & Release Engineering',
         wave: 'Wave 4 · Release',
+        waveEn: 'Wave 4 · Release',
         skills: ['/ship', '/document-release'],
         desc: '文稿墙（Doc Wall）同步、版本归档、飞书群聊机器人推送与闭环交付报告生成。',
+        descEn: 'Doc Wall sync, release archiving, Feishu group notifications, and closed-loop delivery report generation.',
       },
     ]
 
@@ -12369,6 +12974,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function ClusterP5Tree(props) {
+      useLocale()
       const eng = props.engagement || null
       const agents = props.agents || {}
       const [filter, setFilter] = React.useState('all')
@@ -12405,7 +13011,6 @@ body[data-ds-dark-theme] .rt-anim-complete{
             wave: item.wave || '',
             goal: String(item.assigned_goal || item.goal || item.objective || '').trim(),
             status: isError ? 'error' : (isRunning ? 'running' : 'done'),
-            statusLabel: isError ? '异常' : (isRunning ? '运行中' : '已完成'),
             sessionId,
             color: isError ? '#ef4444' : (isRunning ? '#3b82f6' : '#10b981'),
           })
@@ -12474,12 +13079,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
       return h('div', { className: 'rt-p5-board', style: { display: 'flex', flexDirection: 'column', gap: 10 } },
         h('div', { className: 'rt-p5-topbar' },
           h('span', { style: { fontWeight: 700, fontSize: 12.5 } },
-            '团队任务板 · ' + (1 + children.length) + ' 成员 · ' + runningCount + ' 运行中'),
+            t('团队任务板 · ' + (1 + children.length) + ' 成员 · ' + runningCount + ' 运行中',
+              'Team Board · ' + (1 + children.length) + ' members · ' + runningCount + ' running')),
           h('div', { className: 'rt-p5-filters' },
             [
-              { k: 'all', lbl: '全部' },
-              { k: 'lead', lbl: '主代理 Captain' },
-              { k: 'sub', lbl: '子代理 (' + children.length + ')' },
+              { k: 'all', lbl: t('全部', 'All') },
+              { k: 'lead', lbl: t('主代理 Captain', 'Lead Captain') },
+              { k: 'sub', lbl: t('子代理', 'Subagents') + ' (' + children.length + ')' },
             ].map((fp) => h('button', {
               key: 'p5f-' + fp.k,
               type: 'button',
@@ -12488,7 +13094,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
             }, fp.lbl))),
           h('div', { className: 'rt-spacer' }),
           h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
-            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '树状图'),
+            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, t('树状图', 'Tree')),
             h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom((z) => Math.max(70, z - 10)) }, '-'),
             h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom(100) }, zoom + '%'),
             h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom((z) => Math.min(130, z + 10)) }, '+'))),
@@ -12542,49 +13148,53 @@ body[data-ds-dark-theme] .rt-anim-complete{
                       },
                     },
                       h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-                        h('span', { className: 'rt-p5-pill', style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999 } }, '主代理'),
-                        h('strong', { style: { fontSize: 12.5 } }, 'Captain 主控架构师'),
+                        h('span', { className: 'rt-p5-pill', style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999 } }, t('主代理', 'Lead')),
+                        h('strong', { style: { fontSize: 12.5 } }, t('Captain 主控架构师', 'Captain Lead Architect')),
                         h('div', { className: 'rt-spacer' }),
-                        h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? '协调中' : '就绪')),
+                        h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? t('协调中', 'Orchestrating') : t('就绪', 'Ready'))),
                       h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
-                        '工作区 ' + eng + ' · 统筹 4-Wave 分片调度与摘要审批'),
+                        t('工作区 ', 'Workspace ') + eng + t(' · 统筹 4-Wave 分片调度与摘要审批', ' · 4-Wave shard scheduling & digest gate')),
                       showChildren.length > 0 ? h('span', { className: 'rt-tree-port rt-tree-port-bottom' }) : null))
                 : null,
               showChildren.length > 0
                 ? h('div', { className: 'rt-p5-branches-grid' },
-                    showChildren.map((c) => h('div', Object.assign({
-                      key: 'p5c-' + c.id,
-                      ref: (el) => {
-                        if (el) childRefs.current[c.id] = el
-                        else delete childRefs.current[c.id]
-                      },
-                      className: 'rt-p5-node',
-                      style: {
-                        position: 'relative',
-                        border: '1.5px solid ' + c.color,
-                        borderRadius: 10,
-                        padding: '10px 12px',
-                        background: 'var(--dsw-alias-bg-layer-1)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 5,
-                        cursor: c.sessionId ? 'pointer' : 'default',
-                      },
-                    }, c.sessionId ? clickable(() => { openAgentSessionInHostChat(c.sessionId, c.title) }, { label: '打开子代理 ' + c.title }) : {}),
-                      showRoot ? h('span', { className: 'rt-tree-port rt-tree-port-top' }) : null,
-                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                        h('span', { className: 'rt-p5-pill', style: { background: c.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999 } }, c.role),
-                        c.wave ? h('span', { className: 'rt-tag rt-tag-passive', style: { margin: 0 } }, c.wave) : null,
-                        h('div', { className: 'rt-spacer' }),
-                        h('span', { style: { fontSize: 10.5, fontWeight: 600, color: c.color } }, c.statusLabel)),
-                      h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, c.title),
-                      c.goal ? h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.45 } }, c.goal) : null)))
+                    showChildren.map((c) => {
+                      const cStatusLabel = c.status === 'error' ? t('异常', 'Error') : (c.status === 'running' ? t('运行中', 'Running') : t('已完成', 'Done'))
+                      return h('div', Object.assign({
+                        key: 'p5c-' + c.id,
+                        ref: (el) => {
+                          if (el) childRefs.current[c.id] = el
+                          else delete childRefs.current[c.id]
+                        },
+                        className: 'rt-p5-node',
+                        style: {
+                          position: 'relative',
+                          border: '1.5px solid ' + c.color,
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          background: 'var(--dsw-alias-bg-layer-1)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 5,
+                          cursor: c.sessionId ? 'pointer' : 'default',
+                        },
+                      }, c.sessionId ? clickable(() => { openAgentSessionInHostChat(c.sessionId, c.title) }, { label: t('打开子代理 ', 'Open subagent ') + c.title }) : {}),
+                        showRoot ? h('span', { className: 'rt-tree-port rt-tree-port-top' }) : null,
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                          h('span', { className: 'rt-p5-pill', style: { background: c.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999 } }, c.role),
+                          c.wave ? h('span', { className: 'rt-tag rt-tag-passive', style: { margin: 0 } }, c.wave) : null,
+                          h('div', { className: 'rt-spacer' }),
+                          h('span', { style: { fontSize: 10.5, fontWeight: 600, color: c.color } }, cStatusLabel)),
+                        h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, c.title),
+                        c.goal ? h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.45 } }, c.goal) : null)
+                    }))
                 : filter !== 'lead'
-                    ? h('div', { className: 'rt-empty', style: { width: '100%' } }, '尚无已派发的子代理任务。')
+                    ? h('div', { className: 'rt-empty', style: { width: '100%' } }, t('尚无已派发的子代理任务。', 'No subagent tasks dispatched yet.'))
                     : null))))
     }
 
     function AgentsTab(props) {
+      useLocale()
       const eng = props.engagement
       const sid = props.sessionId || null
       const refreshKey = props.refreshKey || 0
@@ -12604,7 +13214,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) {
-            setErr((r && r.error) || '读取集群并发状态失败')
+            setErr((r && r.error) || t('读取集群并发状态失败', 'Failed to load cluster concurrency status'))
             return
           }
           setErr(null)
@@ -12652,54 +13262,54 @@ body[data-ds-dark-theme] .rt-anim-complete{
         if (!Number.isFinite(parsed)) return
         const clamped = Math.max(1, Math.min(limit, Math.floor(parsed)))
         setConcurrency((prev) => Object.assign({}, prev || {}, { max: clamped, source: 'settings' }))
-        setCtrlMsg('正在调整并发槽上限为 ' + clamped + ' 槽…')
+        setCtrlMsg(t('正在调整并发槽上限为 ' + clamped + ' 槽…', 'Updating slot limit to ' + clamped + '…'))
         api({ op: 'setAgentsMax', max: clamped }).then((r) => {
           if (r && r.ok !== false) {
-            setCtrlMsg('已生效：并发槽上限 ' + (r.max || clamped) + ' 槽')
+            setCtrlMsg(t('已生效：并发槽上限 ' + (r.max || clamped) + ' 槽', 'Applied: max ' + (r.max || clamped) + ' slots'))
             load()
           } else {
-            setCtrlMsg((r && r.error) || '调整并发槽失败')
+            setCtrlMsg((r && r.error) || t('调整并发槽失败', 'Failed to update slot limit'))
           }
         }, (e) => setCtrlMsg(String((e && e.message) || e)))
       }
 
       const presets = [
-        { n: 3, label: '3 槽' },
-        { n: 6, label: '6 槽 (推荐)' },
-        { n: 8, label: '8 槽' },
-        { n: 12, label: '12 槽' },
+        { n: 3, label: t('3 槽', '3 Slots') },
+        { n: 6, label: t('6 槽 (推荐)', '6 Slots (Rec)') },
+        { n: 8, label: t('8 槽', '8 Slots') },
+        { n: 12, label: t('12 槽', '12 Slots') },
       ]
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '智能体与并发'),
+          h('span', { style: { fontWeight: 600 } }, t('智能体与并发', 'Agents & Concurrency')),
           h('span', {
             className: 'rt-tag' + (activeCount >= max ? ' rt-tag-warn' : (activeCount > 0 ? ' rt-tag-live' : ' rt-tag-passive')),
-          }, '并发槽 ' + activeCount + '/' + max),
+          }, t('并发槽 ', 'Slots ') + activeCount + '/' + max),
           h('span', {
             className: 'rt-tag rt-tag-live',
-            title: '子智能体超过 3 分钟无心跳自动回收槽位租约；文件分片由排他锁守护',
-          }, '3min 无心跳自动回收 · 分片排他锁'),
+            title: t('子智能体超过 3 分钟无心跳自动回收槽位租约；文件分片由排他锁守护', 'Auto-reclaim stale slots after 3m without heartbeat; shards protected by exclusive locks'),
+          }, t('3min 无心跳自动回收 · 分片排他锁', '3m Stale Reclaim · Exclusive Shard Locks')),
           h('div', { className: 'rt-spacer' }),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             onClick: () => { if (typeof props.onGo === 'function') props.onGo('prompts') },
-          }, '角色与提示词 →'),
+          }, t('角色与提示词 →', 'Roles & Prompts →')),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             disabled: busy,
             onClick: load,
-          }, busy ? '读取中…' : '刷新')),
+          }, busy ? t('读取中…', 'Loading…') : t('刷新', 'Refresh'))),
         h('div', { className: 'rt-pane' },
           err ? h('div', { className: 'rt-err' }, err) : null,
           h('div', { className: 'rt-card', style: { padding: '10px 12px' } },
             h('div', { className: 'rt-p3-ctrl', style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-              h('span', { style: { fontSize: 12, fontWeight: 700 } }, '并发数量与租约控制'),
-              h('div', { className: 'rt-p3-stepper', title: '调节并发槽位 (1–' + limit + ')' },
+              h('span', { style: { fontSize: 12, fontWeight: 700 } }, t('并发数量与租约控制', 'Concurrency & Lease Control')),
+              h('div', { className: 'rt-p3-stepper', title: t('调节并发槽位 (1–' + limit + ')', 'Adjust concurrency slots (1-' + limit + ')') },
                 h('button', { type: 'button', className: 'rt-p3-step-btn', disabled: max <= 1, onClick: () => applySlotMax(max - 1) }, '-'),
-                h('span', { className: 'rt-p3-step-val' }, max + ' 槽'),
+                h('span', { className: 'rt-p3-step-val' }, max + t(' 槽', ' slots')),
                 h('button', { type: 'button', className: 'rt-p3-step-btn', disabled: max >= limit, onClick: () => applySlotMax(max + 1) }, '+')),
               h('div', { className: 'rt-p3-pills' },
                 presets.map((p) => h('button', {
@@ -12708,18 +13318,18 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   className: 'rt-p3-pill' + (max === p.n ? ' on' : ''),
                   onClick: () => applySlotMax(p.n),
                 }, p.label))),
-              h('span', { className: 'rt-tag rt-tag-passive' }, '深度 ' + maxDepth + ' · 思考 ' + thinking),
+              h('span', { className: 'rt-tag rt-tag-passive' }, t('深度 ', 'Depth ') + maxDepth + t(' · 思考 ', ' · Thinking ') + thinking),
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 onClick: () => { if (typeof props.onGo === 'function') props.onGo('settings') },
-              }, '在设置页调整全部参数 →'),
+              }, t('在设置页调整全部参数 →', 'All Settings →')),
               h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', marginLeft: 'auto' } },
-                '同一项目',
-                h('b', { style: { color: 'var(--dsw-alias-label-primary)' } }, '同时最多 ' + max + ' 个执行智能体'),
-                ' · 经 ',
-                h('code', { className: 'rt-code-inline' }, 'redteam_agent_slot'),
-                ' 核验')),
+                t('同一项目', 'Max '),
+                h('b', { style: { color: 'var(--dsw-alias-label-primary)' } }, t('同时最多 ' + max + ' 个执行智能体', max + ' parallel agents per workspace')),
+                t(' · 经 ', ' · verified via '),
+                h('code', { className: 'rt-code-inline' }, 'lmt_agent_slot'),
+                t(' 核验', ''))),
             ctrlMsg ? h('div', { style: { fontSize: 11, color: '#2563eb', marginTop: 6, fontWeight: 600 } }, ctrlMsg) : null),
           h(ClusterP5Tree, {
             engagement: eng,
@@ -12737,6 +13347,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function RolePromptsHubTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [roles, setRoles] = React.useState(null)
@@ -12754,7 +13365,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         api({ op: 'prompts', engagement: eng }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) {
-            setErr((r && r.error) || '读取角色提示词失败')
+            setErr((r && r.error) || t('读取角色提示词失败', 'Failed to load role prompts'))
             return
           }
           setErr(null)
@@ -12771,26 +13382,26 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '角色与提示词（8 角色 gstack 编队）'),
-          h('span', { className: 'rt-tag rt-tag-passive' }, '当前角色 · ' + openRole + '.md'),
+          h('span', { style: { fontWeight: 600 } }, t('角色与提示词（8 角色 gstack 编队）', 'Roles & Prompts (8-Role gstack Roster)')),
+          h('span', { className: 'rt-tag rt-tag-passive' }, t('当前角色 · ', 'Active · ') + openRole + '.md'),
           h('div', { className: 'rt-spacer' }),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             onClick: () => { if (typeof props.onGo === 'function') props.onGo('agents') },
-          }, '← 返回智能体与并发'),
+          }, t('← 返回智能体与并发', '← Back to Agents & Slots')),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             disabled: busy || !eng,
             onClick: load,
-          }, busy ? '读取中…' : '刷新')),
+          }, busy ? t('读取中…', 'Loading…') : t('刷新', 'Refresh'))),
         h('div', { className: 'rt-pane' },
           err ? h('div', { className: 'rt-err' }, err) : null,
           h('div', { className: 'rt-card' },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 } },
-              h('h4', { style: { margin: 0 } }, '8 角色 gstack 编队'),
-              h('span', { className: 'rt-wb-recurse-tag' }, '按工作区持久化模板')),
+              h('h4', { style: { margin: 0 } }, t('8 角色 gstack 编队', '8-Role gstack Roster')),
+              h('span', { className: 'rt-wb-recurse-tag' }, t('按工作区持久化模板', 'Persisted per workspace'))),
             h('div', { className: 'rt-wb-role-grid' },
               GSTACK_ROLE_ROSTER.map((r) => {
                 const isSelected = openRole === r.role
@@ -12799,36 +13410,37 @@ body[data-ds-dark-theme] .rt-anim-complete{
                   key: 'rc-' + r.role,
                   className: 'rt-wb-role-card' + (isSelected ? ' on' : ''),
                 }, clickable(() => { setOpenRole(r.role) }, {
-                  label: '选择并编辑角色 ' + r.badge + ' 提示词',
+                  label: t('选择并编辑角色 ', 'Select role ') + r.badge + t(' 提示词', ' prompt'),
                   expanded: isSelected,
                 })),
                   h('div', { className: 'rt-wb-role-top' },
                     h('span', { className: 'rt-wb-role-badge' }, r.badge),
-                    h('span', { className: 'rt-tag rt-tag-passive' }, r.wave)),
-                  h('div', { className: 'rt-wb-role-title' }, r.title + (roleData && roleData.stale ? '（旧版可升级）' : '')),
-                  h('div', { className: 'rt-wb-role-desc' }, r.desc),
+                    h('span', { className: 'rt-tag rt-tag-passive' }, t(r.wave, r.waveEn))),
+                  h('div', { className: 'rt-wb-role-title' }, t(r.title, r.titleEn) + (roleData && roleData.stale ? t('（旧版可升级）', ' (legacy)') : '')),
+                  h('div', { className: 'rt-wb-role-desc' }, t(r.desc, r.descEn)),
                   h('div', { className: 'rt-wb-role-tags' },
                     r.skills.map((sk) => h('span', { key: sk, className: 'rt-wb-skill-tag' }, sk))),
                   h('div', { className: 'rt-wb-role-edit' },
-                    isSelected ? '当前 · ' + r.role + '.md' : '编辑 ' + r.role + '.md →'))
+                    isSelected ? t('当前 · ', 'Active · ') + r.role + '.md' : t('编辑 ', 'Edit ') + r.role + '.md →'))
               }))),
           eng
             ? h('div', { className: 'rt-card' },
                 h('div', { style: { fontSize: 12, fontWeight: 600, marginBottom: 6 } },
-                  '角色提示词 · ' + eng + ' · ' + openRole + '.md'),
+                  t('角色提示词 · ', 'Role Prompt · ') + eng + ' · ' + openRole + '.md'),
                 h(PromptsTab, { engagement: eng, refreshKey: refreshKey, selectedRole: openRole }))
             : h('div', { className: 'rt-card' },
-                h('h4', { style: { marginTop: 0 } }, '当前会话尚未初始化工作区'),
+                h('h4', { style: { marginTop: 0 } }, t('当前会话尚未初始化工作区', 'No Workspace Initialized')),
                 h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10, lineHeight: 1.55 } },
-                  '初始化当前会话工作台后，可按工作区独立编辑各角色提示词。'),
+                  t('初始化当前会话工作台后，可按工作区独立编辑各角色提示词。', 'Initialize a workspace for this session to edit per-workspace role prompts.')),
                 h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: () => { if (typeof props.onGo === 'function') props.onGo('collab') },
-                }, '前往「协同与审批」初始化 →'))))
+                }, t('前往「协同与审批」初始化 →', 'Go to Collab & Approval →')))))
     }
 
     function VersionBar(props) {
+      useLocale()
       const [info, setInfo] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [open, setOpen] = React.useState(false)
@@ -12883,8 +13495,8 @@ body[data-ds-dark-theme] .rt-anim-complete{
         setMsg(null)
         api({ op: 'updateApply', target: (info && info.latest) || undefined }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '更新失败' }); return }
-          setMsg({ ok: '已安装 ' + (r.installed || '') + '，正在重启 dsh web…' })
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('更新失败', 'Update failed') }); return }
+          setMsg({ ok: t('已安装 ' + (r.installed || '') + '，正在重启 dsh web…', 'Installed ' + (r.installed || '') + ', restarting dsh web…') })
           clearCountdownTimer()
           setCountdown(6)
           countdownTimerRef.current = setInterval(() => {
@@ -12910,55 +13522,55 @@ body[data-ds-dark-theme] .rt-anim-complete{
       return h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
         h('span', {
           className: 'rt-tag' + (hasNew ? ' rt-tag-warn' : ''),
-          title: ('当前版本 ' + (current || '未知') + (latest ? '\n最新版本 ' + latest : '')
-            + ((mode === 'dev' || mode === 'source') ? '\n安装方式：本地源码（未走包管理器）' : mode === 'package' ? '\n安装方式：包安装' : '')
-            + (info && info.check_error ? '\n检查失败：' + info.check_error : '')),
+          title: (t('当前版本 ', 'Current version ') + (current || t('未知', 'unknown')) + (latest ? t('\n最新版本 ', '\nLatest ') + latest : '')
+            + ((mode === 'dev' || mode === 'source') ? t('\n安装方式：本地源码（未走包管理器）', '\nInstall: local source') : mode === 'package' ? t('\n安装方式：包安装', '\nInstall: package') : '')
+            + (info && info.check_error ? t('\n检查失败：', '\nCheck failed: ') + info.check_error : '')),
         }, 'v' + (current || '?')),
         hasNew
           ? h('button', {
               className: 'rt-btn rt-btn-primary', disabled: busy,
               onClick: () => { setOpen(true); setMsg(null) },
-              title: '发现新版本 ' + latest + '：点击查看并一键更新（会重启 dsh web）',
-            }, busy ? '检查中…' : '有新版本 v' + latest)
+              title: t('发现新版本 ' + latest + '：点击查看并一键更新（会重启 dsh web）', 'New version ' + latest + ' available; click to update and restart dsh web'),
+            }, busy ? t('检查中…', 'Checking…') : t('有新版本 v', 'Update v') + latest)
           : h('button', {
               className: 'rt-btn', disabled: busy, onClick: () => check(false),
-              title: '重新检查 npm 上的最新版本',
-            }, busy ? '检查中…' : '检查更新'),
+              title: t('重新检查 npm 上的最新版本', 'Check latest version on npm'),
+            }, busy ? t('检查中…', 'Checking…') : t('检查更新', 'Check Update')),
         open
           ? h('div', { className: 'rt-modal', 'aria-hidden': 'true', onClick: () => setOpen(false) },
               h('div', { className: 'rt-modal-box', onClick: (e) => e.stopPropagation() },
-                h('h4', { style: { marginTop: 0 } }, '更新 LMTAgent 研发控制台'),
-                h('div', { className: 'rt-kv' }, h('b', null, '开源仓库'), h('span', { className: 'rt-mono' }, 'ECCVIK/LMTAgent')),
-                h('div', { className: 'rt-kv' }, h('b', null, '当前版本'), h('span', null, current || '未知')),
-                h('div', { className: 'rt-kv' }, h('b', null, '最新版本'), h('span', null, latest || '未知')),
-                h('div', { className: 'rt-kv' }, h('b', null, '安装方式'),
-                  h('span', null, (mode === 'dev' || mode === 'source') ? '本地源码' : mode === 'package' ? '包安装（' + ((info.install && info.install.packageManager) || 'npm') + '）' : '未知')),
+                h('h4', { style: { marginTop: 0 } }, t('更新 LMTAgent 研发控制台', 'Update LMTAgent Console')),
+                h('div', { className: 'rt-kv' }, h('b', null, t('开源仓库', 'Repository')), h('span', { className: 'rt-mono' }, 'ECCVIK/LMTAgent')),
+                h('div', { className: 'rt-kv' }, h('b', null, t('当前版本', 'Current')), h('span', null, current || t('未知', 'Unknown'))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('最新版本', 'Latest')), h('span', null, latest || t('未知', 'Unknown'))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('安装方式', 'Install Mode')),
+                  h('span', null, (mode === 'dev' || mode === 'source') ? t('本地源码', 'Local source') : mode === 'package' ? t('包安装（', 'Package (') + ((info.install && info.install.packageManager) || 'npm') + ')' : t('未知', 'Unknown'))),
                 info && info.install && info.install.dir
-                  ? h('div', { className: 'rt-kv' }, h('b', null, '安装位置'), h('span', { className: 'rt-mono' }, info.install.dir))
+                  ? h('div', { className: 'rt-kv' }, h('b', null, t('安装位置', 'Location')), h('span', { className: 'rt-mono' }, info.install.dir))
                   : null,
                 blockers.length
                   ? h('div', { className: 'rt-hint' },
-                      h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '现在不能更新：'),
+                      h('div', { style: { fontWeight: 600, marginBottom: 4 } }, t('现在不能更新：', 'Update blocked:')),
                       blockers.map((b, i) => h('div', { key: 'b' + i }, '· ' + b)))
                   : null,
                 notes.length
                   ? h('div', { className: 'rt-foot', style: { padding: '4px 0' } }, notes.map((n, i) => h('div', { key: 'n' + i }, n)))
                   : null,
                 h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', margin: '8px 0' } },
-                  '更新过程：安装新版本 → 自动重启 dsh web（当前页面会断开，约 5–10 秒后自动刷新）。'
-                  + '重启前会检查有没有智能体在跑，有就拦住不动。'),
+                  t('更新过程：安装新版本 → 自动重启 dsh web（当前页面会断开，约 5–10 秒后自动刷新）。重启前会检查有没有智能体在跑，有就拦住不动。',
+                    'Update installs the latest release and restarts dsh web (auto-reloads in 5-10s). Aborts safely if subagents are still running.')),
                 msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
                 countdown > 0
-                  ? h('div', { className: 'rt-foot' }, 'dsh web 正在重启，' + countdown + ' 秒后自动刷新页面…')
+                  ? h('div', { className: 'rt-foot' }, t('dsh web 正在重启，' + countdown + ' 秒后自动刷新页面…', 'Restarting dsh web, reloading in ' + countdown + 's…'))
                   : null,
                 h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 } },
-                  h('button', { className: 'rt-btn', onClick: () => setOpen(false) }, '关闭'),
+                  h('button', { className: 'rt-btn', onClick: () => setOpen(false) }, t('关闭', 'Close')),
                   h('button', {
                     className: 'rt-btn rt-btn-primary',
                     disabled: busy || blockers.length > 0,
-                    title: (mode === 'dev' || mode === 'source') ? '把 npm 发布版装进 profile（本地源码改动不再生效）' : blockers.length ? '先解决上面的阻塞项' : '安装并重启',
+                    title: (mode === 'dev' || mode === 'source') ? t('把 npm 发布版装进 profile（本地源码改动不再生效）', 'Install published npm package into profile') : blockers.length ? t('先解决上面的阻塞项', 'Resolve blockers first') : t('安装并重启', 'Install and restart'),
                     onClick: applyUpdate,
-                  }, busy ? '更新中…' : '一键更新并重启'))))
+                  }, busy ? t('更新中…', 'Updating…') : t('一键更新并重启', 'Update & Restart')))))
           : null)
     }
 
@@ -13061,6 +13673,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
     }
 
     function Panel(props) {
+      useLocale()
       const embedMode = props && props.embedMode ? String(props.embedMode) : null
       const propSid = sessionIdOf(props)
       const scopedSession = typeof useScopedSession === 'function'
@@ -13124,7 +13737,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       React.useEffect(() => {
         const onOpen = () => {
           setFull(true)
-          try { window.history.replaceState(null, '', window.location.pathname + window.location.search + '#redteam-full') } catch { /* ignore */ }
+          try { window.history.replaceState(null, '', window.location.pathname + window.location.search + '#lmtagent-full') } catch { /* ignore */ }
         }
         const onExit = () => { exitFull() }
         window.addEventListener(FULL_REQUEST_EVENT, onOpen)
@@ -13159,7 +13772,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const loadSnapshot = (id) => {
         if (!id) { setSnapshot(null); return }
         api({ op: 'snapshot', engagement: id }).then((r) => {
-          if (!r || r.ok === false) { setErr((r && r.error) || '加载失败'); return }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('加载失败', 'Load failed')); return }
           setErr(null)
           setSnapshot(r)
         }, (e) => setErr(String((e && e.message) || e)))
@@ -13255,7 +13868,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         api({ op: 'bootstrap', session: initialSid || undefined }).then((r) => {
           if (!r || r.ok === false) {
             if (r && r.emptyResponse) return
-            setErr((r && r.error) || '无法连接工作区存储')
+            setErr((r && r.error) || t('无法连接工作区存储', 'Failed to connect workspace storage'))
             return
           }
           setErr(null)
@@ -13308,7 +13921,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         const name = String(nameArg || '').trim()
         if (!name) return Promise.resolve(null)
         return api({ op: 'openEngagement', name: name, session: sid || undefined }).then((r) => {
-          if (!r || r.ok === false) { setErr((r && r.error) || '创建失败'); return null }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('创建失败', 'Create failed')); return null }
           const createdId = (r.engagement && r.engagement.id) || r.id || name
           if (createdId) {
             manualPickRef.current = null
@@ -13496,18 +14109,18 @@ body[data-ds-dark-theme] .rt-anim-complete{
       const visibleEngagements = namedEngagements.length > 0 ? namedEngagements : engagements
       const sessionDisplayLabel = (!isRawUuidName(sesTitle) && sesTitle)
         ? sesTitle
-        : (sid ? sid.slice(0, 8) : '当前会话')
+        : (sid ? sid.slice(0, 8) : t('当前会话', 'Session'))
 
       const selectorOptions = []
       if (sid && !eng) {
         selectorOptions.push({
           value: '__session_unbound__',
-          label: '当前会话 · ' + sessionDisplayLabel + (sessionState && sessionState.onboarding_dismissed ? '（未绑定）' : '（待初始化）'),
+          label: t('当前会话 · ', 'Session · ') + sessionDisplayLabel + (sessionState && sessionState.onboarding_dismissed ? t('（未绑定）', ' (Unbound)') : t('（待初始化）', ' (Setup Pending)')),
         })
         for (const x of visibleEngagements) {
           selectorOptions.push({
             value: x.id,
-            label: '关联已有 · ' + (x.name || x.id),
+            label: t('关联已有 · ', 'Bind Existing · ') + (x.name || x.id),
           })
         }
       } else {
@@ -13526,29 +14139,29 @@ body[data-ds-dark-theme] .rt-anim-complete{
             : ((snapshot && snapshot.engagement && snapshot.engagement.name && !isRawUuidName(snapshot.engagement.name))
                 ? snapshot.engagement.name
                 : eng))
-        : ((!isRawUuidName(sesTitle) && sesTitle) || '未绑定工作区')
+        : ((!isRawUuidName(sesTitle) && sesTitle) || t('未绑定工作区', 'Unbound Workspace'))
 
       const tabs = [
-        ['assets', '模块与服务'],
-        ['agents', '智能体与并发'],
-        ['prompts', '角色与提示词'],
-        ['sessions', '运行环境'],
-        ['artifacts', '构建产物'],
-        ['findings', '代码审查与缺陷'],
-        ['scores', '交付里程碑'],
-        ['report', '研发交付报告'],
-        ['knowledge', '工程模式库'],
-        ['skills', '研发技能库'],
-        ['settings', '设置'],
+        ['assets', t('模块与服务', 'Modules & Services')],
+        ['agents', t('智能体与并发', 'Agents & Slots')],
+        ['prompts', t('角色与提示词', 'Roles & Prompts')],
+        ['sessions', t('运行环境', 'Runtime')],
+        ['artifacts', t('构建产物', 'Artifacts')],
+        ['findings', t('代码审查与缺陷', 'Review & Findings')],
+        ['scores', t('交付里程碑', 'Milestones')],
+        ['report', t('研发交付报告', 'Delivery Report')],
+        ['knowledge', t('工程模式库', 'Pattern KB')],
+        ['skills', t('研发技能库', 'Skill Library')],
+        ['settings', t('设置', 'Settings')],
       ]
       const TAB_GROUPS = [
-        { key: 'collab', label: '协同与审批', tabs: ['collab'] },
-        { key: 'overview', label: '总览', tabs: ['overview'] },
-        { key: 'assets', label: '架构', tabs: ['assets'] },
-        { key: 'results', label: '质量', tabs: ['findings', 'scores'] },
-        { key: 'report', label: '报告', tabs: ['report'] },
-        { key: 'resources', label: '集群', tabs: ['agents', 'prompts', 'sessions', 'artifacts', 'knowledge', 'skills'] },
-        { key: 'settings', label: '设置', tabs: ['settings'] },
+        { key: 'collab', label: t('协同与审批', 'Collab & Approval'), tabs: ['collab'] },
+        { key: 'overview', label: t('总览', 'Overview'), tabs: ['overview'] },
+        { key: 'assets', label: t('架构', 'Architecture'), tabs: ['assets'] },
+        { key: 'results', label: t('质量', 'Quality'), tabs: ['findings', 'scores'] },
+        { key: 'report', label: t('报告', 'Report'), tabs: ['report'] },
+        { key: 'resources', label: t('集群', 'Cluster'), tabs: ['agents', 'prompts', 'sessions', 'artifacts', 'knowledge', 'skills'] },
+        { key: 'settings', label: t('设置', 'Settings'), tabs: ['settings'] },
       ]
       const groupOf = (tab) => TAB_GROUPS.find((g) => g.tabs.indexOf(tab) !== -1) || TAB_GROUPS[1]
       const activeGroup = groupOf(st.tab)
@@ -13581,7 +14194,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
               onGo: goTab,
               compact: false,
             })
-          : h('div', { className: 'rt-pane' }, h('div', { className: 'rt-empty' }, '设置中心尚未加载'))
+          : h('div', { className: 'rt-pane' }, h('div', { className: 'rt-empty' }, t('设置中心尚未加载', 'Settings center not loaded')))
       } else if (err) {
         body = h('div', { className: 'rt-err' }, err)
       } else if (st.tab === 'collab') {
@@ -13605,13 +14218,13 @@ body[data-ds-dark-theme] .rt-anim-complete{
             })
           : h('div', { className: 'rt-pane' },
               h('div', { className: 'rt-card' },
-                h('h4', { style: { marginTop: 0 } }, '协同与审批工作台'),
+                h('h4', { style: { marginTop: 0 } }, t('协同与审批工作台', 'Collaboration & Approval')),
                 h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 } },
-                  eng ? ('当前已绑定工作区「' + currentEngName + '」。') : '当前会话尚未绑定工作区，可立即初始化或跳过指引保持空白会话。'),
+                  eng ? t('当前已绑定工作区「' + currentEngName + '」。', 'Bound workspace "' + currentEngName + '".') : t('当前会话尚未绑定工作区，可立即初始化或跳过指引保持空白会话。', 'No workspace bound yet; initialize now or skip onboarding.')),
                 !eng
                   ? h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-                      h('button', { type: 'button', className: 'rt-btn rt-btn-primary', onClick: () => openEngagement(sessionDisplayLabel) }, '为当前会话创建工作区'),
-                      h('button', { type: 'button', className: 'rt-btn', onClick: handleSkipOnboarding }, '跳过指引'))
+                      h('button', { type: 'button', className: 'rt-btn rt-btn-primary', onClick: () => openEngagement(sessionDisplayLabel) }, t('为当前会话创建工作区', 'Create Workspace')),
+                      h('button', { type: 'button', className: 'rt-btn', onClick: handleSkipOnboarding }, t('跳过指引', 'Skip Setup')))
                   : null))
       } else if (st.tab === 'overview') {
         body = h(OverviewTab, {
@@ -13640,21 +14253,21 @@ body[data-ds-dark-theme] .rt-anim-complete{
       } else if (!eng) {
         body = h('div', { className: 'rt-pane' },
           h('div', { className: 'rt-card' },
-            h('h4', { style: { marginTop: 0 } }, '当前会话尚未初始化工作区'),
+            h('h4', { style: { marginTop: 0 } }, t('当前会话尚未初始化工作区', 'Workspace Not Initialized')),
             h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 12, lineHeight: 1.55 } },
-              '按会话 1:1 隔离工作区；请前往「协同与审批」初始化或关联已有项目。'),
+              t('按会话 1:1 隔离工作区；请前往「协同与审批」初始化或关联已有项目。', '1:1 session isolation enabled; open Collab & Approval to initialize or bind a workspace.')),
             h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
               h('button', {
                 type: 'button',
                 className: 'rt-btn rt-btn-primary',
                 onClick: () => goTab('collab'),
-              }, '前往「协同与审批」初始化 →'),
+              }, t('前往「协同与审批」初始化 →', 'Go to Collab & Approval →')),
               canReopenOnboarding
                 ? h('button', {
                     type: 'button',
                     className: 'rt-btn',
                     onClick: handleReopenOnboarding,
-                  }, '重新获取初始化指引')
+                  }, t('重新获取初始化指引', 'Reopen Setup Guide'))
                 : null)))
       } else if (st.tab === 'assets' || st.tab === 'testing') {
         body = h(AssetsTab, { engagement: eng, snapshot: snapshot, refreshKey: refreshKey, onRefresh: refreshAll, onData: () => loadSnapshot(eng) })
@@ -13680,49 +14293,49 @@ body[data-ds-dark-theme] .rt-anim-complete{
         (full || embedMode) ? null : h('div', { className: 'rt-grip', onMouseDown: startResize }),
         h('div', { className: 'rt-head' },
           h('div', { className: 'rt-title' }, h('span', { className: 'rt-dot' }),
-            full ? 'LMTAgent 全面浏览' : 'LMTAgent 研发控制台',
-            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, '全屏视图') : null),
+            full ? t('LMTAgent 全面浏览', 'LMTAgent Full View') : t('LMTAgent 研发控制台', 'LMTAgent Console'),
+            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, t('全屏视图', 'Fullscreen')) : null),
           sid === null
             ? null
             : (!eng
                 ? (isSessionDismissed
                     ? h('span', {
                         className: 'rt-tag rt-tag-passive',
-                        title: '当前会话已跳过初始化指引，保持干净独立态',
-                      }, '已跳过指引')
+                        title: t('当前会话已跳过初始化指引，保持干净独立态', 'Onboarding skipped; session remains clean and unbound'),
+                      }, t('已跳过指引', 'Skipped'))
                     : h('span', {
                         className: 'rt-tag rt-tag-warn',
-                        title: '当前会话尚未绑定研发工作区，可在「协同与审批」初始化或跳过指引',
-                      }, '待初始化'))
+                        title: t('当前会话尚未绑定研发工作区，可在「协同与审批」初始化或跳过指引', 'Session not bound to a workspace; initialize or skip in Collab & Approval'),
+                      }, t('待初始化', 'Setup Pending')))
                 : (hasCleanBoundDiff
                     ? h('span', Object.assign({
                         className: 'rt-tag rt-tag-warn',
                         style: { cursor: 'pointer' },
-                        title: '当前已手动切换工作区；点击切回当前会话绑定的「' + boundEng + '」',
+                        title: t('当前已手动切换工作区；点击切回当前会话绑定的「' + boundEng + '」', 'Viewing manually selected workspace; click to return to "' + boundEng + '"'),
                       }, clickable(() => {
                         manualPickRef.current = null
                         setFollowSource('bound')
                         setEng(boundEng)
                         loadSnapshot(boundEng)
-                      }, { label: '切回当前会话绑定工作区：' + boundEng })), '手动选择：' + boundEng)
+                      }, { label: t('切回当前会话绑定工作区：', 'Return to bound workspace: ') + boundEng })), t('手动选择：', 'Selected: ') + boundEng)
                     : h('span', {
                         className: 'rt-tag rt-tag-live',
-                        title: '控制台正 1:1 跟随当前会话绑定的研发工作区',
-                      }, '跟随会话'))),
+                        title: t('控制台正 1:1 跟随当前会话绑定的研发工作区', 'Following active session workspace 1:1'),
+                      }, t('跟随会话', 'Synced')))),
           canReopenOnboarding
             ? h('button', {
                 type: 'button',
                 className: 'rt-btn rt-btn-primary',
                 style: { padding: '2px 8px', fontSize: 11.5 },
-                title: '重新打开工作台初始化指引',
+                title: t('重新打开工作台初始化指引', 'Reopen onboarding guide'),
                 onClick: handleReopenOnboarding,
-              }, '重新指引')
+              }, t('重新指引', 'Reopen Setup'))
             : null,
           h('select', {
             className: 'rt-input',
             style: { maxWidth: '185px' },
             value: eng || (sid ? '__session_unbound__' : ((selectorOptions[0] && selectorOptions[0].value) || '')),
-            'aria-label': '切换研发工作区或关联已有项目',
+            'aria-label': t('切换研发工作区或关联已有项目', 'Switch or bind workspace'),
             onChange: (e) => {
               const next = e.target.value
               if (!next || next === '__session_unbound__') return
@@ -13750,45 +14363,47 @@ body[data-ds-dark-theme] .rt-anim-complete{
             : h('option', { value: '' }, currentEngName)),
           h('div', { className: 'rt-spacer' }),
           h(UiModeSwitcher, { compact: true }),
+          h(LocaleSwitcher, null),
           h(VersionBar, { onHostVersion: checkHostVersion }),
           full
-            ? h('button', { className: 'rt-btn', title: '退出全屏（Esc）', onClick: exitFull }, '退出全屏')
+            ? h('button', { className: 'rt-btn', title: t('退出全屏（Esc）', 'Exit fullscreen (Esc)'), onClick: exitFull }, t('退出全屏', 'Exit Full'))
             : null,
-          h('button', { className: 'rt-btn', title: '刷新当前数据', onClick: refreshAll }, '刷新'),
+          h('button', { className: 'rt-btn', title: t('刷新当前数据', 'Refresh'), onClick: refreshAll }, t('刷新', 'Refresh')),
           h('button', {
             type: 'button',
             className: 'rt-btn' + (st.tab === 'settings' ? ' rt-btn-primary' : ''),
-            title: '打开统一设置中心',
+            title: t('打开统一设置中心', 'Open unified settings'),
             onClick: () => goTab('settings'),
-          }, '设置'),
+          }, t('设置', 'Settings')),
           full ? null : h('button', {
             className: 'rt-btn',
-            title: isDesktopShell() ? '当前窗口全屏查看（Esc 退出）' : '新窗口打开',
+            title: isDesktopShell() ? t('当前窗口全屏查看（Esc 退出）', 'Open fullscreen view (Esc to exit)') : t('新窗口打开', 'Open in new window'),
             onClick: openFull,
-          }, '全面浏览'),
-          (full || embedMode) ? null : h('button', { className: 'rt-btn', title: '收起面板', onClick: () => setUI({ open: false }) }, '收起')),
+          }, t('全面浏览', 'Full View')),
+          (full || embedMode) ? null : h('button', { className: 'rt-btn', title: t('收起面板', 'Collapse panel'), onClick: () => setUI({ open: false }) }, t('收起', 'Close'))),
         hostVersionMismatch
           ? h('div', {
               className: 'rt-err rt-host-version-mismatch',
               role: 'alert',
               style: { margin: '6px 10px 0', fontSize: 12, fontWeight: 600 },
-            }, '检测到后端 Host 版本 (' + hostVersionMismatch + ') 与前端 (' + CLIENT_PLUGIN_VERSION + ') 不一致，请彻底退出并重启 DSH NEXT')
+            }, t('检测到后端 Host 版本 (' + hostVersionMismatch + ') 与前端 (' + CLIENT_PLUGIN_VERSION + ') 不一致，请彻底退出并重启 DSH NEXT',
+                'Host version (' + hostVersionMismatch + ') differs from client (' + CLIENT_PLUGIN_VERSION + '). Please quit and restart DSH NEXT.'))
           : null,
-        h('div', { className: 'rt-tabs rt-tabs-groups', role: 'navigation', 'aria-label': '控制台分区' },
+        h('div', { className: 'rt-tabs rt-tabs-groups', role: 'navigation', 'aria-label': t('控制台分区', 'Console Navigation') },
           TAB_GROUPS.map((g) => {
             const on = activeGroup.key === g.key
             const showCollabInitBadge = g.key === 'collab' && needsSessionInit
             const showCollabApprovalBadge = g.key === 'collab' && !showCollabInitBadge && pendingApprovalsCount > 0
             return h('div', Object.assign({}, clickable(() => goTab(g.tabs[0]), { label: g.label }), {
               key: g.key, className: 'rt-tab rt-tab-group' + (on ? ' on' : ''),
-              title: '切换到「' + g.label + '」分区',
+              title: t('切换到「', 'Switch to ') + g.label + t('」分区', ''),
             }),
               g.label,
               showCollabInitBadge
                 ? h('span', {
                     className: 'rt-tag rt-tag-warn',
                     style: { marginLeft: 5, padding: '0 5px', fontSize: 10, lineHeight: '15px' },
-                  }, '待初始化')
+                  }, t('待初始化', 'Setup'))
                 : (showCollabApprovalBadge
                     ? h('span', {
                         className: 'rt-tag rt-tag-live',
@@ -13800,65 +14415,116 @@ body[data-ds-dark-theme] .rt-anim-complete{
           className: 'rt-tabs rt-tabs-sub',
           role: 'tablist',
           style: activeGroup.tabs.length > 1 ? undefined : { display: 'none' },
-        }, tabs.map((t) => {
-          const visible = activeGroup.tabs.indexOf(t[0]) !== -1
-          return h('div', Object.assign({}, clickable(() => goTab(t[0]), { label: t[1] }), {
-            key: t[0], className: 'rt-tab' + (st.tab === t[0] ? ' on' : ''),
+        }, tabs.map((tabItem) => {
+          const visible = activeGroup.tabs.indexOf(tabItem[0]) !== -1
+          return h('div', Object.assign({}, clickable(() => goTab(tabItem[0]), { label: tabItem[1] }), {
+            key: tabItem[0], className: 'rt-tab' + (st.tab === tabItem[0] ? ' on' : ''),
             role: 'tab',
-            'aria-selected': st.tab === t[0] ? 'true' : 'false',
+            'aria-selected': st.tab === tabItem[0] ? 'true' : 'false',
             style: visible ? undefined : { display: 'none' },
-            title: unreadOf(t[0]) ? t[1] + '：有新内容，点开看过红点就会消失' : t[1],
-          }), t[1], unreadOf(t[0])
-            ? h('span', { className: 'rt-tab-dot', 'aria-label': '有新内容' })
+            title: unreadOf(tabItem[0]) ? tabItem[1] + t('：有新内容，点开看过红点就会消失', ': unread updates available') : tabItem[1],
+          }), tabItem[1], unreadOf(tabItem[0])
+            ? h('span', { className: 'rt-tab-dot', 'aria-label': t('有新内容', 'Unread updates') })
             : null)
         })),
         h('div', { className: 'rt-body' }, h(RtBoundary, { key: st.tab }, body)),
         h('div', { className: 'rt-foot' },
           h('span', { className: 'rt-wb-badge' },
-            st.uiMode === 'novice' ? 'LMTAgent · 协同工作台' : 'LMTAgent · 4-Wave DAG'),
+            st.uiMode === 'novice' ? t('LMTAgent · 协同工作台', 'LMTAgent · Collab Workbench') : 'LMTAgent · 4-Wave DAG'),
           h('div', { className: 'rt-spacer' }),
-          full ? h('span', null, 'Esc 退出全屏') : null,
+          full ? h('span', null, t('Esc 退出全屏', 'Esc to exit fullscreen')) : null,
           eng
-            ? h('span', null, (st.uiMode === 'novice' ? '工作区 · ' : 'PG/WAL · ') + currentEngName)
-            : h('span', null, isSessionDismissed ? '当前会话 · 独立空白态（未绑定工作区）' : '当前会话 · 待初始化工作区'),
+            ? h('span', null, (st.uiMode === 'novice' ? t('工作区 · ', 'Workspace · ') : 'PG/WAL · ') + currentEngName)
+            : h('span', null, isSessionDismissed ? t('当前会话 · 独立空白态（未绑定工作区）', 'Session · Clean Unbound State') : t('当前会话 · 待初始化工作区', 'Session · Workspace Setup Pending')),
           sid === null
             ? null
             : h('span', {
-                title: '当前会话 ' + sid + (sesTitle ? '（' + sesTitle + '）' : ''),
-              }, '会话 ' + sid.slice(0, 8) + (followSource && FOLLOW_SOURCE[followSource] ? ' · ' + FOLLOW_SOURCE[followSource] : ''))))
+                title: t('当前会话 ', 'Session ') + sid + (sesTitle ? ' (' + sesTitle + ')' : ''),
+              }, t('会话 ', 'Session ') + sid.slice(0, 8) + (followSource ? ' · ' + followSourceLabel(followSource) : ''))))
+    }
+
+    function LocaleSwitcher() {
+      const loc = useLocale()
+      return h('div', {
+        className: 'rt-mode-switch rt-locale-switch',
+        role: 'group',
+        'aria-label': t('界面语言切换', 'UI Language Switcher'),
+      },
+        h('button', {
+          type: 'button',
+          className: 'rt-mode-btn' + (loc !== 'en-US' ? ' on' : ''),
+          title: '切换为简体中文',
+          onClick: () => setLocale('zh-CN'),
+        }, '中文'),
+        h('button', {
+          type: 'button',
+          className: 'rt-mode-btn' + (loc === 'en-US' ? ' on' : ''),
+          title: 'Switch to English',
+          onClick: () => setLocale('en-US'),
+        }, 'EN'))
     }
 
     function SidebarButton() {
+      useLocale()
       const st = useUI()
       return h('button', {
         className: 'rt-icon-btn' + (st.open ? ' on' : ''),
-        title: 'LMTAgent 研发控制台（常驻右侧栏）',
+        title: t('LMTAgent 研发控制台（常驻右侧栏）', 'LMTAgent Console (Right Dock)'),
         onClick: () => setUI({ open: !st.open }),
-      }, h('span', { style: { fontSize: 14 } }, '⚡'))
+      }, h('svg', {
+        width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none',
+        stroke: 'currentColor', strokeWidth: 1.6, 'aria-hidden': 'true',
+      },
+        h('rect', { x: 2, y: 2, width: 5, height: 5, rx: 1 }),
+        h('rect', { x: 9, y: 2, width: 5, height: 5, rx: 1 }),
+        h('rect', { x: 2, y: 9, width: 5, height: 5, rx: 1 }),
+        h('rect', { x: 9, y: 9, width: 5, height: 5, rx: 1 })))
     }
 
     function HeaderButton(props) {
+      useLocale()
       const st = useUI()
       const sid = sessionIdOf(props)
       const title = sessionTitleOf(props)
       React.useEffect(() => { if (sid || title) setSessionId(sid, title) }, [sid, title])
       return h('button', {
         className: 'rt-hbtn' + (st.open ? ' on' : ''),
-        title: 'LMTAgent 研发控制台（切换右侧常驻工作台）',
+        title: t('LMTAgent 研发控制台（切换右侧常驻工作台）', 'LMTAgent Console (Toggle Dock)'),
         onClick: () => setUI({ open: !st.open }),
-      }, '⚡ LMTAgent 控制台')
+      }, t('LMTAgent 控制台', 'LMTAgent Console'))
+    }
+
+    function SettingsSlotSection() {
+      useLocale()
+      return h('div', { style: { margin: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
+          h('div', null,
+            h('div', { style: { fontWeight: 700, fontSize: 13 } }, t('LMTAgent 统一设置中心', 'LMTAgent Unified Settings')),
+            h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
+              t('AI 规划、并发派发、存储、飞书与界面偏好', 'AI Planning, Concurrency, Storage, Feishu & UI Preferences'))),
+          h('button', {
+            type: 'button',
+            className: 'rt-btn rt-btn-primary',
+            onClick: () => setUI({ open: true, tab: 'settings' }),
+          }, t('打开完整控制台', 'Open Full Console'))),
+        typeof SettingsHubTab === 'function'
+          ? h(SettingsHubTab, {
+              compact: true,
+              onGo: (tab) => setUI({ open: true, tab: tab || 'settings' }),
+            })
+          : null)
     }
 
     const inject = ['slots']
 
     function apply(ctx) {
       const styleTag = document.createElement('style')
-      styleTag.setAttribute('data-redteam-ui', '1')
+      styleTag.setAttribute('data-lmtagent-ui', '1')
       styleTag.textContent = CSS
       document.head.append(styleTag)
 
       const widthTag = document.createElement('style')
-      widthTag.setAttribute('data-redteam-ui-width', '1')
+      widthTag.setAttribute('data-lmtagent-ui-width', '1')
       widthTag.textContent = ':root{--rt-dock-w:540px}'
       document.head.append(widthTag)
       dockWidthTag = widthTag
@@ -13870,7 +14536,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
       })
 
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(
-        { name: 'shell.overlay', id: 'redteam-console', order: 50 },
+        { name: 'shell.overlay', id: 'lmtagent-console', order: 50 },
         () => h(Panel),
       ))
 
@@ -13879,46 +14545,30 @@ body[data-ds-dark-theme] .rt-anim-complete{
         (props) => h(Panel, Object.assign({ embedMode: 'main' }, props)),
       ))
       ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(
-        { name: 'sidebar.panellist', id: 'lmtagent-panellist', key: 'lmtagent-workbench', label: 'LMTAgent 控制台', order: 35 },
+        { name: 'sidebar.panellist', id: 'lmtagent-panellist', key: 'lmtagent-workbench', label: t('LMTAgent 控制台', 'LMTAgent Console'), order: 35 },
         (props) => h(SidebarButton, props),
       ))
 
       ctx.slots.inject('conversation.view', () => ctx.slots.register(
-        { name: 'conversation.view', id: 'lmtagent-view', key: 'lmtagent-view', label: '⚡ LMTAgent 研发台', order: 45 },
+        { name: 'conversation.view', id: 'lmtagent-view', key: 'lmtagent-view', label: 'LMTAgent Workbench', order: 45 },
         (props) => h(Panel, Object.assign({ embedMode: 'session' }, props)),
       ))
 
       ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
-        { name: 'conversation.session.header.utilities', id: 'redteam-header-toggle', order: 50, label: 'LMTAgent' },
+        { name: 'conversation.session.header.utilities', id: 'lmtagent-header-toggle', order: 50, label: 'LMTAgent' },
         (props) => h(HeaderButton, props),
       ))
 
       ctx.slots.inject('settings.section', () => ctx.slots.register(
-        { name: 'settings.section', id: 'lmtagent-settings', order: 50, label: 'LMTAgent 研发集群' },
-        () => h('div', { style: { margin: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
-            h('div', null,
-              h('div', { style: { fontWeight: 700, fontSize: 13 } }, 'LMTAgent 统一设置中心'),
-              h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
-                'AI 规划、并发派发、存储、飞书与界面偏好')),
-            h('button', {
-              type: 'button',
-              className: 'rt-btn rt-btn-primary',
-              onClick: () => setUI({ open: true, tab: 'settings' }),
-            }, '打开完整控制台')),
-          typeof SettingsHubTab === 'function'
-            ? h(SettingsHubTab, {
-                compact: true,
-                onGo: (tab) => setUI({ open: true, tab: tab || 'settings' }),
-              })
-            : null),
+        { name: 'settings.section', id: 'lmtagent-settings', order: 50, label: t('LMTAgent 研发集群', 'LMTAgent Cluster') },
+        () => h(SettingsSlotSection),
       ))
 
       try {
         if (ctx.betterSidebar && typeof ctx.betterSidebar.registerItem === 'function') {
           ctx.betterSidebar.registerItem({
             id: 'lmtagent-workbench',
-            label: 'LMTAgent 控制台',
+            label: t('LMTAgent 控制台', 'LMTAgent Console'),
             order: 35,
             onClick: () => setUI({ open: !ui.open }),
           })
@@ -13933,6 +14583,10 @@ body[data-ds-dark-theme] .rt-anim-complete{
     exports.engagementByTitle = engagementByTitle
     exports.renderInline = renderInline
     exports.Markdown = Markdown
+    exports.getLocale = getLocale
+    exports.setLocale = setLocale
+    exports.syncLocaleFromSettings = syncLocaleFromSettings
+    exports.t = t
     return module.exports
   },
 })

@@ -8,65 +8,89 @@
         role: 'plan',
         badge: '⓪ plan Captain',
         title: '主控指挥（主会话调度）',
+        titleEn: 'Lead Orchestrator (Main Session)',
         wave: 'Wave 0–4 全程中枢',
+        waveEn: 'Wave 0-4 Hub',
         skills: ['/dag-orchestrate', '/slot-gate', '/pg-sync'],
         desc: '拆解用户意图、按 4-Wave DAG 调度 6 并发槽、核对事实库并汇总汇报，不直接改业务文件。',
+        descEn: 'Decomposes user intent, schedules 6 parallel slots over 4-Wave DAG, verifies state DB and summarizes progress without direct code edits.',
       },
       {
         role: 'recon',
         badge: '① recon CEO',
         title: '产品与需求规划（信息收集）',
+        titleEn: 'Product & Scope Planning (Discovery)',
         wave: 'Wave 1 · Slot #1',
+        waveEn: 'Wave 1 · Slot #1',
         skills: ['/office-hours', '/plan-ceo-review'],
         desc: '全量业务模块与资产拓扑测绘，标注 P0/P1 优先级线索与产品验收口径。',
+        descEn: 'Maps full module & asset topology, tags P0/P1 clues and defines product acceptance criteria.',
       },
       {
         role: 'designer',
         badge: '② designer Designer',
         title: '交互与视觉设计',
+        titleEn: 'Interaction & Visual Design',
         wave: 'Wave 1 · Slot #2',
+        waveEn: 'Wave 1 · Slot #2',
         skills: ['/plan-design-review', '/design-shotgun'],
         desc: 'DSH Desktop 模块化 Bento 组件树、设计令牌（#4D6BFE）与有数据/空态/报错三态交互规范。',
+        descEn: 'DSH Desktop Bento component tree, design tokens (#4D6BFE), and data/empty/error UI state specifications.',
       },
       {
         role: 'assess',
         badge: '③ assess Eng Manager',
         title: '系统架构与排期',
+        titleEn: 'Architecture & Scheduling',
         wave: 'Wave 2 · 1 槽契约锁',
+        waveEn: 'Wave 2 · 1-Slot Contract Lock',
         skills: ['/plan-eng-review', '/file-disjoint-shard'],
         desc: '冻结模块接口契约、依赖拓扑与 6 并发无冲突文件分片（File-Disjoint Sharding）。',
+        descEn: 'Freezes interface contracts, dependency topology, and conflict-free File-Disjoint Sharding for 6 parallel workers.',
       },
       {
         role: 'vuln-scan',
         badge: '④ vuln-scan Reviewer & CSO',
         title: '代码审查与安全门禁',
+        titleEn: 'Code Review & Security Gate',
         wave: 'Wave 4 · Gate #1',
+        waveEn: 'Wave 4 · Gate #1',
         skills: ['/review', '/cso'],
         desc: '静态代码缺陷审查、OWASP/STRIDE 安全门禁与凭据零明文泄露审计。',
+        descEn: 'Static defect review, OWASP/STRIDE security gates, and zero-plaintext secret audit.',
       },
       {
         role: 'exploit',
         badge: '⑤ exploit 6× Builder',
         title: '全栈研发与分片构建',
+        titleEn: 'Full-Stack Sharded Build',
         wave: 'Wave 3 · 6 槽满载',
+        waveEn: 'Wave 3 · 6 Parallel Slots',
         skills: ['/parallel-build', '/subagent-spawn'],
         desc: 'Wave 3 主力 6 槽并发编码实现、单测自检与深度验证；遇微问题可递归派生子代理。',
+        descEn: 'Wave 3 full 6-slot parallel implementation, unit testing, and verification; spawns child helpers as needed.',
       },
       {
         role: 'qa',
         badge: '⑥ qa QA Lead',
         title: '质量保障与自动化回归',
+        titleEn: 'QA & Automated Regression',
         wave: 'Wave 4 · Gate #2',
+        waveEn: 'Wave 4 · Gate #2',
         skills: ['/qa', '/benchmark'],
         desc: '全量测试套件、浏览器端到端回归、性能基线测试与高分成果独立复核。',
+        descEn: 'Full test suite, E2E browser regression, performance benchmarks, and independent high-value milestone verification.',
       },
       {
         role: 'internal',
         badge: '⑦ internal Doc & Release',
         title: '文档工程与归档发布',
+        titleEn: 'Docs & Release Engineering',
         wave: 'Wave 4 · Release',
+        waveEn: 'Wave 4 · Release',
         skills: ['/ship', '/document-release'],
         desc: '文稿墙（Doc Wall）同步、版本归档、飞书群聊机器人推送与闭环交付报告生成。',
+        descEn: 'Doc Wall sync, release archiving, Feishu group notifications, and closed-loop delivery report generation.',
       },
     ]
 
@@ -106,6 +130,7 @@
     }
 
     function ClusterP5Tree(props) {
+      useLocale()
       const eng = props.engagement || null
       const agents = props.agents || {}
       const [filter, setFilter] = React.useState('all')
@@ -142,7 +167,6 @@
             wave: item.wave || '',
             goal: String(item.assigned_goal || item.goal || item.objective || '').trim(),
             status: isError ? 'error' : (isRunning ? 'running' : 'done'),
-            statusLabel: isError ? '异常' : (isRunning ? '运行中' : '已完成'),
             sessionId,
             color: isError ? '#ef4444' : (isRunning ? '#3b82f6' : '#10b981'),
           })
@@ -211,12 +235,13 @@
       return h('div', { className: 'rt-p5-board', style: { display: 'flex', flexDirection: 'column', gap: 10 } },
         h('div', { className: 'rt-p5-topbar' },
           h('span', { style: { fontWeight: 700, fontSize: 12.5 } },
-            '团队任务板 · ' + (1 + children.length) + ' 成员 · ' + runningCount + ' 运行中'),
+            t('团队任务板 · ' + (1 + children.length) + ' 成员 · ' + runningCount + ' 运行中',
+              'Team Board · ' + (1 + children.length) + ' members · ' + runningCount + ' running')),
           h('div', { className: 'rt-p5-filters' },
             [
-              { k: 'all', lbl: '全部' },
-              { k: 'lead', lbl: '主代理 Captain' },
-              { k: 'sub', lbl: '子代理 (' + children.length + ')' },
+              { k: 'all', lbl: t('全部', 'All') },
+              { k: 'lead', lbl: t('主代理 Captain', 'Lead Captain') },
+              { k: 'sub', lbl: t('子代理', 'Subagents') + ' (' + children.length + ')' },
             ].map((fp) => h('button', {
               key: 'p5f-' + fp.k,
               type: 'button',
@@ -225,7 +250,7 @@
             }, fp.lbl))),
           h('div', { className: 'rt-spacer' }),
           h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
-            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, '树状图'),
+            h('span', { style: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)' } }, t('树状图', 'Tree')),
             h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom((z) => Math.max(70, z - 10)) }, '-'),
             h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom(100) }, zoom + '%'),
             h('button', { type: 'button', className: 'rt-btn', style: { padding: '1px 7px', fontSize: 11 }, onClick: () => setZoom((z) => Math.min(130, z + 10)) }, '+'))),
@@ -279,49 +304,53 @@
                       },
                     },
                       h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-                        h('span', { className: 'rt-p5-pill', style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999 } }, '主代理'),
-                        h('strong', { style: { fontSize: 12.5 } }, 'Captain 主控架构师'),
+                        h('span', { className: 'rt-p5-pill', style: { background: '#3b82f6', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999 } }, t('主代理', 'Lead')),
+                        h('strong', { style: { fontSize: 12.5 } }, t('Captain 主控架构师', 'Captain Lead Architect')),
                         h('div', { className: 'rt-spacer' }),
-                        h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? '协调中' : '就绪')),
+                        h('span', { className: 'rt-tag rt-tag-live', style: { margin: 0 } }, runningCount > 0 ? t('协调中', 'Orchestrating') : t('就绪', 'Ready'))),
                       h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
-                        '工作区 ' + eng + ' · 统筹 4-Wave 分片调度与摘要审批'),
+                        t('工作区 ', 'Workspace ') + eng + t(' · 统筹 4-Wave 分片调度与摘要审批', ' · 4-Wave shard scheduling & digest gate')),
                       showChildren.length > 0 ? h('span', { className: 'rt-tree-port rt-tree-port-bottom' }) : null))
                 : null,
               showChildren.length > 0
                 ? h('div', { className: 'rt-p5-branches-grid' },
-                    showChildren.map((c) => h('div', Object.assign({
-                      key: 'p5c-' + c.id,
-                      ref: (el) => {
-                        if (el) childRefs.current[c.id] = el
-                        else delete childRefs.current[c.id]
-                      },
-                      className: 'rt-p5-node',
-                      style: {
-                        position: 'relative',
-                        border: '1.5px solid ' + c.color,
-                        borderRadius: 10,
-                        padding: '10px 12px',
-                        background: 'var(--dsw-alias-bg-layer-1)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 5,
-                        cursor: c.sessionId ? 'pointer' : 'default',
-                      },
-                    }, c.sessionId ? clickable(() => { openAgentSessionInHostChat(c.sessionId, c.title) }, { label: '打开子代理 ' + c.title }) : {}),
-                      showRoot ? h('span', { className: 'rt-tree-port rt-tree-port-top' }) : null,
-                      h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
-                        h('span', { className: 'rt-p5-pill', style: { background: c.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999 } }, c.role),
-                        c.wave ? h('span', { className: 'rt-tag rt-tag-passive', style: { margin: 0 } }, c.wave) : null,
-                        h('div', { className: 'rt-spacer' }),
-                        h('span', { style: { fontSize: 10.5, fontWeight: 600, color: c.color } }, c.statusLabel)),
-                      h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, c.title),
-                      c.goal ? h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.45 } }, c.goal) : null)))
+                    showChildren.map((c) => {
+                      const cStatusLabel = c.status === 'error' ? t('异常', 'Error') : (c.status === 'running' ? t('运行中', 'Running') : t('已完成', 'Done'))
+                      return h('div', Object.assign({
+                        key: 'p5c-' + c.id,
+                        ref: (el) => {
+                          if (el) childRefs.current[c.id] = el
+                          else delete childRefs.current[c.id]
+                        },
+                        className: 'rt-p5-node',
+                        style: {
+                          position: 'relative',
+                          border: '1.5px solid ' + c.color,
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          background: 'var(--dsw-alias-bg-layer-1)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 5,
+                          cursor: c.sessionId ? 'pointer' : 'default',
+                        },
+                      }, c.sessionId ? clickable(() => { openAgentSessionInHostChat(c.sessionId, c.title) }, { label: t('打开子代理 ', 'Open subagent ') + c.title }) : {}),
+                        showRoot ? h('span', { className: 'rt-tree-port rt-tree-port-top' }) : null,
+                        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+                          h('span', { className: 'rt-p5-pill', style: { background: c.color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999 } }, c.role),
+                          c.wave ? h('span', { className: 'rt-tag rt-tag-passive', style: { margin: 0 } }, c.wave) : null,
+                          h('div', { className: 'rt-spacer' }),
+                          h('span', { style: { fontSize: 10.5, fontWeight: 600, color: c.color } }, cStatusLabel)),
+                        h('div', { style: { fontWeight: 700, fontSize: 12.5 } }, c.title),
+                        c.goal ? h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', lineHeight: 1.45 } }, c.goal) : null)
+                    }))
                 : filter !== 'lead'
-                    ? h('div', { className: 'rt-empty', style: { width: '100%' } }, '尚无已派发的子代理任务。')
+                    ? h('div', { className: 'rt-empty', style: { width: '100%' } }, t('尚无已派发的子代理任务。', 'No subagent tasks dispatched yet.'))
                     : null))))
     }
 
     function AgentsTab(props) {
+      useLocale()
       const eng = props.engagement
       const sid = props.sessionId || null
       const refreshKey = props.refreshKey || 0
@@ -341,7 +370,7 @@
         }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) {
-            setErr((r && r.error) || '读取集群并发状态失败')
+            setErr((r && r.error) || t('读取集群并发状态失败', 'Failed to load cluster concurrency status'))
             return
           }
           setErr(null)
@@ -389,54 +418,54 @@
         if (!Number.isFinite(parsed)) return
         const clamped = Math.max(1, Math.min(limit, Math.floor(parsed)))
         setConcurrency((prev) => Object.assign({}, prev || {}, { max: clamped, source: 'settings' }))
-        setCtrlMsg('正在调整并发槽上限为 ' + clamped + ' 槽…')
+        setCtrlMsg(t('正在调整并发槽上限为 ' + clamped + ' 槽…', 'Updating slot limit to ' + clamped + '…'))
         api({ op: 'setAgentsMax', max: clamped }).then((r) => {
           if (r && r.ok !== false) {
-            setCtrlMsg('已生效：并发槽上限 ' + (r.max || clamped) + ' 槽')
+            setCtrlMsg(t('已生效：并发槽上限 ' + (r.max || clamped) + ' 槽', 'Applied: max ' + (r.max || clamped) + ' slots'))
             load()
           } else {
-            setCtrlMsg((r && r.error) || '调整并发槽失败')
+            setCtrlMsg((r && r.error) || t('调整并发槽失败', 'Failed to update slot limit'))
           }
         }, (e) => setCtrlMsg(String((e && e.message) || e)))
       }
 
       const presets = [
-        { n: 3, label: '3 槽' },
-        { n: 6, label: '6 槽 (推荐)' },
-        { n: 8, label: '8 槽' },
-        { n: 12, label: '12 槽' },
+        { n: 3, label: t('3 槽', '3 Slots') },
+        { n: 6, label: t('6 槽 (推荐)', '6 Slots (Rec)') },
+        { n: 8, label: t('8 槽', '8 Slots') },
+        { n: 12, label: t('12 槽', '12 Slots') },
       ]
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '智能体与并发'),
+          h('span', { style: { fontWeight: 600 } }, t('智能体与并发', 'Agents & Concurrency')),
           h('span', {
             className: 'rt-tag' + (activeCount >= max ? ' rt-tag-warn' : (activeCount > 0 ? ' rt-tag-live' : ' rt-tag-passive')),
-          }, '并发槽 ' + activeCount + '/' + max),
+          }, t('并发槽 ', 'Slots ') + activeCount + '/' + max),
           h('span', {
             className: 'rt-tag rt-tag-live',
-            title: '子智能体超过 3 分钟无心跳自动回收槽位租约；文件分片由排他锁守护',
-          }, '3min 无心跳自动回收 · 分片排他锁'),
+            title: t('子智能体超过 3 分钟无心跳自动回收槽位租约；文件分片由排他锁守护', 'Auto-reclaim stale slots after 3m without heartbeat; shards protected by exclusive locks'),
+          }, t('3min 无心跳自动回收 · 分片排他锁', '3m Stale Reclaim · Exclusive Shard Locks')),
           h('div', { className: 'rt-spacer' }),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             onClick: () => { if (typeof props.onGo === 'function') props.onGo('prompts') },
-          }, '角色与提示词 →'),
+          }, t('角色与提示词 →', 'Roles & Prompts →')),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             disabled: busy,
             onClick: load,
-          }, busy ? '读取中…' : '刷新')),
+          }, busy ? t('读取中…', 'Loading…') : t('刷新', 'Refresh'))),
         h('div', { className: 'rt-pane' },
           err ? h('div', { className: 'rt-err' }, err) : null,
           h('div', { className: 'rt-card', style: { padding: '10px 12px' } },
             h('div', { className: 'rt-p3-ctrl', style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
-              h('span', { style: { fontSize: 12, fontWeight: 700 } }, '并发数量与租约控制'),
-              h('div', { className: 'rt-p3-stepper', title: '调节并发槽位 (1–' + limit + ')' },
+              h('span', { style: { fontSize: 12, fontWeight: 700 } }, t('并发数量与租约控制', 'Concurrency & Lease Control')),
+              h('div', { className: 'rt-p3-stepper', title: t('调节并发槽位 (1–' + limit + ')', 'Adjust concurrency slots (1-' + limit + ')') },
                 h('button', { type: 'button', className: 'rt-p3-step-btn', disabled: max <= 1, onClick: () => applySlotMax(max - 1) }, '-'),
-                h('span', { className: 'rt-p3-step-val' }, max + ' 槽'),
+                h('span', { className: 'rt-p3-step-val' }, max + t(' 槽', ' slots')),
                 h('button', { type: 'button', className: 'rt-p3-step-btn', disabled: max >= limit, onClick: () => applySlotMax(max + 1) }, '+')),
               h('div', { className: 'rt-p3-pills' },
                 presets.map((p) => h('button', {
@@ -445,18 +474,18 @@
                   className: 'rt-p3-pill' + (max === p.n ? ' on' : ''),
                   onClick: () => applySlotMax(p.n),
                 }, p.label))),
-              h('span', { className: 'rt-tag rt-tag-passive' }, '深度 ' + maxDepth + ' · 思考 ' + thinking),
+              h('span', { className: 'rt-tag rt-tag-passive' }, t('深度 ', 'Depth ') + maxDepth + t(' · 思考 ', ' · Thinking ') + thinking),
               h('button', {
                 type: 'button',
                 className: 'rt-btn',
                 onClick: () => { if (typeof props.onGo === 'function') props.onGo('settings') },
-              }, '在设置页调整全部参数 →'),
+              }, t('在设置页调整全部参数 →', 'All Settings →')),
               h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)', marginLeft: 'auto' } },
-                '同一项目',
-                h('b', { style: { color: 'var(--dsw-alias-label-primary)' } }, '同时最多 ' + max + ' 个执行智能体'),
-                ' · 经 ',
-                h('code', { className: 'rt-code-inline' }, 'redteam_agent_slot'),
-                ' 核验')),
+                t('同一项目', 'Max '),
+                h('b', { style: { color: 'var(--dsw-alias-label-primary)' } }, t('同时最多 ' + max + ' 个执行智能体', max + ' parallel agents per workspace')),
+                t(' · 经 ', ' · verified via '),
+                h('code', { className: 'rt-code-inline' }, 'lmt_agent_slot'),
+                t(' 核验', ''))),
             ctrlMsg ? h('div', { style: { fontSize: 11, color: '#2563eb', marginTop: 6, fontWeight: 600 } }, ctrlMsg) : null),
           h(ClusterP5Tree, {
             engagement: eng,
@@ -479,6 +508,7 @@
      *   · 与实时拓扑页签彻底解耦，避免单页堆叠过深
      */
     function RolePromptsHubTab(props) {
+      useLocale()
       const eng = props.engagement
       const refreshKey = props.refreshKey || 0
       const [roles, setRoles] = React.useState(null)
@@ -496,7 +526,7 @@
         api({ op: 'prompts', engagement: eng }).then((r) => {
           setBusy(false)
           if (!r || r.ok === false) {
-            setErr((r && r.error) || '读取角色提示词失败')
+            setErr((r && r.error) || t('读取角色提示词失败', 'Failed to load role prompts'))
             return
           }
           setErr(null)
@@ -513,26 +543,26 @@
 
       return h('div', { className: 'rt-main' },
         h('div', { className: 'rt-toolbar' },
-          h('span', { style: { fontWeight: 600 } }, '角色与提示词（8 角色 gstack 编队）'),
-          h('span', { className: 'rt-tag rt-tag-passive' }, '当前角色 · ' + openRole + '.md'),
+          h('span', { style: { fontWeight: 600 } }, t('角色与提示词（8 角色 gstack 编队）', 'Roles & Prompts (8-Role gstack Roster)')),
+          h('span', { className: 'rt-tag rt-tag-passive' }, t('当前角色 · ', 'Active · ') + openRole + '.md'),
           h('div', { className: 'rt-spacer' }),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             onClick: () => { if (typeof props.onGo === 'function') props.onGo('agents') },
-          }, '← 返回智能体与并发'),
+          }, t('← 返回智能体与并发', '← Back to Agents & Slots')),
           h('button', {
             type: 'button',
             className: 'rt-btn',
             disabled: busy || !eng,
             onClick: load,
-          }, busy ? '读取中…' : '刷新')),
+          }, busy ? t('读取中…', 'Loading…') : t('刷新', 'Refresh'))),
         h('div', { className: 'rt-pane' },
           err ? h('div', { className: 'rt-err' }, err) : null,
           h('div', { className: 'rt-card' },
             h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 } },
-              h('h4', { style: { margin: 0 } }, '8 角色 gstack 编队'),
-              h('span', { className: 'rt-wb-recurse-tag' }, '按工作区持久化模板')),
+              h('h4', { style: { margin: 0 } }, t('8 角色 gstack 编队', '8-Role gstack Roster')),
+              h('span', { className: 'rt-wb-recurse-tag' }, t('按工作区持久化模板', 'Persisted per workspace'))),
             h('div', { className: 'rt-wb-role-grid' },
               GSTACK_ROLE_ROSTER.map((r) => {
                 const isSelected = openRole === r.role
@@ -541,39 +571,40 @@
                   key: 'rc-' + r.role,
                   className: 'rt-wb-role-card' + (isSelected ? ' on' : ''),
                 }, clickable(() => { setOpenRole(r.role) }, {
-                  label: '选择并编辑角色 ' + r.badge + ' 提示词',
+                  label: t('选择并编辑角色 ', 'Select role ') + r.badge + t(' 提示词', ' prompt'),
                   expanded: isSelected,
                 })),
                   h('div', { className: 'rt-wb-role-top' },
                     h('span', { className: 'rt-wb-role-badge' }, r.badge),
-                    h('span', { className: 'rt-tag rt-tag-passive' }, r.wave)),
-                  h('div', { className: 'rt-wb-role-title' }, r.title + (roleData && roleData.stale ? '（旧版可升级）' : '')),
-                  h('div', { className: 'rt-wb-role-desc' }, r.desc),
+                    h('span', { className: 'rt-tag rt-tag-passive' }, t(r.wave, r.waveEn))),
+                  h('div', { className: 'rt-wb-role-title' }, t(r.title, r.titleEn) + (roleData && roleData.stale ? t('（旧版可升级）', ' (legacy)') : '')),
+                  h('div', { className: 'rt-wb-role-desc' }, t(r.desc, r.descEn)),
                   h('div', { className: 'rt-wb-role-tags' },
                     r.skills.map((sk) => h('span', { key: sk, className: 'rt-wb-skill-tag' }, sk))),
                   h('div', { className: 'rt-wb-role-edit' },
-                    isSelected ? '当前 · ' + r.role + '.md' : '编辑 ' + r.role + '.md →'))
+                    isSelected ? t('当前 · ', 'Active · ') + r.role + '.md' : t('编辑 ', 'Edit ') + r.role + '.md →'))
               }))),
           eng
             ? h('div', { className: 'rt-card' },
                 h('div', { style: { fontSize: 12, fontWeight: 600, marginBottom: 6 } },
-                  '角色提示词 · ' + eng + ' · ' + openRole + '.md'),
+                  t('角色提示词 · ', 'Role Prompt · ') + eng + ' · ' + openRole + '.md'),
                 h(PromptsTab, { engagement: eng, refreshKey: refreshKey, selectedRole: openRole }))
             : h('div', { className: 'rt-card' },
-                h('h4', { style: { marginTop: 0 } }, '当前会话尚未初始化工作区'),
+                h('h4', { style: { marginTop: 0 } }, t('当前会话尚未初始化工作区', 'No Workspace Initialized')),
                 h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10, lineHeight: 1.55 } },
-                  '初始化当前会话工作台后，可按工作区独立编辑各角色提示词。'),
+                  t('初始化当前会话工作台后，可按工作区独立编辑各角色提示词。', 'Initialize a workspace for this session to edit per-workspace role prompts.')),
                 h('button', {
                   type: 'button',
                   className: 'rt-btn rt-btn-primary',
                   onClick: () => { if (typeof props.onGo === 'function') props.onGo('collab') },
-                }, '前往「协同与审批」初始化 →'))))
+                }, t('前往「协同与审批」初始化 →', 'Go to Collab & Approval →')))))
     }
 
     /**
      * 版本显示 + 自动更新按钮（带卸载清理的倒计时定时器，杜绝组件卸载后泄露）。
      */
     function VersionBar(props) {
+      useLocale()
       const [info, setInfo] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [open, setOpen] = React.useState(false)
@@ -628,8 +659,8 @@
         setMsg(null)
         api({ op: 'updateApply', target: (info && info.latest) || undefined }).then((r) => {
           setBusy(false)
-          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || '更新失败' }); return }
-          setMsg({ ok: '已安装 ' + (r.installed || '') + '，正在重启 dsh web…' })
+          if (!r || r.ok === false) { setMsg({ err: (r && r.error) || t('更新失败', 'Update failed') }); return }
+          setMsg({ ok: t('已安装 ' + (r.installed || '') + '，正在重启 dsh web…', 'Installed ' + (r.installed || '') + ', restarting dsh web…') })
           clearCountdownTimer()
           setCountdown(6)
           countdownTimerRef.current = setInterval(() => {
@@ -655,55 +686,55 @@
       return h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
         h('span', {
           className: 'rt-tag' + (hasNew ? ' rt-tag-warn' : ''),
-          title: ('当前版本 ' + (current || '未知') + (latest ? '\n最新版本 ' + latest : '')
-            + ((mode === 'dev' || mode === 'source') ? '\n安装方式：本地源码（未走包管理器）' : mode === 'package' ? '\n安装方式：包安装' : '')
-            + (info && info.check_error ? '\n检查失败：' + info.check_error : '')),
+          title: (t('当前版本 ', 'Current version ') + (current || t('未知', 'unknown')) + (latest ? t('\n最新版本 ', '\nLatest ') + latest : '')
+            + ((mode === 'dev' || mode === 'source') ? t('\n安装方式：本地源码（未走包管理器）', '\nInstall: local source') : mode === 'package' ? t('\n安装方式：包安装', '\nInstall: package') : '')
+            + (info && info.check_error ? t('\n检查失败：', '\nCheck failed: ') + info.check_error : '')),
         }, 'v' + (current || '?')),
         hasNew
           ? h('button', {
               className: 'rt-btn rt-btn-primary', disabled: busy,
               onClick: () => { setOpen(true); setMsg(null) },
-              title: '发现新版本 ' + latest + '：点击查看并一键更新（会重启 dsh web）',
-            }, busy ? '检查中…' : '有新版本 v' + latest)
+              title: t('发现新版本 ' + latest + '：点击查看并一键更新（会重启 dsh web）', 'New version ' + latest + ' available; click to update and restart dsh web'),
+            }, busy ? t('检查中…', 'Checking…') : t('有新版本 v', 'Update v') + latest)
           : h('button', {
               className: 'rt-btn', disabled: busy, onClick: () => check(false),
-              title: '重新检查 npm 上的最新版本',
-            }, busy ? '检查中…' : '检查更新'),
+              title: t('重新检查 npm 上的最新版本', 'Check latest version on npm'),
+            }, busy ? t('检查中…', 'Checking…') : t('检查更新', 'Check Update')),
         open
           ? h('div', { className: 'rt-modal', 'aria-hidden': 'true', onClick: () => setOpen(false) },
               h('div', { className: 'rt-modal-box', onClick: (e) => e.stopPropagation() },
-                h('h4', { style: { marginTop: 0 } }, '更新 LMTAgent 研发控制台'),
-                h('div', { className: 'rt-kv' }, h('b', null, '开源仓库'), h('span', { className: 'rt-mono' }, 'ECCVIK/LMTAgent')),
-                h('div', { className: 'rt-kv' }, h('b', null, '当前版本'), h('span', null, current || '未知')),
-                h('div', { className: 'rt-kv' }, h('b', null, '最新版本'), h('span', null, latest || '未知')),
-                h('div', { className: 'rt-kv' }, h('b', null, '安装方式'),
-                  h('span', null, (mode === 'dev' || mode === 'source') ? '本地源码' : mode === 'package' ? '包安装（' + ((info.install && info.install.packageManager) || 'npm') + '）' : '未知')),
+                h('h4', { style: { marginTop: 0 } }, t('更新 LMTAgent 研发控制台', 'Update LMTAgent Console')),
+                h('div', { className: 'rt-kv' }, h('b', null, t('开源仓库', 'Repository')), h('span', { className: 'rt-mono' }, 'ECCVIK/LMTAgent')),
+                h('div', { className: 'rt-kv' }, h('b', null, t('当前版本', 'Current')), h('span', null, current || t('未知', 'Unknown'))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('最新版本', 'Latest')), h('span', null, latest || t('未知', 'Unknown'))),
+                h('div', { className: 'rt-kv' }, h('b', null, t('安装方式', 'Install Mode')),
+                  h('span', null, (mode === 'dev' || mode === 'source') ? t('本地源码', 'Local source') : mode === 'package' ? t('包安装（', 'Package (') + ((info.install && info.install.packageManager) || 'npm') + ')' : t('未知', 'Unknown'))),
                 info && info.install && info.install.dir
-                  ? h('div', { className: 'rt-kv' }, h('b', null, '安装位置'), h('span', { className: 'rt-mono' }, info.install.dir))
+                  ? h('div', { className: 'rt-kv' }, h('b', null, t('安装位置', 'Location')), h('span', { className: 'rt-mono' }, info.install.dir))
                   : null,
                 blockers.length
                   ? h('div', { className: 'rt-hint' },
-                      h('div', { style: { fontWeight: 600, marginBottom: 4 } }, '现在不能更新：'),
+                      h('div', { style: { fontWeight: 600, marginBottom: 4 } }, t('现在不能更新：', 'Update blocked:')),
                       blockers.map((b, i) => h('div', { key: 'b' + i }, '· ' + b)))
                   : null,
                 notes.length
                   ? h('div', { className: 'rt-foot', style: { padding: '4px 0' } }, notes.map((n, i) => h('div', { key: 'n' + i }, n)))
                   : null,
                 h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', margin: '8px 0' } },
-                  '更新过程：安装新版本 → 自动重启 dsh web（当前页面会断开，约 5–10 秒后自动刷新）。'
-                  + '重启前会检查有没有智能体在跑，有就拦住不动。'),
+                  t('更新过程：安装新版本 → 自动重启 dsh web（当前页面会断开，约 5–10 秒后自动刷新）。重启前会检查有没有智能体在跑，有就拦住不动。',
+                    'Update installs the latest release and restarts dsh web (auto-reloads in 5-10s). Aborts safely if subagents are still running.')),
                 msg ? h('div', { className: msg.err ? 'rt-err' : 'rt-foot' }, msg.err || msg.ok) : null,
                 countdown > 0
-                  ? h('div', { className: 'rt-foot' }, 'dsh web 正在重启，' + countdown + ' 秒后自动刷新页面…')
+                  ? h('div', { className: 'rt-foot' }, t('dsh web 正在重启，' + countdown + ' 秒后自动刷新页面…', 'Restarting dsh web, reloading in ' + countdown + 's…'))
                   : null,
                 h('div', { style: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 } },
-                  h('button', { className: 'rt-btn', onClick: () => setOpen(false) }, '关闭'),
+                  h('button', { className: 'rt-btn', onClick: () => setOpen(false) }, t('关闭', 'Close')),
                   h('button', {
                     className: 'rt-btn rt-btn-primary',
                     disabled: busy || blockers.length > 0,
-                    title: (mode === 'dev' || mode === 'source') ? '把 npm 发布版装进 profile（本地源码改动不再生效）' : blockers.length ? '先解决上面的阻塞项' : '安装并重启',
+                    title: (mode === 'dev' || mode === 'source') ? t('把 npm 发布版装进 profile（本地源码改动不再生效）', 'Install published npm package into profile') : blockers.length ? t('先解决上面的阻塞项', 'Resolve blockers first') : t('安装并重启', 'Install and restart'),
                     onClick: applyUpdate,
-                  }, busy ? '更新中…' : '一键更新并重启'))))
+                  }, busy ? t('更新中…', 'Updating…') : t('一键更新并重启', 'Update & Restart')))))
           : null)
     }
 
@@ -810,6 +841,7 @@
     }
 
     function Panel(props) {
+      useLocale()
       const embedMode = props && props.embedMode ? String(props.embedMode) : null
       const propSid = sessionIdOf(props)
       const scopedSession = typeof useScopedSession === 'function'
@@ -874,7 +906,7 @@
       React.useEffect(() => {
         const onOpen = () => {
           setFull(true)
-          try { window.history.replaceState(null, '', window.location.pathname + window.location.search + '#redteam-full') } catch { /* ignore */ }
+          try { window.history.replaceState(null, '', window.location.pathname + window.location.search + '#lmtagent-full') } catch { /* ignore */ }
         }
         const onExit = () => { exitFull() }
         window.addEventListener(FULL_REQUEST_EVENT, onOpen)
@@ -913,7 +945,7 @@
       const loadSnapshot = (id) => {
         if (!id) { setSnapshot(null); return }
         api({ op: 'snapshot', engagement: id }).then((r) => {
-          if (!r || r.ok === false) { setErr((r && r.error) || '加载失败'); return }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('加载失败', 'Load failed')); return }
           setErr(null)
           setSnapshot(r)
         }, (e) => setErr(String((e && e.message) || e)))
@@ -1010,7 +1042,7 @@
         api({ op: 'bootstrap', session: initialSid || undefined }).then((r) => {
           if (!r || r.ok === false) {
             if (r && r.emptyResponse) return
-            setErr((r && r.error) || '无法连接工作区存储')
+            setErr((r && r.error) || t('无法连接工作区存储', 'Failed to connect workspace storage'))
             return
           }
           setErr(null)
@@ -1064,7 +1096,7 @@
         const name = String(nameArg || '').trim()
         if (!name) return Promise.resolve(null)
         return api({ op: 'openEngagement', name: name, session: sid || undefined }).then((r) => {
-          if (!r || r.ok === false) { setErr((r && r.error) || '创建失败'); return null }
+          if (!r || r.ok === false) { setErr((r && r.error) || t('创建失败', 'Create failed')); return null }
           const createdId = (r.engagement && r.engagement.id) || r.id || name
           if (createdId) {
             manualPickRef.current = null
@@ -1252,18 +1284,18 @@
       const visibleEngagements = namedEngagements.length > 0 ? namedEngagements : engagements
       const sessionDisplayLabel = (!isRawUuidName(sesTitle) && sesTitle)
         ? sesTitle
-        : (sid ? sid.slice(0, 8) : '当前会话')
+        : (sid ? sid.slice(0, 8) : t('当前会话', 'Session'))
 
       const selectorOptions = []
       if (sid && !eng) {
         selectorOptions.push({
           value: '__session_unbound__',
-          label: '当前会话 · ' + sessionDisplayLabel + (sessionState && sessionState.onboarding_dismissed ? '（未绑定）' : '（待初始化）'),
+          label: t('当前会话 · ', 'Session · ') + sessionDisplayLabel + (sessionState && sessionState.onboarding_dismissed ? t('（未绑定）', ' (Unbound)') : t('（待初始化）', ' (Setup Pending)')),
         })
         for (const x of visibleEngagements) {
           selectorOptions.push({
             value: x.id,
-            label: '关联已有 · ' + (x.name || x.id),
+            label: t('关联已有 · ', 'Bind Existing · ') + (x.name || x.id),
           })
         }
       } else {
@@ -1282,29 +1314,29 @@
             : ((snapshot && snapshot.engagement && snapshot.engagement.name && !isRawUuidName(snapshot.engagement.name))
                 ? snapshot.engagement.name
                 : eng))
-        : ((!isRawUuidName(sesTitle) && sesTitle) || '未绑定工作区')
+        : ((!isRawUuidName(sesTitle) && sesTitle) || t('未绑定工作区', 'Unbound Workspace'))
 
       const tabs = [
-        ['assets', '模块与服务'],
-        ['agents', '智能体与并发'],
-        ['prompts', '角色与提示词'],
-        ['sessions', '运行环境'],
-        ['artifacts', '构建产物'],
-        ['findings', '代码审查与缺陷'],
-        ['scores', '交付里程碑'],
-        ['report', '研发交付报告'],
-        ['knowledge', '工程模式库'],
-        ['skills', '研发技能库'],
-        ['settings', '设置'],
+        ['assets', t('模块与服务', 'Modules & Services')],
+        ['agents', t('智能体与并发', 'Agents & Slots')],
+        ['prompts', t('角色与提示词', 'Roles & Prompts')],
+        ['sessions', t('运行环境', 'Runtime')],
+        ['artifacts', t('构建产物', 'Artifacts')],
+        ['findings', t('代码审查与缺陷', 'Review & Findings')],
+        ['scores', t('交付里程碑', 'Milestones')],
+        ['report', t('研发交付报告', 'Delivery Report')],
+        ['knowledge', t('工程模式库', 'Pattern KB')],
+        ['skills', t('研发技能库', 'Skill Library')],
+        ['settings', t('设置', 'Settings')],
       ]
       const TAB_GROUPS = [
-        { key: 'collab', label: '协同与审批', tabs: ['collab'] },
-        { key: 'overview', label: '总览', tabs: ['overview'] },
-        { key: 'assets', label: '架构', tabs: ['assets'] },
-        { key: 'results', label: '质量', tabs: ['findings', 'scores'] },
-        { key: 'report', label: '报告', tabs: ['report'] },
-        { key: 'resources', label: '集群', tabs: ['agents', 'prompts', 'sessions', 'artifacts', 'knowledge', 'skills'] },
-        { key: 'settings', label: '设置', tabs: ['settings'] },
+        { key: 'collab', label: t('协同与审批', 'Collab & Approval'), tabs: ['collab'] },
+        { key: 'overview', label: t('总览', 'Overview'), tabs: ['overview'] },
+        { key: 'assets', label: t('架构', 'Architecture'), tabs: ['assets'] },
+        { key: 'results', label: t('质量', 'Quality'), tabs: ['findings', 'scores'] },
+        { key: 'report', label: t('报告', 'Report'), tabs: ['report'] },
+        { key: 'resources', label: t('集群', 'Cluster'), tabs: ['agents', 'prompts', 'sessions', 'artifacts', 'knowledge', 'skills'] },
+        { key: 'settings', label: t('设置', 'Settings'), tabs: ['settings'] },
       ]
       const groupOf = (tab) => TAB_GROUPS.find((g) => g.tabs.indexOf(tab) !== -1) || TAB_GROUPS[1]
       const activeGroup = groupOf(st.tab)
@@ -1337,7 +1369,7 @@
               onGo: goTab,
               compact: false,
             })
-          : h('div', { className: 'rt-pane' }, h('div', { className: 'rt-empty' }, '设置中心尚未加载'))
+          : h('div', { className: 'rt-pane' }, h('div', { className: 'rt-empty' }, t('设置中心尚未加载', 'Settings center not loaded')))
       } else if (err) {
         body = h('div', { className: 'rt-err' }, err)
       } else if (st.tab === 'collab') {
@@ -1361,13 +1393,13 @@
             })
           : h('div', { className: 'rt-pane' },
               h('div', { className: 'rt-card' },
-                h('h4', { style: { marginTop: 0 } }, '协同与审批工作台'),
+                h('h4', { style: { marginTop: 0 } }, t('协同与审批工作台', 'Collaboration & Approval')),
                 h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 10 } },
-                  eng ? ('当前已绑定工作区「' + currentEngName + '」。') : '当前会话尚未绑定工作区，可立即初始化或跳过指引保持空白会话。'),
+                  eng ? t('当前已绑定工作区「' + currentEngName + '」。', 'Bound workspace "' + currentEngName + '".') : t('当前会话尚未绑定工作区，可立即初始化或跳过指引保持空白会话。', 'No workspace bound yet; initialize now or skip onboarding.')),
                 !eng
                   ? h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-                      h('button', { type: 'button', className: 'rt-btn rt-btn-primary', onClick: () => openEngagement(sessionDisplayLabel) }, '为当前会话创建工作区'),
-                      h('button', { type: 'button', className: 'rt-btn', onClick: handleSkipOnboarding }, '跳过指引'))
+                      h('button', { type: 'button', className: 'rt-btn rt-btn-primary', onClick: () => openEngagement(sessionDisplayLabel) }, t('为当前会话创建工作区', 'Create Workspace')),
+                      h('button', { type: 'button', className: 'rt-btn', onClick: handleSkipOnboarding }, t('跳过指引', 'Skip Setup')))
                   : null))
       } else if (st.tab === 'overview') {
         body = h(OverviewTab, {
@@ -1396,21 +1428,21 @@
       } else if (!eng) {
         body = h('div', { className: 'rt-pane' },
           h('div', { className: 'rt-card' },
-            h('h4', { style: { marginTop: 0 } }, '当前会话尚未初始化工作区'),
+            h('h4', { style: { marginTop: 0 } }, t('当前会话尚未初始化工作区', 'Workspace Not Initialized')),
             h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', marginBottom: 12, lineHeight: 1.55 } },
-              '按会话 1:1 隔离工作区；请前往「协同与审批」初始化或关联已有项目。'),
+              t('按会话 1:1 隔离工作区；请前往「协同与审批」初始化或关联已有项目。', '1:1 session isolation enabled; open Collab & Approval to initialize or bind a workspace.')),
             h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
               h('button', {
                 type: 'button',
                 className: 'rt-btn rt-btn-primary',
                 onClick: () => goTab('collab'),
-              }, '前往「协同与审批」初始化 →'),
+              }, t('前往「协同与审批」初始化 →', 'Go to Collab & Approval →')),
               canReopenOnboarding
                 ? h('button', {
                     type: 'button',
                     className: 'rt-btn',
                     onClick: handleReopenOnboarding,
-                  }, '重新获取初始化指引')
+                  }, t('重新获取初始化指引', 'Reopen Setup Guide'))
                 : null)))
       } else if (st.tab === 'assets' || st.tab === 'testing') {
         body = h(AssetsTab, { engagement: eng, snapshot: snapshot, refreshKey: refreshKey, onRefresh: refreshAll, onData: () => loadSnapshot(eng) })
@@ -1436,49 +1468,49 @@
         (full || embedMode) ? null : h('div', { className: 'rt-grip', onMouseDown: startResize }),
         h('div', { className: 'rt-head' },
           h('div', { className: 'rt-title' }, h('span', { className: 'rt-dot' }),
-            full ? 'LMTAgent 全面浏览' : 'LMTAgent 研发控制台',
-            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, '全屏视图') : null),
+            full ? t('LMTAgent 全面浏览', 'LMTAgent Full View') : t('LMTAgent 研发控制台', 'LMTAgent Console'),
+            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, t('全屏视图', 'Fullscreen')) : null),
           sid === null
             ? null
             : (!eng
                 ? (isSessionDismissed
                     ? h('span', {
                         className: 'rt-tag rt-tag-passive',
-                        title: '当前会话已跳过初始化指引，保持干净独立态',
-                      }, '已跳过指引')
+                        title: t('当前会话已跳过初始化指引，保持干净独立态', 'Onboarding skipped; session remains clean and unbound'),
+                      }, t('已跳过指引', 'Skipped'))
                     : h('span', {
                         className: 'rt-tag rt-tag-warn',
-                        title: '当前会话尚未绑定研发工作区，可在「协同与审批」初始化或跳过指引',
-                      }, '待初始化'))
+                        title: t('当前会话尚未绑定研发工作区，可在「协同与审批」初始化或跳过指引', 'Session not bound to a workspace; initialize or skip in Collab & Approval'),
+                      }, t('待初始化', 'Setup Pending')))
                 : (hasCleanBoundDiff
                     ? h('span', Object.assign({
                         className: 'rt-tag rt-tag-warn',
                         style: { cursor: 'pointer' },
-                        title: '当前已手动切换工作区；点击切回当前会话绑定的「' + boundEng + '」',
+                        title: t('当前已手动切换工作区；点击切回当前会话绑定的「' + boundEng + '」', 'Viewing manually selected workspace; click to return to "' + boundEng + '"'),
                       }, clickable(() => {
                         manualPickRef.current = null
                         setFollowSource('bound')
                         setEng(boundEng)
                         loadSnapshot(boundEng)
-                      }, { label: '切回当前会话绑定工作区：' + boundEng })), '手动选择：' + boundEng)
+                      }, { label: t('切回当前会话绑定工作区：', 'Return to bound workspace: ') + boundEng })), t('手动选择：', 'Selected: ') + boundEng)
                     : h('span', {
                         className: 'rt-tag rt-tag-live',
-                        title: '控制台正 1:1 跟随当前会话绑定的研发工作区',
-                      }, '跟随会话'))),
+                        title: t('控制台正 1:1 跟随当前会话绑定的研发工作区', 'Following active session workspace 1:1'),
+                      }, t('跟随会话', 'Synced')))),
           canReopenOnboarding
             ? h('button', {
                 type: 'button',
                 className: 'rt-btn rt-btn-primary',
                 style: { padding: '2px 8px', fontSize: 11.5 },
-                title: '重新打开工作台初始化指引',
+                title: t('重新打开工作台初始化指引', 'Reopen onboarding guide'),
                 onClick: handleReopenOnboarding,
-              }, '重新指引')
+              }, t('重新指引', 'Reopen Setup'))
             : null,
           h('select', {
             className: 'rt-input',
             style: { maxWidth: '185px' },
             value: eng || (sid ? '__session_unbound__' : ((selectorOptions[0] && selectorOptions[0].value) || '')),
-            'aria-label': '切换研发工作区或关联已有项目',
+            'aria-label': t('切换研发工作区或关联已有项目', 'Switch or bind workspace'),
             onChange: (e) => {
               const next = e.target.value
               if (!next || next === '__session_unbound__') return
@@ -1506,45 +1538,47 @@
             : h('option', { value: '' }, currentEngName)),
           h('div', { className: 'rt-spacer' }),
           h(UiModeSwitcher, { compact: true }),
+          h(LocaleSwitcher, null),
           h(VersionBar, { onHostVersion: checkHostVersion }),
           full
-            ? h('button', { className: 'rt-btn', title: '退出全屏（Esc）', onClick: exitFull }, '退出全屏')
+            ? h('button', { className: 'rt-btn', title: t('退出全屏（Esc）', 'Exit fullscreen (Esc)'), onClick: exitFull }, t('退出全屏', 'Exit Full'))
             : null,
-          h('button', { className: 'rt-btn', title: '刷新当前数据', onClick: refreshAll }, '刷新'),
+          h('button', { className: 'rt-btn', title: t('刷新当前数据', 'Refresh'), onClick: refreshAll }, t('刷新', 'Refresh')),
           h('button', {
             type: 'button',
             className: 'rt-btn' + (st.tab === 'settings' ? ' rt-btn-primary' : ''),
-            title: '打开统一设置中心',
+            title: t('打开统一设置中心', 'Open unified settings'),
             onClick: () => goTab('settings'),
-          }, '设置'),
+          }, t('设置', 'Settings')),
           full ? null : h('button', {
             className: 'rt-btn',
-            title: isDesktopShell() ? '当前窗口全屏查看（Esc 退出）' : '新窗口打开',
+            title: isDesktopShell() ? t('当前窗口全屏查看（Esc 退出）', 'Open fullscreen view (Esc to exit)') : t('新窗口打开', 'Open in new window'),
             onClick: openFull,
-          }, '全面浏览'),
-          (full || embedMode) ? null : h('button', { className: 'rt-btn', title: '收起面板', onClick: () => setUI({ open: false }) }, '收起')),
+          }, t('全面浏览', 'Full View')),
+          (full || embedMode) ? null : h('button', { className: 'rt-btn', title: t('收起面板', 'Collapse panel'), onClick: () => setUI({ open: false }) }, t('收起', 'Close'))),
         hostVersionMismatch
           ? h('div', {
               className: 'rt-err rt-host-version-mismatch',
               role: 'alert',
               style: { margin: '6px 10px 0', fontSize: 12, fontWeight: 600 },
-            }, '检测到后端 Host 版本 (' + hostVersionMismatch + ') 与前端 (' + CLIENT_PLUGIN_VERSION + ') 不一致，请彻底退出并重启 DSH NEXT')
+            }, t('检测到后端 Host 版本 (' + hostVersionMismatch + ') 与前端 (' + CLIENT_PLUGIN_VERSION + ') 不一致，请彻底退出并重启 DSH NEXT',
+                'Host version (' + hostVersionMismatch + ') differs from client (' + CLIENT_PLUGIN_VERSION + '). Please quit and restart DSH NEXT.'))
           : null,
-        h('div', { className: 'rt-tabs rt-tabs-groups', role: 'navigation', 'aria-label': '控制台分区' },
+        h('div', { className: 'rt-tabs rt-tabs-groups', role: 'navigation', 'aria-label': t('控制台分区', 'Console Navigation') },
           TAB_GROUPS.map((g) => {
             const on = activeGroup.key === g.key
             const showCollabInitBadge = g.key === 'collab' && needsSessionInit
             const showCollabApprovalBadge = g.key === 'collab' && !showCollabInitBadge && pendingApprovalsCount > 0
             return h('div', Object.assign({}, clickable(() => goTab(g.tabs[0]), { label: g.label }), {
               key: g.key, className: 'rt-tab rt-tab-group' + (on ? ' on' : ''),
-              title: '切换到「' + g.label + '」分区',
+              title: t('切换到「', 'Switch to ') + g.label + t('」分区', ''),
             }),
               g.label,
               showCollabInitBadge
                 ? h('span', {
                     className: 'rt-tag rt-tag-warn',
                     style: { marginLeft: 5, padding: '0 5px', fontSize: 10, lineHeight: '15px' },
-                  }, '待初始化')
+                  }, t('待初始化', 'Setup'))
                 : (showCollabApprovalBadge
                     ? h('span', {
                         className: 'rt-tag rt-tag-live',
@@ -1556,54 +1590,105 @@
           className: 'rt-tabs rt-tabs-sub',
           role: 'tablist',
           style: activeGroup.tabs.length > 1 ? undefined : { display: 'none' },
-        }, tabs.map((t) => {
-          const visible = activeGroup.tabs.indexOf(t[0]) !== -1
-          return h('div', Object.assign({}, clickable(() => goTab(t[0]), { label: t[1] }), {
-            key: t[0], className: 'rt-tab' + (st.tab === t[0] ? ' on' : ''),
+        }, tabs.map((tabItem) => {
+          const visible = activeGroup.tabs.indexOf(tabItem[0]) !== -1
+          return h('div', Object.assign({}, clickable(() => goTab(tabItem[0]), { label: tabItem[1] }), {
+            key: tabItem[0], className: 'rt-tab' + (st.tab === tabItem[0] ? ' on' : ''),
             role: 'tab',
-            'aria-selected': st.tab === t[0] ? 'true' : 'false',
+            'aria-selected': st.tab === tabItem[0] ? 'true' : 'false',
             style: visible ? undefined : { display: 'none' },
-            title: unreadOf(t[0]) ? t[1] + '：有新内容，点开看过红点就会消失' : t[1],
-          }), t[1], unreadOf(t[0])
-            ? h('span', { className: 'rt-tab-dot', 'aria-label': '有新内容' })
+            title: unreadOf(tabItem[0]) ? tabItem[1] + t('：有新内容，点开看过红点就会消失', ': unread updates available') : tabItem[1],
+          }), tabItem[1], unreadOf(tabItem[0])
+            ? h('span', { className: 'rt-tab-dot', 'aria-label': t('有新内容', 'Unread updates') })
             : null)
         })),
         h('div', { className: 'rt-body' }, h(RtBoundary, { key: st.tab }, body)),
         h('div', { className: 'rt-foot' },
           h('span', { className: 'rt-wb-badge' },
-            st.uiMode === 'novice' ? 'LMTAgent · 协同工作台' : 'LMTAgent · 4-Wave DAG'),
+            st.uiMode === 'novice' ? t('LMTAgent · 协同工作台', 'LMTAgent · Collab Workbench') : 'LMTAgent · 4-Wave DAG'),
           h('div', { className: 'rt-spacer' }),
-          full ? h('span', null, 'Esc 退出全屏') : null,
+          full ? h('span', null, t('Esc 退出全屏', 'Esc to exit fullscreen')) : null,
           eng
-            ? h('span', null, (st.uiMode === 'novice' ? '工作区 · ' : 'PG/WAL · ') + currentEngName)
-            : h('span', null, isSessionDismissed ? '当前会话 · 独立空白态（未绑定工作区）' : '当前会话 · 待初始化工作区'),
+            ? h('span', null, (st.uiMode === 'novice' ? t('工作区 · ', 'Workspace · ') : 'PG/WAL · ') + currentEngName)
+            : h('span', null, isSessionDismissed ? t('当前会话 · 独立空白态（未绑定工作区）', 'Session · Clean Unbound State') : t('当前会话 · 待初始化工作区', 'Session · Workspace Setup Pending')),
           sid === null
             ? null
             : h('span', {
-                title: '当前会话 ' + sid + (sesTitle ? '（' + sesTitle + '）' : ''),
-              }, '会话 ' + sid.slice(0, 8) + (followSource && FOLLOW_SOURCE[followSource] ? ' · ' + FOLLOW_SOURCE[followSource] : ''))))
+                title: t('当前会话 ', 'Session ') + sid + (sesTitle ? ' (' + sesTitle + ')' : ''),
+              }, t('会话 ', 'Session ') + sid.slice(0, 8) + (followSource ? ' · ' + followSourceLabel(followSource) : ''))))
     }
 
     /* ---------------------------------------------------------- 精简宿主入口按钮（零重复胶囊） */
+    function LocaleSwitcher() {
+      const loc = useLocale()
+      return h('div', {
+        className: 'rt-mode-switch rt-locale-switch',
+        role: 'group',
+        'aria-label': t('界面语言切换', 'UI Language Switcher'),
+      },
+        h('button', {
+          type: 'button',
+          className: 'rt-mode-btn' + (loc !== 'en-US' ? ' on' : ''),
+          title: '切换为简体中文',
+          onClick: () => setLocale('zh-CN'),
+        }, '中文'),
+        h('button', {
+          type: 'button',
+          className: 'rt-mode-btn' + (loc === 'en-US' ? ' on' : ''),
+          title: 'Switch to English',
+          onClick: () => setLocale('en-US'),
+        }, 'EN'))
+    }
+
     function SidebarButton() {
+      useLocale()
       const st = useUI()
       return h('button', {
         className: 'rt-icon-btn' + (st.open ? ' on' : ''),
-        title: 'LMTAgent 研发控制台（常驻右侧栏）',
+        title: t('LMTAgent 研发控制台（常驻右侧栏）', 'LMTAgent Console (Right Dock)'),
         onClick: () => setUI({ open: !st.open }),
-      }, h('span', { style: { fontSize: 14 } }, '⚡'))
+      }, h('svg', {
+        width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none',
+        stroke: 'currentColor', strokeWidth: 1.6, 'aria-hidden': 'true',
+      },
+        h('rect', { x: 2, y: 2, width: 5, height: 5, rx: 1 }),
+        h('rect', { x: 9, y: 2, width: 5, height: 5, rx: 1 }),
+        h('rect', { x: 2, y: 9, width: 5, height: 5, rx: 1 }),
+        h('rect', { x: 9, y: 9, width: 5, height: 5, rx: 1 })))
     }
 
     function HeaderButton(props) {
+      useLocale()
       const st = useUI()
       const sid = sessionIdOf(props)
       const title = sessionTitleOf(props)
       React.useEffect(() => { if (sid || title) setSessionId(sid, title) }, [sid, title])
       return h('button', {
         className: 'rt-hbtn' + (st.open ? ' on' : ''),
-        title: 'LMTAgent 研发控制台（切换右侧常驻工作台）',
+        title: t('LMTAgent 研发控制台（切换右侧常驻工作台）', 'LMTAgent Console (Toggle Dock)'),
         onClick: () => setUI({ open: !st.open }),
-      }, '⚡ LMTAgent 控制台')
+      }, t('LMTAgent 控制台', 'LMTAgent Console'))
+    }
+
+    function SettingsSlotSection() {
+      useLocale()
+      return h('div', { style: { margin: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
+          h('div', null,
+            h('div', { style: { fontWeight: 700, fontSize: 13 } }, t('LMTAgent 统一设置中心', 'LMTAgent Unified Settings')),
+            h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
+              t('AI 规划、并发派发、存储、飞书与界面偏好', 'AI Planning, Concurrency, Storage, Feishu & UI Preferences'))),
+          h('button', {
+            type: 'button',
+            className: 'rt-btn rt-btn-primary',
+            onClick: () => setUI({ open: true, tab: 'settings' }),
+          }, t('打开完整控制台', 'Open Full Console'))),
+        typeof SettingsHubTab === 'function'
+          ? h(SettingsHubTab, {
+              compact: true,
+              onGo: (tab) => setUI({ open: true, tab: tab || 'settings' }),
+            })
+          : null)
     }
 
     /* ---------------------------------------------------------- 插件入口（6 个精准去重槽位） */
@@ -1611,12 +1696,12 @@
 
     function apply(ctx) {
       const styleTag = document.createElement('style')
-      styleTag.setAttribute('data-redteam-ui', '1')
+      styleTag.setAttribute('data-lmtagent-ui', '1')
       styleTag.textContent = CSS
       document.head.append(styleTag)
 
       const widthTag = document.createElement('style')
-      widthTag.setAttribute('data-redteam-ui-width', '1')
+      widthTag.setAttribute('data-lmtagent-ui-width', '1')
       widthTag.textContent = ':root{--rt-dock-w:540px}'
       document.head.append(widthTag)
       dockWidthTag = widthTag
@@ -1629,7 +1714,7 @@
 
       /* 1. 右侧常驻浮动工作台（shell.overlay） */
       ctx.slots.inject('shell.overlay', () => ctx.slots.register(
-        { name: 'shell.overlay', id: 'redteam-console', order: 50 },
+        { name: 'shell.overlay', id: 'lmtagent-console', order: 50 },
         () => h(Panel),
       ))
 
@@ -1639,42 +1724,26 @@
         (props) => h(Panel, Object.assign({ embedMode: 'main' }, props)),
       ))
       ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(
-        { name: 'sidebar.panellist', id: 'lmtagent-panellist', key: 'lmtagent-workbench', label: 'LMTAgent 控制台', order: 35 },
+        { name: 'sidebar.panellist', id: 'lmtagent-panellist', key: 'lmtagent-workbench', label: t('LMTAgent 控制台', 'LMTAgent Console'), order: 35 },
         (props) => h(SidebarButton, props),
       ))
 
       /* 3. 会话主视图二级页签（conversation.view · 权威会话隔离） */
       ctx.slots.inject('conversation.view', () => ctx.slots.register(
-        { name: 'conversation.view', id: 'lmtagent-view', key: 'lmtagent-view', label: '⚡ LMTAgent 研发台', order: 45 },
+        { name: 'conversation.view', id: 'lmtagent-view', key: 'lmtagent-view', label: 'LMTAgent Workbench', order: 45 },
         (props) => h(Panel, Object.assign({ embedMode: 'session' }, props)),
       ))
 
       /* 4. 窗口右上角会话工具栏（conversation.session.header.utilities · 单一会话顶栏开关） */
       ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register(
-        { name: 'conversation.session.header.utilities', id: 'redteam-header-toggle', order: 50, label: 'LMTAgent' },
+        { name: 'conversation.session.header.utilities', id: 'lmtagent-header-toggle', order: 50, label: 'LMTAgent' },
         (props) => h(HeaderButton, props),
       ))
 
       /* 5. 设置页专区（settings.section） */
       ctx.slots.inject('settings.section', () => ctx.slots.register(
-        { name: 'settings.section', id: 'lmtagent-settings', order: 50, label: 'LMTAgent 研发集群' },
-        () => h('div', { style: { margin: 12, display: 'flex', flexDirection: 'column', gap: 10 } },
-          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' } },
-            h('div', null,
-              h('div', { style: { fontWeight: 700, fontSize: 13 } }, 'LMTAgent 统一设置中心'),
-              h('div', { style: { fontSize: 11.5, color: 'var(--dsw-alias-label-secondary)' } },
-                'AI 规划、并发派发、存储、飞书与界面偏好')),
-            h('button', {
-              type: 'button',
-              className: 'rt-btn rt-btn-primary',
-              onClick: () => setUI({ open: true, tab: 'settings' }),
-            }, '打开完整控制台')),
-          typeof SettingsHubTab === 'function'
-            ? h(SettingsHubTab, {
-                compact: true,
-                onGo: (tab) => setUI({ open: true, tab: tab || 'settings' }),
-              })
-            : null),
+        { name: 'settings.section', id: 'lmtagent-settings', order: 50, label: t('LMTAgent 研发集群', 'LMTAgent Cluster') },
+        () => h(SettingsSlotSection),
       ))
 
       /* 6. 若宿主启用了 betterSidebar 服务，同步注册左侧导航项 */
@@ -1682,7 +1751,7 @@
         if (ctx.betterSidebar && typeof ctx.betterSidebar.registerItem === 'function') {
           ctx.betterSidebar.registerItem({
             id: 'lmtagent-workbench',
-            label: 'LMTAgent 控制台',
+            label: t('LMTAgent 控制台', 'LMTAgent Console'),
             order: 35,
             onClick: () => setUI({ open: !ui.open }),
           })
@@ -1697,6 +1766,10 @@
     exports.engagementByTitle = engagementByTitle
     exports.renderInline = renderInline
     exports.Markdown = Markdown
+    exports.getLocale = getLocale
+    exports.setLocale = setLocale
+    exports.syncLocaleFromSettings = syncLocaleFromSettings
+    exports.t = t
     return module.exports
   },
 })

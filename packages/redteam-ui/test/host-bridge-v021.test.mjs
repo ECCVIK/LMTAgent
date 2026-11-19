@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { EventEmitter } from 'node:events'
+import { execFileSync } from 'node:child_process'
 
 import * as coreMod from '../../redteam-store/lib/core.js'
 import {
@@ -23,7 +24,15 @@ import {
   bumpEventSeq,
   extractJsonFromLlmText,
   advanceNextWaveIfReady,
+  dispatchWorkflowToDshAgents,
+  rollbackScopeViolations,
+  sanitizeRepoRelativePath,
+  detectDagCycles,
+  computeReadyTasksForPipeline,
+  evaluateWorkspaceBudgetGuard,
+  computeWorkspacePerfMetrics,
 } from '../lib/index.js'
+import { startSubagentActivationSafe, workerPresetForRole } from '../lib/dsh-dispatch.js'
 
 let pass = 0
 let fail = 0
@@ -72,7 +81,7 @@ function createMockPluginHost({
   const bus = new EventEmitter()
 
   const services = {
-    redteam: store,
+    lmtagent: store,
     sessions: sessionsSvc,
     subagents: subagentsSvc,
     tokenMeter: tokenMeterSvc,
@@ -82,7 +91,7 @@ function createMockPluginHost({
   }
 
   const ctx = {
-    redteam: store,
+    lmtagent: store,
     skills: { list: () => [], get: async () => undefined },
     agentPresets: { standingKeyFor: async () => 'scope-test' },
     get(name) {
@@ -110,7 +119,7 @@ function createMockPluginHost({
   apply(ctx)
 
   async function callApi(bodyRawOrObj, opts = {}) {
-    const handler = routes.get('/redteam/api')
+    const handler = routes.get('/lmtagent/api')
     const rawStr = typeof bodyRawOrObj === 'string'
       ? bodyRawOrObj
       : JSON.stringify(bodyRawOrObj)
@@ -156,7 +165,7 @@ function createMockPluginHost({
   }
 
   async function openSse(opts = {}) {
-    const handler = routes.get('/redteam/events')
+    const handler = routes.get('/lmtagent/events')
     const req = new EventEmitter()
     req.method = opts.method || 'GET'
     req.headers = Object.assign(
@@ -549,12 +558,12 @@ async function main() {
         check('已完成历史会话耗时恒定（90000ms），不随轮询实时跳动', dur1 === 90000 && w1Second?.durationMs === dur1)
 
         /* ==================================================================
-         * 4. GET /redteam/events SSE、sinceSeq <0.1ms 短路与只读 op 不污染 seq
+         * 4. GET /lmtagent/events SSE、sinceSeq <0.1ms 短路与只读 op 不污染 seq
          * ================================================================== */
-        console.log('\n— 4. GET /redteam/events SSE 实时流与 sinceSeq 短路验证')
+        console.log('\n— 4. GET /lmtagent/events SSE 实时流与 sinceSeq 短路验证')
 
         const postSse = await host.openSse({ method: 'POST' })
-        check('POST /redteam/events 拒绝并返回 405', postSse.status === 405)
+        check('POST /lmtagent/events 拒绝并返回 405', postSse.status === 405)
 
         const crossSiteSse = await host.openSse({
           headers: { host: 'example.internal:8787', 'sec-fetch-site': 'cross-site' },
@@ -601,14 +610,14 @@ async function main() {
         check('只读 RedteamStore op（snapshot/scores）不误推进 eventSeq', getEventSeq() === seqBeforeReadOnly)
 
         /* ==================================================================
-         * 5. POST /redteam/api 请求体守卫、ES6 签名兼容与全量 v0.21.0 协同桥接 RPC
+         * 5. POST /lmtagent/api 请求体守卫、ES6 签名兼容与全量 v0.21.0 协同桥接 RPC
          * ================================================================== */
-        console.log('\n— 5. POST /redteam/api 安全守卫、作用域审批、许愿拆解、分片锁与飞书推送')
+        console.log('\n— 5. POST /lmtagent/api 安全守卫、作用域审批、许愿拆解、分片锁与飞书推送')
 
         const crossOriginApi = await host.callApi({ op: 'agentsStatus' }, {
           headers: { host: '127.0.0.1:8787', origin: 'https://attacker.evil' },
         })
-        check('跨源 Origin POST /redteam/api 返回 403', crossOriginApi.status === 403)
+        check('跨源 Origin POST /lmtagent/api 返回 403', crossOriginApi.status === 403)
 
         for (const badJson of ['null', '[1, 2, 3]', '42', '"plain-string"']) {
           const badRes = await host.callApi(badJson)
@@ -1257,6 +1266,326 @@ async function main() {
       } finally {
         host.disposeAll()
       }
+    }
+
+    /* ==================================================================
+     * 7. v1.0.0 Step 3: Git 越界回滚、预算熔断、推测 DAG、自动重试与 perfBenchmark
+     * ================================================================== */
+    console.log('\n— 7. v1.0.0 Git 越界回滚、预算熔断、推测流水线、自动重试与 perfBenchmark RPC')
+    {
+      /* 7.1 rollbackScopeViolations：真实临时 Git 仓库回滚验证 */
+      const gitDir = makeTmp('lmtagent-git-rb-')
+      mkdirSync(join(gitDir, 'src'), { recursive: true })
+      execFileSync('git', ['init'], { cwd: gitDir, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.email', 'test@lmtagent.local'], { cwd: gitDir, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.name', 'LMTAgent Test'], { cwd: gitDir, stdio: 'ignore' })
+      writeFileSync(join(gitDir, 'src', 'tracked.js'), 'export const v = 1\n', 'utf8')
+      execFileSync('git', ['add', 'src/tracked.js'], { cwd: gitDir, stdio: 'ignore' })
+      execFileSync('git', ['commit', '-m', 'init'], { cwd: gitDir, stdio: 'ignore' })
+
+      /* 模拟越界修改 tracked 文件 + 新建未追踪文件 */
+      writeFileSync(join(gitDir, 'src', 'tracked.js'), 'export const v = 999 // VIOLATION\n', 'utf8')
+      writeFileSync(join(gitDir, 'untracked-scratch.txt'), 'untracked content\n', 'utf8')
+
+      const sanTraversal = sanitizeRepoRelativePath(gitDir, '../escape.txt')
+      const sanWinDrive = sanitizeRepoRelativePath(gitDir, 'C:\\Windows\\System32\\cmd.exe')
+      const sanNull = sanitizeRepoRelativePath(gitDir, 'src/a\0b.js')
+      const sanSlash = sanitizeRepoRelativePath(gitDir, '/etc/passwd')
+      const sanValid = sanitizeRepoRelativePath(gitDir, './src\\tracked.js')
+      check('sanitizeRepoRelativePath 拦截 ../ 穿越、盘符、空字节、前导 / 并规范化合法路径', Boolean(
+        sanTraversal?.ok === false
+        && sanWinDrive?.ok === false
+        && sanNull?.ok === false
+        && sanSlash?.ok === false
+        && sanValid === 'src/tracked.js',
+      ))
+
+      const rbDefault = rollbackScopeViolations({
+        cwd: gitDir,
+        files: ['src/tracked.js', '../outside.txt', 'C:bad.js', 'untracked-scratch.txt'],
+      })
+      check('rollbackScopeViolations 恢复已追踪文件、拒绝非法路径、默认保留未追踪文件', Boolean(
+        rbDefault.ok === true
+        && rbDefault.rolled_back.includes('src/tracked.js')
+        && readFileSync(join(gitDir, 'src', 'tracked.js'), 'utf8').replace(/\r\n/g, '\n') === 'export const v = 1\n'
+        && rbDefault.rejected_paths.length === 2
+        && rbDefault.skipped_untracked.includes('untracked-scratch.txt')
+        && existsSync(join(gitDir, 'untracked-scratch.txt')),
+      ), JSON.stringify(rbDefault))
+
+      const rbDelete = rollbackScopeViolations({
+        cwd: gitDir,
+        files: ['untracked-scratch.txt'],
+        allowDeleteUntracked: true,
+      })
+      check('rollbackScopeViolations 在 allowDeleteUntracked=true 时删除未追踪文件并记入 rolled_back', Boolean(
+        rbDelete.ok === true
+        && rbDelete.rolled_back.includes('untracked-scratch.txt')
+        && !existsSync(join(gitDir, 'untracked-scratch.txt')),
+      ))
+
+      /* 7.2 RPC op: rollbackScopeViolations + perfBenchmark + saveSettings 新字段持久化 */
+      const v1Ws = makeTmp('lmtagent-v1-rpc-')
+      const v1Store = createRealStore(v1Ws)
+      v1Store.openEngagement({ id: 'eng-v1-step3', name: 'Step3 Benchmark Workspace' })
+      const wTask = v1Store.addCustomWorkerTask({
+        engagement_id: 'eng-v1-step3',
+        wave: 'wave-3',
+        worker_role: 'exploit',
+        worker_name: 'builder-rb',
+        assigned_goal: '构建核心模块',
+        files_owned: ['src/allowed.js'],
+        status: 'completed',
+      }).worker_task
+      v1Store.submitWorkerDigest({
+        engagement_id: 'eng-v1-step3',
+        worker_task_id: wTask.id,
+        worker_name: 'builder-rb',
+        what_was_done: '完成实现并附带越界修改',
+        files_touched: ['src/allowed.js', 'src/tracked.js'],
+        raw_tokens: 4000,
+        compressed_tokens: 600,
+      })
+
+      writeFileSync(join(gitDir, 'src', 'tracked.js'), 'export const v = 888\n', 'utf8')
+      const v1Activations = []
+      const v1RootAgent = {
+        id: 'root-v1-step3',
+        options: { provider: 'mock', model: 'mock-1' },
+        session: { id: 'root-v1-step3', header: { cwd: gitDir } },
+        followup: () => {},
+      }
+      const v1Host = createMockPluginHost({
+        store: v1Store,
+        sessionsSvc: {
+          list: () => [{ id: 'root-v1-step3', title: 'V1 Step3 Root', cwd: gitDir }],
+          get: (id) => (id === 'root-v1-step3' ? { id: 'root-v1-step3', header: { cwd: gitDir } } : null),
+        },
+        agentsSvc: { get: (id) => (id === 'root-v1-step3' ? v1RootAgent : null) },
+        subagentsSvc: {
+          startActivation: async (spec) => {
+            v1Activations.push(spec)
+            return { childId: `child-v1-${v1Activations.length}` }
+          },
+        },
+      })
+      try {
+        const seqBeforeRb = getEventSeq()
+        const rpcRb = await v1Host.callApi({
+          op: 'rollbackScopeViolations',
+          engagement: 'eng-v1-step3',
+          worker_task_id: wTask.id,
+          cwd: gitDir,
+          files: ['src/tracked.js', '../bad-path'],
+        })
+        check('RPC rollbackScopeViolations 恢复 Git 越界文件、记录 scope_remediated 并推进 eventSeq', Boolean(
+          rpcRb.json?.ok === true
+          && rpcRb.json?.rolled_back?.includes('src/tracked.js')
+          && rpcRb.json?.rejected_paths?.length === 1
+          && readFileSync(join(gitDir, 'src', 'tracked.js'), 'utf8').replace(/\r\n/g, '\n') === 'export const v = 1\n'
+          && getEventSeq() > seqBeforeRb,
+        ), JSON.stringify(rpcRb.json))
+
+        const saveNewSet = await v1Host.callApi({
+          op: 'saveSettings',
+          dispatchPolicy: {
+            maxTokensPerWorkspace: 50000,
+            maxCostPerWorkspace: 3.25,
+            maxAutoRetries: 2,
+            speculativeWaveDispatch: true,
+          },
+          uiPreferences: {
+            locale: 'en-US',
+          },
+        })
+        const getNewSet = await v1Host.callApi({ op: 'getSettings', engagement: 'eng-v1-step3' })
+        check('saveSettings / getSettings 完整透传 maxTokensPerWorkspace / maxCostPerWorkspace / maxAutoRetries / speculativeWaveDispatch / locale', Boolean(
+          saveNewSet.json?.ok === true
+          && getNewSet.json?.dispatchPolicy?.maxTokensPerWorkspace === 50000
+          && getNewSet.json?.dispatchPolicy?.maxCostPerWorkspace === 3.25
+          && getNewSet.json?.dispatchPolicy?.maxAutoRetries === 2
+          && getNewSet.json?.dispatchPolicy?.speculativeWaveDispatch === true
+          && getNewSet.json?.uiPreferences?.locale === 'en-US',
+        ), JSON.stringify(getNewSet.json?.dispatchPolicy))
+
+        const benchRes = await v1Host.callApi({
+          op: 'perfBenchmark',
+          engagement: 'eng-v1-step3',
+          schemaLegacyBytes: 28000,
+          schemaCurrentBytes: 10500,
+        })
+        check('RPC perfBenchmark 返回真实基准指标与 budgetGuard', Boolean(
+          benchRes.json?.ok === true
+          && benchRes.json?.perfMetrics
+          && typeof benchRes.json.perfMetrics.parallelismEfficiencyPct === 'number'
+          && benchRes.json.perfMetrics.digestCompressionRatioPct === 85
+          && benchRes.json.perfMetrics.schemaTokenSavedEstimate >= 4375
+          && benchRes.json?.budgetGuard
+          && benchRes.json.budgetGuard.maxTokens === 50000,
+        ), JSON.stringify(benchRes.json))
+
+        const agStatus = await v1Host.callApi({ op: 'agentsStatus', engagement: 'eng-v1-step3' })
+        const wfDagRes = await v1Host.callApi({ op: 'workflowDag', engagement: 'eng-v1-step3' })
+        check('agentsStatus 与 workflowDag 均附带 budgetGuard 与 perfMetrics', Boolean(
+          agStatus.json?.budgetGuard && agStatus.json?.perfMetrics
+          && wfDagRes.json?.budgetGuard && wfDagRes.json?.perfMetrics,
+        ))
+
+        /* 7.3 evaluateWorkspaceBudgetGuard 触发与 allowOverrideBudget 放行 */
+        const bgNear = evaluateWorkspaceBudgetGuard({ totalTokens: 8600, totalCost: 0.1 }, { maxTokensPerWorkspace: 10000, maxCostPerWorkspace: 2 })
+        const bgTripped = evaluateWorkspaceBudgetGuard({ totalTokens: 10500, totalCost: 0.1 }, { maxTokensPerWorkspace: 10000, maxCostPerWorkspace: 2 })
+        check('evaluateWorkspaceBudgetGuard 在 85% 预警且在 >=100% 触发熔断', Boolean(
+          !bgNear.tripped && bgNear.warnNearLimit && bgTripped.tripped && bgTripped.tokenRatioPct === 105,
+        ))
+
+        const prevActCount = v1Activations.length
+        const blockedDispatch = await dispatchWorkflowToDshAgents(v1Host.ctx, v1Store, {
+          engagementId: 'eng-v1-step3',
+          sessionId: 'root-v1-step3',
+          usage: { totalTokens: 60000, totalCost: 0.5 },
+          workerTasks: [{ id: 'w-b1', wave: 'wave-1', worker_role: 'recon', worker_name: 'recon-b1', status: 'queued' }],
+          retryDelayMs: 0,
+        })
+        check('dispatchWorkflowToDshAgents 预算熔断阻断拉起并返回 budget_exceeded=true', Boolean(
+          blockedDispatch.ok === false
+          && blockedDispatch.budget_exceeded === true
+          && blockedDispatch.budget?.tripped === true
+          && v1Activations.length === prevActCount,
+        ))
+
+        const overrideDispatch = await dispatchWorkflowToDshAgents(v1Host.ctx, v1Store, {
+          engagementId: 'eng-v1-step3',
+          sessionId: 'root-v1-step3',
+          usage: { totalTokens: 60000, totalCost: 0.5 },
+          allowOverrideBudget: true,
+          workerTasks: [{ id: 'w-b2', wave: 'wave-1', worker_role: 'recon', worker_name: 'recon-b2', status: 'queued' }],
+          retryDelayMs: 0,
+        })
+        check('dispatchWorkflowToDshAgents 在 allowOverrideBudget=true 时绕过预算熔断正常派发', Boolean(
+          overrideDispatch.spawned?.length === 1 && v1Activations.length === prevActCount + 1,
+        ))
+
+        const blockedAdvance = await advanceNextWaveIfReady(v1Host.ctx, v1Store, {
+          engagementId: 'eng-v1-step3',
+          sessionId: 'root-v1-step3',
+          currentWave: 1,
+          approvalState: 'approved',
+          usage: { totalTokens: 60000, totalCost: 4.0 },
+          settings: {
+            maxAgents: 6,
+            thinkingEffort: 'low',
+            maxDepth: 3,
+            dispatchPolicy: { autoAdvanceWave: true, maxTokensPerWorkspace: 50000, maxCostPerWorkspace: 3.25 },
+          },
+          retryDelayMs: 0,
+        })
+        check('advanceNextWaveIfReady 预算超限时拒绝自动推进并返回 budget_exceeded=true', Boolean(
+          blockedAdvance.ok === false && blockedAdvance.triggered === false && blockedAdvance.budget_exceeded === true,
+        ))
+      } finally {
+        v1Host.disposeAll()
+      }
+
+      /* 7.4 detectDagCycles + computeReadyTasksForPipeline 推测流水线 + advanceNextWaveIfReady */
+      const cycRes = detectDagCycles([
+        { id: 't1', depends_on: ['t3'] },
+        { id: 't2', depends_on: ['t1'] },
+        { id: 't3', depends_on: ['t2'] },
+        { id: 't4', depends_on: ['t3'] },
+      ])
+      check('detectDagCycles 精准识别环路并排除无关下游节点', Boolean(
+        cycRes.hasCycle === true
+        && cycRes.cycleNodes.includes('t1')
+        && cycRes.cycleNodes.includes('t2')
+        && cycRes.cycleNodes.includes('t3')
+        && !cycRes.cycleNodes.includes('t4'),
+      ), JSON.stringify(cycRes))
+
+      const specDag = {
+        worker_tasks: [
+          { id: 'w1-a', wave: 'wave-1', worker_name: 'w1-a', status: 'completed', approval_state: 'approved', files_owned: ['docs/a.md'] },
+          { id: 'w1-b', wave: 'wave-1', worker_name: 'w1-b', status: 'running', session_id: 'live-child-b', approval_state: 'working', files_owned: ['src/ui.js'] },
+          { id: 'w2-ok', wave: 'wave-2', worker_name: 'w2-ok', status: 'queued', depends_on: ['w1-a'], files_owned: ['src/api.js'] },
+          { id: 'w2-lock', wave: 'wave-2', worker_name: 'w2-lock', status: 'queued', depends_on: ['w1-a'], files_owned: ['src/ui.js'] },
+          { id: 'w2-dep', wave: 'wave-2', worker_name: 'w2-dep', status: 'queued', depends_on: ['w1-b'], files_owned: ['src/db.js'] },
+        ],
+      }
+      const barrierPipe = computeReadyTasksForPipeline(specDag, { speculativeWaveDispatch: false })
+      const specPipe = computeReadyTasksForPipeline(specDag, { speculativeWaveDispatch: true })
+      check('computeReadyTasksForPipeline 在 barrier 模式下等待波次完成，在 speculative 模式下立即就绪无冲突下游节点', Boolean(
+        barrierPipe.readyTasks.length === 0
+        && specPipe.cycleDetected === false
+        && specPipe.readyTasks.map((t) => t.id).join(',') === 'w2-ok'
+        && specPipe.blockedByShardLock.map((t) => t.id).join(',') === 'w2-lock'
+        && specPipe.blockedByDeps.map((t) => t.id).join(',') === 'w2-dep',
+      ), JSON.stringify({ barrier: barrierPipe.readyTasks.length, spec: specPipe.readyTasks.map((t) => t.id) }))
+
+      const specSpawned = []
+      const specCtx = {
+        get(name) {
+          if (name === 'agents') return { get: (id) => (id === 'root-spec' ? { id: 'root-spec', options: {}, session: { id: 'root-spec', header: {} }, followup: () => {} } : null) }
+          if (name === 'sessions') return { get: (id) => (id === 'live-child-b' ? { id: 'live-child-b' } : null) }
+          if (name === 'subagents') {
+            return {
+              startActivation: async (spec) => {
+                specSpawned.push(spec)
+                return { childId: `child-spec-${specSpawned.length}` }
+              },
+            }
+          }
+          return null
+        },
+      }
+      const specAdvance = await advanceNextWaveIfReady(specCtx, null, {
+        engagementId: 'eng-spec-test',
+        sessionId: 'root-spec',
+        currentWave: 1,
+        approvalState: 'approved',
+        dag: specDag,
+        settings: {
+          maxAgents: 4,
+          thinkingEffort: 'low',
+          maxDepth: 3,
+          dispatchPolicy: { autoAdvanceWave: true, speculativeWaveDispatch: true, maxAutoRetries: 1 },
+        },
+        retryDelayMs: 0,
+      })
+      check('advanceNextWaveIfReady 开启 speculativeWaveDispatch 后在 Wave 1 未全完时立即拉起 w2-ok', Boolean(
+        specAdvance.triggered === true
+        && specAdvance.mode === 'speculative'
+        && specAdvance.spawned.length === 1
+        && specAdvance.spawned[0].worker_name === 'w2-ok',
+      ), JSON.stringify(specAdvance))
+
+      /* 7.5 maxAutoRetries 指数退避重试 + 上下文错误注入 + lmtagent-worker-* 预设名 */
+      let retryAttemptsSeen = 0
+      const retryPrompts = []
+      const retrySubagents = {
+        startActivation: async (spec) => {
+          retryAttemptsSeen += 1
+          retryPrompts.push(String(spec?.request?.prompt?.[0]?.text || ''))
+          if (retryAttemptsSeen === 1) {
+            throw new Error('Transient OOM timeout on shard worker')
+          }
+          return { childId: 'child-retried-ok' }
+        },
+      }
+      const retryRes = await startSubagentActivationSafe(
+        { get: () => null },
+        retrySubagents,
+        { id: 'root-r', options: {}, session: { id: 'root-r', header: {} } },
+        { id: 't-retry', worker_role: 'exploit', worker_name: 'builder-retry', assigned_goal: '修复编译错误' },
+        { engId: 'eng-retry', maxAutoRetries: 1, retryDelayMs: 0 },
+      )
+      check('startSubagentActivationSafe 支持 maxAutoRetries=1 自动重试并注入上次异常摘要（retryDelayMs: 0）', Boolean(
+        workerPresetForRole('exploit') === 'lmtagent-worker-exploit'
+        && workerPresetForRole('unknown-role') === 'lmtagent-worker'
+        && retryAttemptsSeen === 2
+        && retryRes.childId === 'child-retried-ok'
+        && retryRes.retryAttempts === 1
+        && retryPrompts[1].includes('Transient OOM timeout on shard worker')
+        && retryPrompts[1].includes('lmt_workflow'),
+      ))
     }
   } finally {
     for (const d of tempDirs) {

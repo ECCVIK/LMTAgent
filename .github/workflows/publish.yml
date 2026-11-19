@@ -10,7 +10,7 @@ name: Publish to npm
 # 启用前提（两处，都要做）：
 #   1) npmjs.com → 本包 → Settings → Trusted Publisher 绑定：
 #        Publisher: GitHub Actions
-#        Repository: Jueze-2019/dsh-redteam-mode
+#        Repository: ECCVIK/LMTAgent
 #        Workflow filename: publish.yml        ← 必须与本文件名完全一致
 #        Environment: （留空）
 #   2) 本仓库 → Settings → Secrets and variables → Actions → Variables 新建：
@@ -18,7 +18,7 @@ name: Publish to npm
 #      （没设这个变量时 workflow 会跳过发布，避免绑定还没配好就推 tag 导致失败）
 #
 # 发布方式：推一个与 package.json 版本一致的 tag，例如
-#   git tag v0.11.3 && git push origin v0.11.3
+#   git tag v1.0.0 && git push origin v1.0.0
 
 on:
   # 默认**不**在推 tag 时自动发布：本包是双用途，npm 规定必须"暂存 + 人工批准"，
@@ -97,8 +97,7 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         run: |
           pkg="$(node -p "require('./package.json').version")"
-          echo "已暂存 dsh-redteam-mode@$pkg。"
-          echo "双用途包暂存后必须由人在浏览器里按一次安全密钥批准才会真正发布，"
-          echo "所以此刻 registry 上还查不到它是正常的 —— 批准后用它确认："
-          echo "  npm view dsh-redteam-mode version"
+          echo "已暂存 dsh-lmtagent@$pkg。"
+          echo "发布后可用以下命令确认："
+          echo "  npm view dsh-lmtagent version"
           echo "批准入口：npx npm@12 stage list → npx npm@12 stage approve <stage-id>"

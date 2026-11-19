@@ -198,7 +198,9 @@ const documentStub = {
 
 let responses = {}
 const fetchCalls = []
+const fetchUrls = []
 const fetchStub = (url, init) => {
+  fetchUrls.push(String(url || ''))
   const body = JSON.parse(init.body)
   fetchCalls.push(body.op)
   const value = typeof responses[body.op] === 'function' ? responses[body.op](body) : responses[body.op]
@@ -244,15 +246,15 @@ mod.apply({
     inject: (name, run) => run(),
     register: (meta, render) => {
       const marked = markRender(meta.id, render)
-      if (meta.id === 'redteam-console') panelRender = marked
+      if (meta.id === 'lmtagent-console') panelRender = marked
       slotRenders.set(meta.id, marked)
     },
   },
   effect: (f) => f(),
 })
 ok(typeof panelRender === 'function', '拿到 shell.overlay 的面板渲染函数')
-ok(typeof slotRenders.get('redteam-header-toggle') === 'function',
-  '拿到会话头部的 RedTeam 开关渲染函数（它的 props 带 sessionId）')
+ok(typeof slotRenders.get('lmtagent-header-toggle') === 'function',
+  '拿到会话头部的 LMTAgent 开关渲染函数（它的 props 带 sessionId）')
 
 /* ══════════════════════════════════════════════════════════════════════════
    ④ 预置响应
@@ -622,7 +624,7 @@ console.log('\n— 有数据时的关键内容（渲染确实用了接口返回�
   ok(!s.texts.includes('e45') && !s.texts.includes('Admin@123'), '智能体与并发页：不包含会话口令/凭据明文')
   ok(!s.texts.includes('**'), '智能体与并发页：不再露出 Markdown 粗体标记 **')
   ok(!s.texts.includes('`'), '智能体与并发页：不再露出行内代码反引号')
-  ok(s.texts.includes('redteam_agent_slot') && s.texts.includes('3 个执行智能体'),
+  ok(s.texts.includes('lmt_agent_slot') && s.texts.includes('3 个执行智能体'),
     '智能体与并发页：槽位核验说明清晰可读')
   const pTab = await switchTab('角色与提示词')
   ok(pTab.texts.includes('Captain') && pTab.texts.includes('角色与提示词'), '角色与提示词页：独立承载 2×4 gstack 角色卡片网格')
@@ -814,7 +816,7 @@ console.log('\n— 面板 1:1 强隔离跟随会话 + 未绑定新会话初始�
   ls.clear()
   for (const k of Object.keys(SESSION_ONBOARDING)) delete SESSION_ONBOARDING[k]
 
-  const headerToggle = slotRenders.get('redteam-header-toggle')
+  const headerToggle = slotRenders.get('lmtagent-header-toggle')
   const firstHosts = (await renderAll(6, [headerToggle({
     sessionId: 's-A',
     useSessions: (sel) => sel({ byId: { 's-A': { id: 's-A', displayTitle: 's-A', blank: false } } }),
@@ -964,7 +966,7 @@ console.log('\n— 面板 1:1 强隔离跟随会话 + 未绑定新会话初始�
   resetInstances()
   const rMismatch = await renderAll(6, [headerToggle()])
   ok(rMismatch.hosts.some((x) => String(x.props.className || '').includes('rt-host-version-mismatch'))
-    && rMismatch.texts.includes('检测到后端 Host 版本 (0.22.0) 与前端 (0.23.2) 不一致，请彻底退出并重启 DSH NEXT'),
+    && rMismatch.texts.includes('检测到后端 Host 版本 (0.22.0) 与前端 (1.0.0) 不一致，请彻底退出并重启 DSH NEXT'),
     'bootstrap 返回不一致 hostVersion 时在 Panel 顶部渲染版本不一致警告横幅')
 
   responses = makeResponses('data')
@@ -998,6 +1000,11 @@ console.log('\n— 面板 1:1 强隔离跟随会话 + 未绑定新会话初始�
     'saveSettings 请求体包含 dispatchPolicy.autoAdvanceWave = true')
 
   responses = makeResponses('data')
+  let rollbackBody = null
+  responses.rollbackScopeViolations = (body) => {
+    rollbackBody = body
+    return { ok: true, restored: body.files || [] }
+  }
   responses.workflowDag = {
     ok: true,
     worker_tasks: [
@@ -1024,6 +1031,192 @@ console.log('\n— 面板 1:1 强隔离跟随会话 + 未绑定新会话初始�
   ok(rCollabScope.hosts.some((x) => String(x.props.className || '').includes('rt-scope-violation-warn'))
     && rCollabScope.texts.includes('写盘越界警告：src/outside.js, README.md'),
     'CollabApprovalTab 审批卡片正确渲染写盘越界警告及越界文件列表')
+
+  /* ⑨ v1.0.0：一键回滚越界文件、1-Minute Demo 预设、/lmtagent/api 路由、BudgetGuard/PerfMetrics 与 en-US 无中文泄露切换 */
+  const rbBtn = rCollabScope.hosts.find((x) => x.tag === 'button'
+    && x.handlers.onClick
+    && textOfNode(x.props.children).includes('一键回滚越界文件'))
+  ok(rbBtn !== undefined, '越界警告横幅内渲染「一键回滚越界文件」按钮')
+  if (rbBtn) rbBtn.handlers.onClick()
+  await renderAll(4, [headerToggle()])
+  ok(rollbackBody !== null
+    && rollbackBody.op === 'rollbackScopeViolations'
+    && rollbackBody.engagement === ENGINE
+    && rollbackBody.worker_task_id === 'w-scope-1'
+    && Array.isArray(rollbackBody.files)
+    && rollbackBody.files.join(',') === 'src/outside.js,README.md',
+    '点击「一键回滚越界文件」准确派发 rollbackScopeViolations RPC')
+
+  /* 1-Minute Demo 预设 Chips（未绑定新会话下 WishRefinerWizard 默认展开，同时渲染工作台名称输入框与需求文本域） */
+  responses = makeResponses('data')
+  responses.sessionBinding = { ok: true, bound: null, init_state: 'uninitialized', onboarding_dismissed: false, has_conversation: false }
+  resetInstances()
+  const rDemoWizard = await renderAll(6, [headerToggle({
+    sessionId: 's-DEMO',
+    useSessions: (sel) => sel({ byId: { 's-DEMO': { id: 's-DEMO', displayTitle: 's-DEMO', blank: true } } }),
+  })])
+  const demoOrderChip = rDemoWizard.hosts.find((x) => x.tag === 'button'
+    && x.handlers.onClick
+    && textOfNode(x.props.children).includes('全栈订单工作台'))
+  const demoCliChip = rDemoWizard.hosts.find((x) => x.tag === 'button'
+    && x.handlers.onClick
+    && textOfNode(x.props.children).includes('CLI 重构与测试门禁'))
+  ok(demoOrderChip !== undefined && demoCliChip !== undefined,
+    'WishRefinerWizard 需求输入区上方渲染 2 个 1 分钟 Demo 预设芯片')
+  if (demoOrderChip) demoOrderChip.handlers.onClick()
+  const afterOrderDemo = await renderAll(3, [headerToggle()])
+  const demoTextarea = afterOrderDemo.hosts.find((x) => x.tag === 'textarea'
+    && String(x.props.value || '').includes('OrderFlow'))
+  const demoEngInput = afterOrderDemo.hosts.find((x) => x.tag === 'input'
+    && String(x.props.value || '') === 'OrderFlow-Demo')
+  ok(demoTextarea !== undefined && demoEngInput !== undefined,
+    '点击「示例：全栈订单工作台」自动填充工作区名 OrderFlow-Demo 与完整需求文本')
+  if (demoCliChip) {
+    const cliChip2 = afterOrderDemo.hosts.find((x) => x.tag === 'button'
+      && x.handlers.onClick
+      && textOfNode(x.props.children).includes('CLI 重构与测试门禁'))
+    if (cliChip2) cliChip2.handlers.onClick()
+    const afterCliDemo = await renderAll(3, [headerToggle()])
+    const cliEngInput = afterCliDemo.hosts.find((x) => x.tag === 'input'
+      && String(x.props.value || '') === 'CliRefactor-Demo')
+    const cliTextarea = afterCliDemo.hosts.find((x) => x.tag === 'textarea'
+      && String(x.props.value || '').includes('CLI'))
+    ok(cliEngInput !== undefined && cliTextarea !== undefined,
+      '点击「示例：CLI 重构与测试门禁」自动填充工作区名 CliRefactor-Demo 与重构需求')
+  }
+
+  /* BudgetGuard 横幅与 PerfMetrics 渲染 */
+  responses = makeResponses('data')
+  responses.snapshot = Object.assign({}, responses.snapshot, {
+    budgetGuard: { warnNearLimit: true, tripped: false, usagePct: 88, tokensUsed: 88000, maxTokensPerWorkspace: 100000 },
+    perfMetrics: { parallelismEfficiencyPct: 91, digestCompressionRatioPct: 86, schemaTokenSavedEstimate: 12400, scopeCompliancePct: 100 },
+  })
+  resetInstances()
+  await renderAll(6, [headerToggle({
+    sessionId: 's-A',
+    useSessions: (sel) => sel({ byId: { 's-A': { id: 's-A', displayTitle: 's-A', blank: false } } }),
+  })])
+  const rBudget = await switchTab('总览')
+  ok(rBudget.hosts.some((x) => String(x.props.className || '').includes('rt-budget-guard-banner')),
+    'OverviewTab 在 budgetGuard.warnNearLimit 为真时渲染预算告警横幅')
+  const ovClusterCard = rBudget.hosts.find((x) => x.handlers.onClick
+    && String(x.props.className || '').includes('rt-ov-kpi-card')
+    && textOfNode(x.props.children).includes('并发集群'))
+  if (ovClusterCard) ovClusterCard.handlers.onClick()
+  const rClusterExpanded = await renderAll(4, [headerToggle()])
+  ok(rClusterExpanded.texts.includes('91%') && rClusterExpanded.texts.includes('100%'),
+    '并发集群详表展示实时 perfMetrics（parallelismEfficiencyPct / scopeCompliancePct）')
+
+  /* 切换到 en-US：顶栏 EN 按钮 -> 全英文页签 / KPI / 设置，且 UI 标签零中文泄露 */
+  const engAcme = { id: 'Acme-Bench', name: 'Acme-Bench', scope: [], status: 'active', created_at: '2026-01-01T00:00:00Z' }
+  responses = makeResponses('data')
+  responses.bootstrap = { ok: true, root: '/tmp/rt', engagements: [engAcme], current: 'Acme-Bench' }
+  responses.sessionBinding = { ok: true, bound: 'Acme-Bench', init_state: 'initialized', onboarding_dismissed: true, has_conversation: true }
+  responses.agentsStatus = { ok: true, max: 6, used: 1, free: 5, total_children: 1, running: [{ parent: 's1', label: 'Discovery', activity: 'running', mode: 'child' }] }
+  responses.snapshot = {
+    ok: true,
+    engagement: engAcme,
+    stats: { assets: 4, liveAssets: 3, ports: 8, vulns: 0, vulnsHigh: 0, vulnsCrit: 0, chains: 2, credentials: 0, webshells: 1, tunnels: 0, achievedPoints: 20, attackFiles: 1 },
+    tests: { untested: 1, testing: 1, tested: 2, blocked: 0, abandoned: 0, no_surface: 0 },
+    agents: { used: 2, max: 6, limit: 12, thinking: 'low', running: [], children: [], agentNetwork: { children: [] } },
+    budgetGuard: { warnNearLimit: false, tripped: true, message: 'Workspace token cap reached' },
+    perfMetrics: { parallelismEfficiencyPct: 92, digestCompressionRatioPct: 85, schemaTokenSavedEstimate: 8400, scopeCompliancePct: 100 },
+    segments: [],
+  }
+  responses.saveSettings = (body) => {
+    lastSavedSettingsBody = body
+    return { ok: true, saved: true, note: 'Settings saved' }
+  }
+  const stripLocaleButton = (txt) => txt.replace(/简体中文 \(zh-CN\)/g, '').replace(/(^|\s)中文(?=\s|EN|$)/g, ' ')
+  resetInstances()
+  const rEnInit = await renderAll(6, [headerToggle({
+    sessionId: 's-EN',
+    useSessions: (sel) => sel({ byId: { 's-EN': { id: 's-EN', displayTitle: 'Acme-Bench', blank: false } } }),
+  })])
+  const enBtn = rEnInit.hosts.find((x) => x.tag === 'button' && x.handlers.onClick && textOfNode(x.props.children).trim() === 'EN')
+  ok(enBtn !== undefined, '顶栏提供紧凑 EN 切换按钮（与简洁/专家同排）')
+  if (enBtn) enBtn.handlers.onClick()
+  const rEnOverview = await switchTab('Overview')
+  ok(ls.get('lmt_ui_locale') === 'en-US', '点击 EN 后写入 localStorage("lmt_ui_locale") = en-US')
+  ok(rEnOverview.texts.includes('Collab & Approval')
+    && rEnOverview.texts.includes('Overview')
+    && rEnOverview.texts.includes('Architecture')
+    && rEnOverview.texts.includes('Quality')
+    && rEnOverview.texts.includes('Report')
+    && rEnOverview.texts.includes('Cluster')
+    && rEnOverview.texts.includes('Settings'),
+    'en-US 模式下 7 个一级分区全部切换为英文')
+  ok(rEnOverview.texts.includes('Execution')
+    && rEnOverview.texts.includes('Concurrency')
+    && rEnOverview.texts.includes('Context & Cache')
+    && rEnOverview.texts.includes('Delivery'),
+    'en-US 模式下总览 4 张 KPI 卡片全部切换为英文')
+  ok(!/[\u4e00-\u9fff]/.test(stripLocaleButton(rEnOverview.texts)),
+    'en-US 模式下总览页与顶部外壳零中文标签泄露')
+
+  const enCtxCard = rEnOverview.hosts.find((x) => x.handlers.onClick
+    && String(x.props.className || '').includes('rt-ov-kpi-card')
+    && textOfNode(x.props.children).includes('Context & Cache'))
+  if (enCtxCard) enCtxCard.handlers.onClick()
+  const rEnOvDrawer = await renderAll(4, [headerToggle()])
+  ok(!/[\u4e00-\u9fff]/.test(stripLocaleButton(rEnOvDrawer.texts))
+    && rEnOvDrawer.texts.includes('Digest Compression Ratio')
+    && rEnOvDrawer.texts.includes('Schema Token Saved Est.'),
+    'en-US 模式下上下文与缓存展开抽屉零中文泄露且展示压缩率/Token节省指标')
+
+  const rEnSettings = await switchTab('Settings')
+  ok(rEnSettings.texts.includes('Workspace Token Cap (0=Unlimited)')
+    && rEnSettings.texts.includes('Workspace Cost Cap (0=Unlimited)')
+    && rEnSettings.texts.includes('Auto-Retry on Failure (0-3)')
+    && rEnSettings.texts.includes('Experimental: Speculative DAG Pipelining')
+    && rEnSettings.texts.includes('Interface Language')
+    && !/[\u4e00-\u9fff]/.test(stripLocaleButton(rEnSettings.texts)),
+    'en-US 模式下 Settings 页新增预算/重试/实验开关/语言控件齐全且零中文 UI 泄露')
+
+  /* 验证新 Settings 字段随 saveSettings 发送 */
+  const setCtrlByLabel = (hosts, labelText, nextVal, propKey = 'value') => {
+    const field = hosts.find((x) => String(x.props.className || '').includes('rt-settings-field')
+      && textOfNode(x.props.children).includes(labelText))
+    if (!field) return false
+    const list = []
+    const walk = (n) => {
+      if (!n || typeof n !== 'object') return
+      if (n.type === 'input' || n.type === 'select') list.push(n)
+      const ch = n.props && n.props.children
+      if (Array.isArray(ch)) ch.forEach(walk)
+      else if (ch) walk(ch)
+    }
+    walk(field)
+    const ctrl = list[0]
+    if (!ctrl || !ctrl.props || typeof ctrl.props.onChange !== 'function') return false
+    ctrl.props.onChange({ target: { [propKey]: nextVal } })
+    return true
+  }
+  lastSavedSettingsBody = null
+  setCtrlByLabel(rEnSettings.hosts, 'Workspace Token Cap (0=Unlimited)', '250000')
+  setCtrlByLabel(rEnSettings.hosts, 'Workspace Cost Cap (0=Unlimited)', '12.5')
+  setCtrlByLabel(rEnSettings.hosts, 'Auto-Retry on Failure (0-3)', '2')
+  setCtrlByLabel(rEnSettings.hosts, 'Experimental: Speculative DAG Pipelining', true, 'checked')
+  const rEnSettingsDirty = await renderAll(2, [headerToggle()])
+  const enSaveBtn = rEnSettingsDirty.hosts.find((x) => x.tag === 'button' && x.handlers.onClick && textOfNode(x.props.children).includes('Save Settings'))
+  if (enSaveBtn) enSaveBtn.handlers.onClick()
+  await renderAll(2, [headerToggle()])
+  ok(lastSavedSettingsBody
+    && lastSavedSettingsBody.dispatchPolicy
+    && lastSavedSettingsBody.dispatchPolicy.maxTokensPerWorkspace === 250000
+    && lastSavedSettingsBody.dispatchPolicy.maxCostPerWorkspace === 12.5
+    && lastSavedSettingsBody.dispatchPolicy.maxAutoRetries === 2
+    && lastSavedSettingsBody.dispatchPolicy.speculativeWaveDispatch === true
+    && lastSavedSettingsBody.uiPreferences
+    && lastSavedSettingsBody.uiPreferences.locale === 'en-US',
+    'SettingsHubTab 保存请求完整提交 maxTokensPerWorkspace/maxCostPerWorkspace/maxAutoRetries/speculativeWaveDispatch/locale')
+
+  ok(fetchUrls.length > 0 && fetchUrls.every((u) => u === '/lmtagent/api'),
+    `所有 RPC 请求均发往 /lmtagent/api（共 ${fetchUrls.length} 次，零 /redteam/api 残留）`)
+
+  /* 恢复默认语言状态避免污染后续调用 */
+  ls.clear()
+  if (typeof mod.setLocale === 'function') mod.setLocale('zh-CN')
 }
 console.log(`\n通过 ${pass}/${pass + fail}`)
 process.exit(fail === 0 ? 0 : 1)

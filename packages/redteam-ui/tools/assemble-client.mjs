@@ -22,6 +22,7 @@ const outFile = path.join(pkgRoot, 'lib', 'client.js')
 
 const EXPECTED_SHARDS = [
   '00-header.js',
+  '00b-i18n.js',
   '01-core-rpc.js',
   '02-telemetry-probe.js',
   '03-wish-wizard.js',
@@ -40,7 +41,7 @@ if (!fs.existsSync(srcDir)) {
 
 const files = fs.readdirSync(srcDir)
   .filter((f) => f.endsWith('.js'))
-  .sort((a, b) => a.localeCompare(b))
+  .sort((a, b) => (a < b ? -1 : (a > b ? 1 : 0)))
 
 for (const expected of EXPECTED_SHARDS) {
   if (!files.includes(expected)) {
