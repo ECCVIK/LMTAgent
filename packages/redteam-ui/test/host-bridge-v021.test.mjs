@@ -1594,16 +1594,31 @@ async function main() {
         engagement: 'orderflow-v2',
         tab: 'overview',
       })
-      check('validateLoopbackWindowUrl 允许 127.0.0.1 并附加 lmt_session / lmt_eng / lmt_tab 与 #lmtagent-full', Boolean(
+      check('validateLoopbackWindowUrl 允许 127.0.0.1 并归一化到 /lmtagent/window 附加查询参数与 #lmtagent-full', Boolean(
         validLoopback.ok
-        && validLoopback.url.startsWith('http://127.0.0.1:3080/?')
+        && validLoopback.url.startsWith('http://127.0.0.1:3080/lmtagent/window?')
         && validLoopback.url.includes('lmt_session=session-abcdef12-3456')
         && validLoopback.url.includes('lmt_eng=orderflow-v2')
         && validLoopback.url.includes('lmt_tab=overview')
         && validLoopback.url.endsWith('#lmtagent-full'),
       ))
-      check('validateLoopbackWindowUrl 严格拒绝非回环域、file:// 与 javascript: URI', Boolean(
+      const electronFallback = validateLoopbackWindowUrl('dsh-app://app/', {
+        fallbackHost: '127.0.0.1:61380',
+        session: 'session-cd81fa32',
+        tab: 'collab',
+        locale: 'zh-CN',
+      })
+      check('validateLoopbackWindowUrl 将 DSH Desktop Electron (dsh-app://app/) 自动回落至回环 /lmtagent/window', Boolean(
+        electronFallback.ok
+        && electronFallback.url.startsWith('http://127.0.0.1:61380/lmtagent/window?')
+        && electronFallback.url.includes('lmt_session=session-cd81fa32')
+        && electronFallback.url.includes('lmt_tab=collab')
+        && electronFallback.url.includes('lmt_locale=zh-CN')
+        && electronFallback.url.endsWith('#lmtagent-full'),
+      ))
+      check('validateLoopbackWindowUrl 严格拒绝非回环域、无回落时的 file:// 与 javascript: URI', Boolean(
         validateLoopbackWindowUrl('https://evil.example/').ok === false
+        && validateLoopbackWindowUrl('https://evil.example/', { fallbackHost: '127.0.0.1:61380' }).ok === false
         && validateLoopbackWindowUrl('file:///etc/passwd').ok === false
         && validateLoopbackWindowUrl('javascript:alert(1)').ok === false,
       ))
@@ -1611,9 +1626,11 @@ async function main() {
       let spawnedArgs = null
       let spawnedOpts = null
       const launchRes = launchStandaloneWindow({
-        url: 'http://localhost:3080/',
+        url: 'dsh-app://app/',
+        host: 'localhost:3080',
         session: 'session-99887766',
         tab: 'collab',
+        locale: 'en-US',
         env: { LMTAGENT_BROWSER_BIN: 'mock-edge' },
         spawnFn: (cmd, args, opts) => {
           spawnedCmd = cmd
@@ -1622,13 +1639,13 @@ async function main() {
           return { unref() {} }
         },
       })
-      check('launchStandaloneWindow 以 --app=<loopbackUrl> 独立进程模式拉起窗口且零 shell 拼接', Boolean(
+      check('launchStandaloneWindow 从 dsh-app:// 自动切至 --app=http://localhost:3080/lmtagent/window 独立进程拉起且零 shell 拼接', Boolean(
         launchRes.ok === true
         && launchRes.launched === true
         && launchRes.mode === 'browser-app'
         && spawnedCmd === 'mock-edge'
         && Array.isArray(spawnedArgs)
-        && spawnedArgs.some((a) => a.startsWith('--app=http://localhost:3080/') && a.endsWith('#lmtagent-full'))
+        && spawnedArgs.some((a) => a.startsWith('--app=http://localhost:3080/lmtagent/window?') && a.includes('lmt_locale=en-US') && a.endsWith('#lmtagent-full'))
         && spawnedOpts && spawnedOpts.detached === true && spawnedOpts.shell !== true,
       ))
       const winHost = createMockPluginHost({ store: v1Store })

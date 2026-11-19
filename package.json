@@ -2,7 +2,7 @@
   "name": "dsh-lmtagent",
   "displayName": "LMTAgent",
   "title": "LMTAgent 研发集群",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Multi-agent full-stack dev workbench for DSH: turns feature wishes into parallel file-disjoint coding shards with 8 role presets, standalone pop-out window, one-click Git scope rollback, budget guard & bilingual DAG console.",
   "license": "MIT",
   "type": "module",

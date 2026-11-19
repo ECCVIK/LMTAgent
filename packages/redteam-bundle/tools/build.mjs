@@ -105,6 +105,13 @@ for (const uiSub of UI_SUB_MODULES) {
     write('lib/' + uiSub, rewriteStoreImports(read('redteam-ui/lib/' + uiSub)))
   }
 }
+const UI_VENDOR_FILES = ['react.production.min.js', 'react-dom.production.min.js']
+for (const vendorFile of UI_VENDOR_FILES) {
+  const vendorSrc = join(packagesDir, 'redteam-ui/lib/vendor', vendorFile)
+  if (existsSync(vendorSrc)) {
+    write('lib/vendor/' + vendorFile, read('redteam-ui/lib/vendor/' + vendorFile))
+  }
+}
 
 /* 3) 浏览器半侧：拷过来，并把注册 id 改成**本包的包名**。
    前端加载器按包名取模块：bundle URL 是 `dsh-redteam-mode/client.js`，它就用
@@ -454,6 +461,12 @@ const bundleLibFiles = readdirSync(libDir, { withFileTypes: true })
   .sort()
 for (const fileName of bundleLibFiles) {
   syncOrCheckRootFile('lib/' + fileName)
+}
+const bundleVendorDir = join(libDir, 'vendor')
+if (existsSync(bundleVendorDir)) {
+  for (const vf of readdirSync(bundleVendorDir, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name).sort()) {
+    syncOrCheckRootFile('lib/vendor/' + vf)
+  }
 }
 
 const bundlePresetDir = join(pkgRoot, 'presets/lmtagent')

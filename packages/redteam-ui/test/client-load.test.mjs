@@ -143,7 +143,7 @@ ok(registeredSlots.every((s) => typeof s.render === 'function' && s.meta && s.me
 ok(/\/lmtagent\/api/.test(source) && /\/lmtagent\/events/.test(source) && /#lmtagent-full/.test(source)
   && !/\/redteam\/(api|events)/.test(source) && !source.includes('⚡'),
   'client.js 使用 /lmtagent/api + /lmtagent/events + #lmtagent-full，零 /redteam/* 路由与 ⚡ 图标')
-ok(/CLIENT_PLUGIN_VERSION\s*=\s*['"]1\.1\.0['"]/.test(source), 'CLIENT_PLUGIN_VERSION 为 1.1.0')
+ok(/CLIENT_PLUGIN_VERSION\s*=\s*['"]1\.1\.1['"]/.test(source), 'CLIENT_PLUGIN_VERSION 为 1.1.1')
 ok(typeof moduleExports.formatShortSessionId === 'function'
   && moduleExports.formatShortSessionId('session-abcdef12-3456') === 'abcdef12'
   && moduleExports.formatShortSessionId('orderflow-sess-1000') === 'orderflo',

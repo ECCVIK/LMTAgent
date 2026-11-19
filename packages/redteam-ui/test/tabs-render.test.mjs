@@ -966,7 +966,7 @@ console.log('\n— 面板 1:1 强隔离跟随会话 + 未绑定新会话初始�
   resetInstances()
   const rMismatch = await renderAll(6, [headerToggle()])
   ok(rMismatch.hosts.some((x) => String(x.props.className || '').includes('rt-host-version-mismatch'))
-    && rMismatch.texts.includes('检测到后端 Host 版本 (0.22.0) 与前端 (1.1.0) 不一致，请彻底退出并重启 DSH NEXT'),
+    && rMismatch.texts.includes('检测到后端 Host 版本 (0.22.0) 与前端 (1.1.1) 不一致，请彻底退出并重启 DSH NEXT'),
     'bootstrap 返回不一致 hostVersion 时在 Panel 顶部渲染版本不一致警告横幅')
 
   responses = makeResponses('data')

@@ -209,7 +209,7 @@ window.__ModuleLoader__.load({
       return hits.length ? hits[0].x.id : null
     }
 
-    const CLIENT_PLUGIN_VERSION = '1.1.0'
+    const CLIENT_PLUGIN_VERSION = '1.1.1'
     const CSS = `
 :root{
   --rt-dock-w:540px;
@@ -2518,8 +2518,17 @@ body[data-ds-dark-theme] .rt-anim-complete{
 
 
 
+    const isDedicatedStandaloneWindow = () => {
+      try {
+        if (typeof window === 'undefined') return false
+        if (window.__LMT_STANDALONE_WINDOW__ === true) return true
+        return String((window.location && window.location.pathname) || '') === '/lmtagent/window'
+      } catch { return false }
+    }
+
     const isFullWindow = () => {
       try {
+        if (isDedicatedStandaloneWindow()) return true
         const hashVal = String(window.location.hash || '')
         return hashVal === '#lmtagent-full' || hashVal === '#redteam-full'
       } catch { return false }
@@ -2572,6 +2581,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         session: options.session || undefined,
         engagement: options.engagement || undefined,
         tab: options.tab || undefined,
+        locale: options.locale || (typeof getLocale === 'function' ? getLocale() : undefined),
       }
       const fallbackPopup = (targetUrl) => {
         const href = targetUrl || (baseHref ? (baseHref + '#lmtagent-full') : '#lmtagent-full')
@@ -14363,7 +14373,7 @@ body[data-ds-dark-theme] .rt-anim-complete{
         h('div', { className: 'rt-head' },
           h('div', { className: 'rt-title' }, h('span', { className: 'rt-dot' }),
             full ? t('LMTAgent 独立工作台', 'LMTAgent Standalone Workbench') : t('LMTAgent 研发控制台', 'LMTAgent Console'),
-            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, t('独立窗口', 'Standalone')) : null),
+            full ? h('span', { className: 'rt-tag', style: { marginLeft: 6 } }, isDedicatedStandaloneWindow() ? t('独立桌面窗', 'Desktop Window') : t('全屏模式', 'Fullscreen')) : null),
           sid === null
             ? null
             : (!eng
@@ -14435,7 +14445,9 @@ body[data-ds-dark-theme] .rt-anim-complete{
           h(LocaleSwitcher, null),
           h(VersionBar, { onHostVersion: checkHostVersion }),
           full
-            ? h('button', { className: 'rt-btn', title: t('退出全屏（Esc）', 'Exit fullscreen (Esc)'), onClick: exitFull }, t('退出全屏', 'Exit Full'))
+            ? (isDedicatedStandaloneWindow()
+                ? h('button', { className: 'rt-btn', title: t('关闭独立窗口', 'Close standalone window'), onClick: () => { try { window.close() } catch { /* ignore */ } } }, t('关闭窗口', 'Close'))
+                : h('button', { className: 'rt-btn', title: t('退出全屏（Esc）', 'Exit fullscreen (Esc)'), onClick: exitFull }, t('退出全屏', 'Exit Full')))
             : null,
           h('button', { className: 'rt-btn', title: t('刷新当前数据', 'Refresh'), onClick: refreshAll }, t('刷新', 'Refresh')),
           h('button', {
@@ -14501,7 +14513,9 @@ body[data-ds-dark-theme] .rt-anim-complete{
           h('span', { className: 'rt-wb-badge' },
             st.uiMode === 'novice' ? t('LMTAgent · 协同工作台', 'LMTAgent · Collab Workbench') : 'LMTAgent · 4-Wave DAG'),
           h('div', { className: 'rt-spacer' }),
-          full ? h('span', null, t('Esc 退出全屏', 'Esc to exit fullscreen')) : null,
+          full
+            ? h('span', null, isDedicatedStandaloneWindow() ? t('独立桌面窗 · 同源实时同步', 'Standalone OS Window · Live SSE') : t('Esc 退出全屏', 'Esc to exit fullscreen'))
+            : null,
           eng
             ? h('span', null, (st.uiMode === 'novice' ? t('工作区 · ', 'Workspace · ') : 'PG/WAL · ') + currentEngName)
             : h('span', null, isSessionDismissed ? t('当前会话 · 独立空白态（未绑定工作区）', 'Session · Clean Unbound State') : t('当前会话 · 待初始化工作区', 'Session · Workspace Setup Pending')),

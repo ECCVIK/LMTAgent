@@ -1,12 +1,14 @@
 [English](README.md) | 简体中文
 
-# LMTAgent (`v1.1.0` · `dsh-lmtagent`)
+# LMTAgent (`v1.1.1` · `dsh-lmtagent`)
 
-**DeepSeek Harness（DSH Desktop）多智能体全栈研发编排工作台** —— 把一句话需求自动拆解为互不冲突的并行开发分片，在**脱离 DSH 主窗体的独立窗口**中实时编排审批，支持越界文件一键 Git 回滚与工作区预算熔断。
+**DeepSeek Harness（DSH Desktop）多智能体全栈研发编排工作台** —— 把一句话需求自动拆解为互不冲突的并行开发分片，在**真正脱离 DSH 窗体的独立桌面应用窗（`/lmtagent/window`）**中实时编排审批，支持越界文件一键 Git 回滚与工作区预算熔断。
 
 ```bash
 dsh plugin add github:ECCVIK/LMTAgent
 ```
+
+![LMTAgent v1.1.1 独立桌面窗交互演示](docs/assets/lmtagent-demo.gif)
 
 ### 1 分钟快速上手
 1. 通过上方命令安装（或在 DSH Desktop「插件市场」搜索 `dsh-lmtagent`），重启 DSH。
@@ -26,7 +28,7 @@ dsh plugin add github:ECCVIK/LMTAgent
 
 ---
 
-## 界面预览（`v1.1.0`）
+## 界面预览（`v1.1.1`）
 
 以下截图由无头 Chromium 加载真实编译产物 `packages/redteam-ui/lib/client.js` 与 `styles.js` 直接渲染采集（`zh-CN` 中文界面）：
 
@@ -38,9 +40,9 @@ dsh plugin add github:ECCVIK/LMTAgent
 
 ---
 
-## 核心特性（`v1.1.0`）
+## 核心特性（`v1.1.1`）
 
-- **独立弹出桌面窗口（`弹出独立窗口 ↗`）**：基于本机 Edge / Chrome / Chromium `--app=` 无地址栏独立应用窗弹出（自动兜底弹窗或应用内全屏），与 DSH 同源共享 `/lmtagent/api` 与 `/lmtagent/events` 实时事件流，左屏聊天、右屏大窗监控互不遮挡。
+- **真·独立桌面应用窗口（`弹出独立窗口 ↗` · `/lmtagent/window`）**：自动识别 DSH Desktop（`dsh-app://` Electron 壳）并回落至本机回环 `http://127.0.0.1:<port>/lmtagent/window`，通过 Edge / Chrome / Chromium `--app=` 独立进程弹出无地址栏原生应用窗（内置本地 React/ReactDOM，零 `401` 拦截、零 DSH 壳层、支持拖到副屏），与 DSH 实时同源共享 `/lmtagent/api` 与 `/lmtagent/events` SSE 事件流。
 - **8 个工程角色预设（`maxDepth: 3`，默认 `thinking: low`）**：`plan`（主控指挥）、`recon`（产品规划 CEO）、`designer`（UI 令牌设计）、`assess`（架构与分片经理）、`exploit`（6 槽并发全栈构建）、`vuln-scan`（代码审查与安全）、`qa`（质量测试门禁）与 `internal`（文档与发布归档）。
 - **写前 `ShardLock` 预检 + Git 安全一键回滚**：派发阶段拦截同波次重叠分片；提交摘要后自动审计越界文件，并在审批卡片中通过 `execFileSync('git', ...)` 安全一键恢复受污染文件。
 - **预算熔断、自动重试与实验性推测 DAG**：支持配置 `maxTokensPerWorkspace` / `maxCostPerWorkspace` 超限自动暂停、瞬态失败自动退避重试（`maxAutoRetries` `0–3`），以及开启 `speculativeWaveDispatch` 在依赖满足时提前并行派发下游分片。

@@ -1,7 +1,17 @@
     /* ---------------------------------------------------------- 01-core-rpc：桥接、事件流与全局状态 */
-    /** 是否在「全面浏览」独立窗口里（URL hash 标记，复用同一套界面代码）。 */
+    /** 是否在「独立桌面应用窗」中运行（`/lmtagent/window` 专属无壳层独立进程窗口）。 */
+    const isDedicatedStandaloneWindow = () => {
+      try {
+        if (typeof window === 'undefined') return false
+        if (window.__LMT_STANDALONE_WINDOW__ === true) return true
+        return String((window.location && window.location.pathname) || '') === '/lmtagent/window'
+      } catch { return false }
+    }
+
+    /** 是否在「全面浏览」或独立窗口里（URL hash 或专属独立路径）。 */
     const isFullWindow = () => {
       try {
+        if (isDedicatedStandaloneWindow()) return true
         const hashVal = String(window.location.hash || '')
         return hashVal === '#lmtagent-full' || hashVal === '#redteam-full'
       } catch { return false }
@@ -54,6 +64,7 @@
         session: options.session || undefined,
         engagement: options.engagement || undefined,
         tab: options.tab || undefined,
+        locale: options.locale || (typeof getLocale === 'function' ? getLocale() : undefined),
       }
       const fallbackPopup = (targetUrl) => {
         const href = targetUrl || (baseHref ? (baseHref + '#lmtagent-full') : '#lmtagent-full')

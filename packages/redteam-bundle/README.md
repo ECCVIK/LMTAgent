@@ -1,4 +1,4 @@
-# dsh-lmtagent (`v1.1.0`)
+# dsh-lmtagent (`v1.1.1`)
 
 **Multi-agent full-stack dev workbench for DeepSeek Harness (DSH Desktop)**: turns feature wishes into parallel file-disjoint coding shards with 8 role presets, a detached standalone OS window, one-click Git scope rollback, workspace budget guard, and a live bilingual DAG console.
 

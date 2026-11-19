@@ -1,12 +1,14 @@
 English | [简体中文](README.zh-CN.md)
 
-# LMTAgent (`v1.1.0` · `dsh-lmtagent`)
+# LMTAgent (`v1.1.1` · `dsh-lmtagent`)
 
-**Multi-agent full-stack dev workbench for DeepSeek Harness (DSH Desktop)** — turn a one-sentence feature wish into parallel, file-disjoint coding shards, manage approvals in a **detached standalone OS window**, roll back out-of-scope edits in one click, and cap workspace token/cost budgets automatically.
+**Multi-agent full-stack dev workbench for DeepSeek Harness (DSH Desktop)** — turn a one-sentence feature wish into parallel, file-disjoint coding shards, manage approvals in a **true detached OS desktop window (`/lmtagent/window`)**, roll back out-of-scope edits in one click, and cap workspace token/cost budgets automatically.
 
 ```bash
 dsh plugin add github:ECCVIK/LMTAgent
 ```
+
+![LMTAgent v1.1.1 Standalone Window Walkthrough](docs/assets/lmtagent-demo-en.gif)
 
 ### 1-Minute Quick Start
 1. Install via CLI above (or search `dsh-lmtagent` in the DSH Desktop Plugin Market) and restart DSH.
@@ -26,7 +28,7 @@ dsh plugin add github:ECCVIK/LMTAgent
 
 ---
 
-## UI Preview (`v1.1.0`)
+## UI Preview (`v1.1.1`)
 
 Captured directly in headless Chromium from the compiled `packages/redteam-ui/lib/client.js` and `styles.js` bundles in `en-US` locale:
 
@@ -38,9 +40,9 @@ Captured directly in headless Chromium from the compiled `packages/redteam-ui/li
 
 ---
 
-## Key Capabilities (`v1.1.0`)
+## Key Capabilities (`v1.1.1`)
 
-- **Standalone Pop-Out Desktop Window (`Pop Out ↗`)**: Detaches LMTAgent into a clean OS-level chromeless app window (`--app=` on Edge/Chrome/Chromium, with automatic popup & in-place fallbacks), sharing the live same-origin DSH `webServer` and `/lmtagent/events` SSE stream.
+- **True Detached Standalone OS Window (`Pop Out ↗` · `/lmtagent/window`)**: Launches a dedicated chromeless desktop app window (`--app=http://127.0.0.1:<port>/lmtagent/window` via Edge/Chrome/Chromium) that automatically bridges DSH Desktop's `dsh-app://` Electron origin to the live loopback `webServer` with bundled local React/ReactDOM — zero `401` gate, zero DSH shell chrome, full multi-monitor dragging, and live `/lmtagent/events` SSE sync.
 - **8 Role Presets (`maxDepth: 3`, default `thinking: low`)**: `plan` (Captain), `recon` (CEO), `designer` (UX/Tokens), `assess` (Eng Manager), `exploit` (6x Parallel Builder), `vuln-scan` (Reviewer & CSO), `qa` (QA Lead), and `internal` (Doc & Release).
 - **Pre/Post-Write `ShardLock` & Safe Git Rollback**: Blocks overlapping file ownership at dispatch, flags out-of-shard edits in the Approval Queue, and restores polluted files via `execFileSync('git', ...)` without shell interpolation.
 - **Budget Circuit Breaker, Auto-Retry & Experimental Speculative DAG**: Pause auto-dispatch on `maxTokensPerWorkspace` / `maxCostPerWorkspace`, retry transient failures with prior error context (`maxAutoRetries` `0–3`), or enable `speculativeWaveDispatch` to launch unblocked downstream `depends_on` shards early.

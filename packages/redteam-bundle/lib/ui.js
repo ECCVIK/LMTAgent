@@ -79,6 +79,7 @@ import {
   validateLoopbackWindowUrl,
   resolveAppBrowserBin,
   launchStandaloneWindow,
+  buildStandaloneWindowHtml,
 } from './window-launcher.js'
 import {
   detectDagCycles,
@@ -3358,6 +3359,94 @@ export function apply(ctx) {
     }
   })
 
+  /* GET /lmtagent/window + 静态资源（独立桌面应用窗，零 401、零 DSH 壳层、仅限回环 Host） */
+  const sendStaticAsset = (req, res, contentType, bodyBuf, cacheHeader) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      sendJson(res, 405, { ok: false, error: 'GET only' })
+      return
+    }
+    if (!isLoopbackHostHeader(req.headers && req.headers.host)) {
+      sendJson(res, 403, { ok: false, error: 'loopback host only' })
+      return
+    }
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': cacheHeader || 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+    })
+    res.end(req.method === 'HEAD' ? undefined : bodyBuf)
+  }
+
+  let _cachedStandaloneClientJs = null
+  const loadStandaloneClientJs = () => {
+    if (_cachedStandaloneClientJs !== null) return _cachedStandaloneClientJs
+    let src = readFileSync(resolve(__dirname, 'client.js'), 'utf8')
+    if (src.includes("'__RT_STYLES__'")) {
+      try {
+        const stylesRaw = readFileSync(resolve(__dirname, 'styles.js'), 'utf8')
+        const m = stylesRaw.match(/export\s+const\s+CSS\s*=\s*(`[\s\S]*`)/)
+        if (m) src = src.replace("'__RT_STYLES__'", m[1])
+      } catch { /* bundle already has CSS inlined */ }
+    }
+    _cachedStandaloneClientJs = Buffer.from(src, 'utf8')
+    return _cachedStandaloneClientJs
+  }
+
+  let _cachedVendorReact = null
+  let _cachedVendorReactDom = null
+  const loadVendorBundle = (fileName, which) => {
+    if (which === 'react' && _cachedVendorReact) return _cachedVendorReact
+    if (which === 'react-dom' && _cachedVendorReactDom) return _cachedVendorReactDom
+    const buf = readFileSync(resolve(__dirname, 'vendor', fileName))
+    if (which === 'react') _cachedVendorReact = buf
+    else _cachedVendorReactDom = buf
+    return buf
+  }
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/lmtagent/window',
+    handler: async (req, res) => {
+      sendStaticAsset(req, res, 'text/html; charset=utf-8', Buffer.from(buildStandaloneWindowHtml(), 'utf8'), 'no-cache')
+    },
+  }))
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/lmtagent/client.js',
+    handler: async (req, res) => {
+      try {
+        sendStaticAsset(req, res, 'application/javascript; charset=utf-8', loadStandaloneClientJs(), 'no-cache')
+      } catch (err) {
+        sendJson(res, 500, { ok: false, error: err && err.message ? err.message : String(err) })
+      }
+    },
+  }))
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/lmtagent/vendor/react.js',
+    handler: async (req, res) => {
+      try {
+        sendStaticAsset(req, res, 'application/javascript; charset=utf-8', loadVendorBundle('react.production.min.js', 'react'), 'public, max-age=86400')
+      } catch (err) {
+        sendJson(res, 500, { ok: false, error: err && err.message ? err.message : String(err) })
+      }
+    },
+  }))
+
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/lmtagent/vendor/react-dom.js',
+    handler: async (req, res) => {
+      try {
+        sendStaticAsset(req, res, 'application/javascript; charset=utf-8', loadVendorBundle('react-dom.production.min.js', 'react-dom'), 'public, max-age=86400')
+      } catch (err) {
+        sendJson(res, 500, { ok: false, error: err && err.message ? err.message : String(err) })
+      }
+    },
+  }))
+
   /* GET /lmtagent/events：轻量级 SSE 增量事件流（初始 seq 握手 + 15s 保活心跳） */
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
@@ -3464,6 +3553,7 @@ export function apply(ctx) {
             session: request.session,
             engagement: request.engagement,
             tab: request.tab,
+            locale: request.locale,
             width: request.width,
             height: request.height,
           })

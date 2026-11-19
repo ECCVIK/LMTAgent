@@ -1,6 +1,6 @@
 {
   "name": "@lmtagent/store",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "LMTAgent 存储库：1:1 会话专属工作台隔离状态机 + PostgreSQL/SQLite 双模事实库 + FTS 全文检索与分片策略引擎",
   "type": "module",

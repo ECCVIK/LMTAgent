@@ -251,5 +251,5 @@ window.__ModuleLoader__.load({
 
     /* 样式表在 ./styles.js（唯一维护点）。浏览器半侧不能运行期 import，
        这里放占位符，由 bundle 的 build.mjs 在生成产物时替换成正文。 */
-    const CLIENT_PLUGIN_VERSION = '1.1.0'
+    const CLIENT_PLUGIN_VERSION = '1.1.1'
     const CSS = '__RT_STYLES__'
